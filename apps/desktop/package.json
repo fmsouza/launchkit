@@ -1,0 +1,25 @@
+{
+  "name": "launchkit",
+  "type": "module",
+  "private": true,
+  "version": "0.0.1",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@launchkit/types": "workspace:*",
+    "@launchkit/utils": "workspace:*",
+    "@launchkit/cli": "workspace:*",
+    "@launchkit/proxy": "workspace:*",
+    "@launchkit/secrets": "workspace:*",
+    "@launchkit/config": "workspace:*",
+    "@launchkit/sessions": "workspace:*",
+    "@launchkit/harnesses": "workspace:*",
+    "@launchkit/ipc": "workspace:*",
+    "@launchkit/ui": "workspace:*"
+  },
+  "devDependencies": {
+    "bun-types": "latest"
+  }
+}

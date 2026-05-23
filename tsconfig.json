@@ -1,4 +1,4 @@
 {
   "files": [],
-  "references": [{ "path": "packages/sentinel" }]
+  "references": [{ "path": "packages/sentinel" }, { "path": "apps/desktop" }]
 }
