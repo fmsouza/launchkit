@@ -114,7 +114,7 @@ A task is **runnable** when its status is `todo` AND every dependency is `done`.
 | sessions-04 | close (parameterized UPDATE; not-found) | | done | f1347f0 |
 | sessions-05 | query (parameterized WHERE) | | done | 125c6fe |
 | sessions-06 | createBunSqliteDatabase + integration round-trip | | done | c9853d5 |
-| sessions-07 | Barrel + package CLAUDE.md | | todo | |
+| sessions-07 | Barrel + package CLAUDE.md | | done | 884ceab |
 
 ## 2 — harnesses (`08-harnesses.md`)
 
