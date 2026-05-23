@@ -1,15 +1,18 @@
 import { type Result, err } from "@launchkit/utils"
-import { parseArgs } from "./parse-args"
-import { list } from "./list"
-import { launchCommand } from "./launch-command"
-import { add, remove } from "./mutate-command"
-import type { CliError } from "./errors"
 import type { CliDeps } from "./deps"
+import type { CliError } from "./errors"
+import { launchCommand } from "./launch-command"
+import { list } from "./list"
+import { add, remove } from "./mutate-command"
+import { parseArgs } from "./parse-args"
 
 const KNOWN_COMMANDS = ["launch", "list", "add", "remove"] as const
 
 const usage = (): Result<void, CliError> =>
-  err({ kind: "usage", detail: `expected one of: ${KNOWN_COMMANDS.join(", ")}` })
+  err({
+    kind: "usage",
+    detail: `expected one of: ${KNOWN_COMMANDS.join(", ")}`,
+  })
 
 /**
  * Build the CLI entry point over injected deps. Returns a function that parses argv
@@ -45,8 +48,10 @@ const runLaunch = (
   flags: Readonly<Record<string, string | boolean>>,
 ): Promise<Result<void, CliError>> => launchCommand(deps, rest, flags)
 
-const runList = (deps: CliDeps, rest: readonly string[]): Promise<Result<void, CliError>> =>
-  list(deps, rest)
+const runList = (
+  deps: CliDeps,
+  rest: readonly string[],
+): Promise<Result<void, CliError>> => list(deps, rest)
 
 const runAdd = (
   deps: CliDeps,
@@ -54,5 +59,7 @@ const runAdd = (
   flags: Readonly<Record<string, string | boolean>>,
 ): Promise<Result<void, CliError>> => add(deps, rest, flags)
 
-const runRemove = (deps: CliDeps, rest: readonly string[]): Promise<Result<void, CliError>> =>
-  remove(deps, rest)
+const runRemove = (
+  deps: CliDeps,
+  rest: readonly string[],
+): Promise<Result<void, CliError>> => remove(deps, rest)

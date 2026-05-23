@@ -1,9 +1,9 @@
 import type { Config, ConfigStore } from "@launchkit/config"
+import type { LaunchParams } from "@launchkit/harnesses"
+import type { RunningProxy } from "@launchkit/proxy"
 import type { SecretStore } from "@launchkit/secrets"
 import type { SessionStore } from "@launchkit/sessions"
 import type { HarnessDefinition } from "@launchkit/types"
-import type { LaunchParams } from "@launchkit/harnesses"
-import type { RunningProxy } from "@launchkit/proxy"
 import type { Result } from "@launchkit/utils"
 import type { Writer } from "./writer"
 
@@ -30,8 +30,12 @@ export type StartProxyDeps = {
 export type CliDeps = {
   readonly config: ConfigStore
   readonly secrets: SecretStore
-  readonly registry: { list(): Promise<Result<readonly HarnessDefinition[], unknown>> }
-  readonly launch: (params: LaunchParams) => Result<{ readonly pid: number }, unknown>
+  readonly registry: {
+    list(): Promise<Result<readonly HarnessDefinition[], unknown>>
+  }
+  readonly launch: (
+    params: LaunchParams,
+  ) => Result<{ readonly pid: number }, unknown>
   readonly proxy: {
     isRunning(baseUrl: string): Promise<boolean>
     start(opts: StartProxyDeps): RunningProxy

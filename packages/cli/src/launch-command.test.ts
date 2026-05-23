@@ -1,10 +1,14 @@
-import { describe, it, expect } from "bun:test"
-import { HarnessIdSchema, AliasNameSchema, type HarnessDefinition } from "@launchkit/types"
+import { describe, expect, it } from "bun:test"
 import type { LaunchParams } from "@launchkit/harnesses"
+import {
+  AliasNameSchema,
+  type HarnessDefinition,
+  HarnessIdSchema,
+} from "@launchkit/types"
 import type { StartProxyDeps } from "./deps"
-import { createMemoryWriter } from "./writer"
 import { runCli } from "./run"
 import { makeFakeDeps } from "./test-support"
+import { createMemoryWriter } from "./writer"
 
 const claude: HarnessDefinition = {
   id: HarnessIdSchema.parse("claude"),
@@ -22,14 +26,19 @@ const claude: HarnessDefinition = {
 
 describe("launch", () => {
   it("returns a usage error when no harness id is given", async () => {
-    const result = await runCli(makeFakeDeps({ harnesses: [claude] }))(["launch"])
+    const result = await runCli(makeFakeDeps({ harnesses: [claude] }))([
+      "launch",
+    ])
     expect(result.ok).toBe(false)
     if (result.ok) return
     expect(result.error.kind).toBe("usage")
   })
 
   it("returns a usage error when the harness id is not in the registry", async () => {
-    const result = await runCli(makeFakeDeps({ harnesses: [claude] }))(["launch", "ghost"])
+    const result = await runCli(makeFakeDeps({ harnesses: [claude] }))([
+      "launch",
+      "ghost",
+    ])
     expect(result.ok).toBe(false)
     if (result.ok) return
     expect(result.error.kind).toBe("usage")
@@ -102,7 +111,10 @@ describe("launch", () => {
   it("falls back to the harness defaultAlias when no --model flag is given", async () => {
     const launchCalls: LaunchParams[] = []
     await runCli(
-      makeFakeDeps({ harnesses: [claude], launchSpy: (p) => launchCalls.push(p) }),
+      makeFakeDeps({
+        harnesses: [claude],
+        launchSpy: (p) => launchCalls.push(p),
+      }),
     )(["launch", "claude"])
     expect(String(launchCalls[0]?.model)).toBe("default")
   })
@@ -131,7 +143,10 @@ describe("launch", () => {
     const result = await runCli(
       makeFakeDeps({
         harnesses: [claude],
-        launchResult: { ok: false, error: { kind: "spawn-failed", detail: "ENOENT" } },
+        launchResult: {
+          ok: false,
+          error: { kind: "spawn-failed", detail: "ENOENT" },
+        },
       }),
     )(["launch", "claude"])
     expect(result.ok).toBe(false)
@@ -141,7 +156,9 @@ describe("launch", () => {
 
   it("returns a failed error when the registry cannot be listed", async () => {
     const result = await runCli(
-      makeFakeDeps({ registryError: { kind: "read-failed", detail: "EACCES" } }),
+      makeFakeDeps({
+        registryError: { kind: "read-failed", detail: "EACCES" },
+      }),
     )(["launch", "claude"])
     expect(result.ok).toBe(false)
     if (result.ok) return

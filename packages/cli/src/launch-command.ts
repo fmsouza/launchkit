@@ -1,15 +1,21 @@
-import { type Result, ok, err, isErr } from "@launchkit/utils"
-import { AliasNameSchema, type AliasName, type HarnessDefinition } from "@launchkit/types"
-import type { CliError } from "./errors"
+import {
+  type AliasName,
+  AliasNameSchema,
+  type HarnessDefinition,
+} from "@launchkit/types"
+import { type Result, err, isErr, ok } from "@launchkit/utils"
 import type { CliDeps } from "./deps"
+import type { CliError } from "./errors"
 
 /** Resolve the alias: the `--model` flag if a string, else the harness's defaultAlias. */
 const resolveAlias = (
   harness: HarnessDefinition,
   flags: Readonly<Record<string, string | boolean>>,
 ): AliasName => {
-  const flag = flags["model"]
-  return typeof flag === "string" ? AliasNameSchema.parse(flag) : harness.defaultAlias
+  const flag = flags.model
+  return typeof flag === "string"
+    ? AliasNameSchema.parse(flag)
+    : harness.defaultAlias
 }
 
 /**
@@ -28,15 +34,20 @@ export const launchCommand = async (
 ): Promise<Result<void, CliError>> => {
   const harnessId = rest[0]
   if (harnessId === undefined) {
-    return err({ kind: "usage", detail: "launch <harnessId> [--model <alias>]" })
+    return err({
+      kind: "usage",
+      detail: "launch <harnessId> [--model <alias>]",
+    })
   }
 
   const loaded = await deps.config.load()
-  if (isErr(loaded)) return err({ kind: "failed", detail: "could not load config" })
+  if (isErr(loaded))
+    return err({ kind: "failed", detail: "could not load config" })
   const { settings } = loaded.value
 
   const listed = await deps.registry.list()
-  if (isErr(listed)) return err({ kind: "failed", detail: "could not list harnesses" })
+  if (isErr(listed))
+    return err({ kind: "failed", detail: "could not list harnesses" })
 
   const harness = listed.value.find((h) => h.id === harnessId)
   if (harness === undefined) {
@@ -61,11 +72,15 @@ export const launchCommand = async (
   // value, so the freshly generated one is handed off either way. (It is never printed.)
 
   const launched = deps.launch({ harness, proxyUrl, proxyKey, model: alias })
-  if (isErr(launched)) return err({ kind: "failed", detail: "failed to launch harness" })
+  if (isErr(launched))
+    return err({ kind: "failed", detail: "failed to launch harness" })
 
   const session = deps.sessions.create({ harnessId: harness.id, alias })
-  if (isErr(session)) return err({ kind: "failed", detail: "failed to record session" })
+  if (isErr(session))
+    return err({ kind: "failed", detail: "failed to record session" })
 
-  deps.out.write(`launched ${harness.id} (pid ${launched.value.pid}, session ${session.value.id})`)
+  deps.out.write(
+    `launched ${harness.id} (pid ${launched.value.pid}, session ${session.value.id})`,
+  )
   return ok(undefined)
 }

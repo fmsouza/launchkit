@@ -1,13 +1,16 @@
-import { describe, it, expect } from "bun:test"
-import { createMemoryWriter } from "./writer"
+import { describe, expect, it } from "bun:test"
 import { runCli } from "./run"
 import { makeFakeDeps } from "./test-support"
+import { createMemoryWriter } from "./writer"
 
 describe("runCli dispatch", () => {
   it("returns an unknown-command error when the command is not recognized", async () => {
     const out = createMemoryWriter()
     const result = await runCli(makeFakeDeps({ out }))(["frobnicate"])
-    expect(result).toEqual({ ok: false, error: { kind: "unknown-command", command: "frobnicate" } })
+    expect(result).toEqual({
+      ok: false,
+      error: { kind: "unknown-command", command: "frobnicate" },
+    })
   })
 
   it("returns a usage error naming the available commands when no command is given", async () => {

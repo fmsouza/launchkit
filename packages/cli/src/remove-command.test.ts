@@ -1,4 +1,4 @@
-import { describe, it, expect } from "bun:test"
+import { describe, expect, it } from "bun:test"
 import { defaultConfig } from "@launchkit/config"
 import { runCli } from "./run"
 import { makeFakeDeps } from "./test-support"
@@ -6,9 +6,22 @@ import { makeFakeDeps } from "./test-support"
 const seeded = () => ({
   ...defaultConfig(),
   providers: [
-    { id: "p_openai" as never, name: "OpenAI", sdkProvider: "openai" as const, config: {}, secrets: {}, models: [] },
+    {
+      id: "p_openai" as never,
+      name: "OpenAI",
+      sdkProvider: "openai" as const,
+      config: {},
+      secrets: {},
+      models: [],
+    },
   ],
-  aliases: [{ alias: "fast" as never, providerId: "p_openai" as never, providerModel: "gpt-4o-mini" }],
+  aliases: [
+    {
+      alias: "fast" as never,
+      providerId: "p_openai" as never,
+      providerModel: "gpt-4o-mini",
+    },
+  ],
 })
 
 describe("remove provider", () => {
@@ -21,14 +34,21 @@ describe("remove provider", () => {
   })
 
   it("returns a failed error when the provider id does not exist", async () => {
-    const result = await runCli(makeFakeDeps({ initialConfig: seeded() }))(["remove", "provider", "ghost"])
+    const result = await runCli(makeFakeDeps({ initialConfig: seeded() }))([
+      "remove",
+      "provider",
+      "ghost",
+    ])
     expect(result.ok).toBe(false)
     if (result.ok) return
     expect(result.error.kind).toBe("failed")
   })
 
   it("returns a usage error when no provider id is given", async () => {
-    const result = await runCli(makeFakeDeps({ initialConfig: seeded() }))(["remove", "provider"])
+    const result = await runCli(makeFakeDeps({ initialConfig: seeded() }))([
+      "remove",
+      "provider",
+    ])
     expect(result.ok).toBe(false)
     if (result.ok) return
     expect(result.error.kind).toBe("usage")
@@ -45,14 +65,22 @@ describe("remove alias", () => {
   })
 
   it("returns a failed error when the alias name does not exist", async () => {
-    const result = await runCli(makeFakeDeps({ initialConfig: seeded() }))(["remove", "alias", "nope"])
+    const result = await runCli(makeFakeDeps({ initialConfig: seeded() }))([
+      "remove",
+      "alias",
+      "nope",
+    ])
     expect(result.ok).toBe(false)
     if (result.ok) return
     expect(result.error.kind).toBe("failed")
   })
 
   it("returns a usage error when the remove subcommand is unknown", async () => {
-    const result = await runCli(makeFakeDeps({ initialConfig: seeded() }))(["remove", "widget", "x"])
+    const result = await runCli(makeFakeDeps({ initialConfig: seeded() }))([
+      "remove",
+      "widget",
+      "x",
+    ])
     expect(result.ok).toBe(false)
     if (result.ok) return
     expect(result.error.kind).toBe("usage")

@@ -1,8 +1,14 @@
-import { type Result, ok, err, isErr } from "@launchkit/utils"
-import { ProviderSchema, ModelAliasSchema, SdkProviderSchema, type Provider, type ModelAlias } from "@launchkit/types"
 import type { Config } from "@launchkit/config"
-import type { CliError } from "./errors"
+import {
+  type ModelAlias,
+  ModelAliasSchema,
+  type Provider,
+  ProviderSchema,
+  SdkProviderSchema,
+} from "@launchkit/types"
+import { type Result, err, isErr, ok } from "@launchkit/utils"
 import type { CliDeps } from "./deps"
+import type { CliError } from "./errors"
 
 /** Pull a required string flag, or report a usage error naming it. */
 const requireFlag = (
@@ -16,10 +22,15 @@ const requireFlag = (
 }
 
 /** Split a comma list flag into trimmed, non-empty entries (empty array when absent). */
-const splitModels = (flags: Readonly<Record<string, string | boolean>>): readonly string[] => {
-  const value = flags["model"]
+const splitModels = (
+  flags: Readonly<Record<string, string | boolean>>,
+): readonly string[] => {
+  const value = flags.model
   if (typeof value !== "string") return []
-  return value.split(",").map((m) => m.trim()).filter((m) => m.length > 0)
+  return value
+    .split(",")
+    .map((m) => m.trim())
+    .filter((m) => m.length > 0)
 }
 
 const saveOrFail = async (
@@ -27,7 +38,9 @@ const saveOrFail = async (
   next: Config,
 ): Promise<Result<void, CliError>> => {
   const saved = await deps.config.save(next)
-  return isErr(saved) ? err({ kind: "failed", detail: "could not save config" }) : ok(undefined)
+  return isErr(saved)
+    ? err({ kind: "failed", detail: "could not save config" })
+    : ok(undefined)
 }
 
 const addProvider = async (
@@ -44,10 +57,16 @@ const addProvider = async (
 
   const sdkParsed = SdkProviderSchema.safeParse(sdk.value)
   if (!sdkParsed.success) {
-    return err({ kind: "usage", detail: `unknown --sdk provider: ${sdk.value}` })
+    return err({
+      kind: "usage",
+      detail: `unknown --sdk provider: ${sdk.value}`,
+    })
   }
   if (config.providers.some((p) => p.id === id.value)) {
-    return err({ kind: "failed", detail: `provider already exists: ${id.value}` })
+    return err({
+      kind: "failed",
+      detail: `provider already exists: ${id.value}`,
+    })
   }
 
   // SECURITY: secrets start EMPTY — the CLI never sets secret values (the GUI does via
@@ -66,7 +85,10 @@ const addProvider = async (
   }
   const provider: Provider = candidate.data
 
-  return saveOrFail(deps, { ...config, providers: [...config.providers, provider] })
+  return saveOrFail(deps, {
+    ...config,
+    providers: [...config.providers, provider],
+  })
 }
 
 const addAlias = async (
@@ -101,7 +123,8 @@ export const add = async (
   flags: Readonly<Record<string, string | boolean>>,
 ): Promise<Result<void, CliError>> => {
   const loaded = await deps.config.load()
-  if (isErr(loaded)) return err({ kind: "failed", detail: "could not load config" })
+  if (isErr(loaded))
+    return err({ kind: "failed", detail: "could not load config" })
 
   const target = rest[0]
   switch (target) {
@@ -119,7 +142,8 @@ const removeProvider = async (
   config: Config,
   id: string | undefined,
 ): Promise<Result<void, CliError>> => {
-  if (id === undefined) return err({ kind: "usage", detail: "remove provider <id>" })
+  if (id === undefined)
+    return err({ kind: "usage", detail: "remove provider <id>" })
   const next = config.providers.filter((p) => p.id !== id)
   if (next.length === config.providers.length) {
     return err({ kind: "failed", detail: `unknown provider: ${id}` })
@@ -132,7 +156,8 @@ const removeAlias = async (
   config: Config,
   name: string | undefined,
 ): Promise<Result<void, CliError>> => {
-  if (name === undefined) return err({ kind: "usage", detail: "remove alias <name>" })
+  if (name === undefined)
+    return err({ kind: "usage", detail: "remove alias <name>" })
   const next = config.aliases.filter((a) => a.alias !== name)
   if (next.length === config.aliases.length) {
     return err({ kind: "failed", detail: `unknown alias: ${name}` })
@@ -146,7 +171,8 @@ export const remove = async (
   rest: readonly string[],
 ): Promise<Result<void, CliError>> => {
   const loaded = await deps.config.load()
-  if (isErr(loaded)) return err({ kind: "failed", detail: "could not load config" })
+  if (isErr(loaded))
+    return err({ kind: "failed", detail: "could not load config" })
 
   const target = rest[0]
   switch (target) {
