@@ -11,7 +11,10 @@
     "react": "^19",
     "react-dom": "^19",
     "@launchkit/types": "workspace:*",
-    "@launchkit/utils": "workspace:*"
+    "@launchkit/utils": "workspace:*",
+    "@launchkit/ipc": "workspace:*",
+    "@launchkit/ui": "workspace:*",
+    "electrobun": "^1.18.1"
   },
   "devDependencies": {
     "bun-types": "latest"
