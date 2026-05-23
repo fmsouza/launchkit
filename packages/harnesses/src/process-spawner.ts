@@ -21,11 +21,17 @@ export interface RecordingProcessSpawner extends ProcessSpawner {
 }
 
 /** Records every spawn call (for assertions) and returns the given pid. */
-export const createRecordingProcessSpawner = (pid: number): RecordingProcessSpawner => {
+export const createRecordingProcessSpawner = (
+  pid: number,
+): RecordingProcessSpawner => {
   const calls: SpawnCall[] = []
   return {
     calls,
-    spawn: (command, args, env): Result<{ readonly pid: number }, HarnessError> => {
+    spawn: (
+      command,
+      args,
+      env,
+    ): Result<{ readonly pid: number }, HarnessError> => {
       calls.push({ command, args, env })
       return ok({ pid })
     },

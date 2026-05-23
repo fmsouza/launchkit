@@ -1,7 +1,11 @@
-import { describe, it, expect } from "bun:test"
-import { AliasNameSchema, type HarnessDefinition, HarnessIdSchema } from "@launchkit/types"
-import { launchHarness } from "./launch"
+import { describe, expect, it } from "bun:test"
+import {
+  AliasNameSchema,
+  type HarnessDefinition,
+  HarnessIdSchema,
+} from "@launchkit/types"
 import { createFakeCommandResolver } from "./command-resolver"
+import { launchHarness } from "./launch"
 import { createRecordingProcessSpawner } from "./process-spawner"
 
 const harness: HarnessDefinition = {
@@ -27,7 +31,9 @@ const params = {
 
 describe("launchHarness", () => {
   it("spawns the resolved absolute command with an empty args array and rendered env", () => {
-    const resolver = createFakeCommandResolver({ claude: "/usr/local/bin/claude" })
+    const resolver = createFakeCommandResolver({
+      claude: "/usr/local/bin/claude",
+    })
     const spawner = createRecordingProcessSpawner(999)
 
     const r = launchHarness({ resolver, spawner })(params)
@@ -50,7 +56,10 @@ describe("launchHarness", () => {
     const spawner = createRecordingProcessSpawner(1)
     const relative: HarnessDefinition = { ...harness, command: "./claude" }
 
-    const r = launchHarness({ resolver, spawner })({ ...params, harness: relative })
+    const r = launchHarness({ resolver, spawner })({
+      ...params,
+      harness: relative,
+    })
 
     expect(r.ok).toBe(false)
     if (!r.ok) expect(r.error.kind).toBe("invalid-command")
@@ -58,16 +67,24 @@ describe("launchHarness", () => {
   })
 
   it("returns an invalid-template error and never spawns when an env token is unknown", () => {
-    const resolver = createFakeCommandResolver({ claude: "/usr/local/bin/claude" })
+    const resolver = createFakeCommandResolver({
+      claude: "/usr/local/bin/claude",
+    })
     const spawner = createRecordingProcessSpawner(1)
     const leaky: HarnessDefinition = {
       ...harness,
       envTemplate: { ANTHROPIC_API_KEY: "{{secret}}" },
     }
 
-    const r = launchHarness({ resolver, spawner })({ ...params, harness: leaky })
+    const r = launchHarness({ resolver, spawner })({
+      ...params,
+      harness: leaky,
+    })
 
-    expect(r).toEqual({ ok: false, error: { kind: "invalid-template", token: "secret" } })
+    expect(r).toEqual({
+      ok: false,
+      error: { kind: "invalid-template", token: "secret" },
+    })
     expect(spawner.calls).toEqual([])
   })
 })

@@ -1,14 +1,19 @@
-import { describe, it, expect } from "bun:test"
-import { HarnessDefinitionSchema } from "@launchkit/types"
-import { builtinHarnesses, claude, codex, opencode, openclaw } from "./index"
+import { describe, expect, it } from "bun:test"
+import { HarnessDefinitionSchema, HarnessIdSchema } from "@launchkit/types"
 import { ALLOWED_TOKENS } from "../tokens"
+import { builtinHarnesses, claude, codex, openclaw, opencode } from "./index"
 
 const tokensIn = (s: string): readonly string[] =>
   [...s.matchAll(/\{\{(\w+)\}\}/g)].map((m) => m[1] ?? "")
 
 describe("builtinHarnesses", () => {
   it("lists all four built-ins in a stable order when imported", () => {
-    expect(builtinHarnesses.map((h) => h.id)).toEqual(["claude", "codex", "opencode", "openclaw"])
+    expect(builtinHarnesses.map((h) => h.id)).toEqual([
+      HarnessIdSchema.parse("claude"),
+      HarnessIdSchema.parse("codex"),
+      HarnessIdSchema.parse("opencode"),
+      HarnessIdSchema.parse("openclaw"),
+    ])
   })
 
   it("marks every built-in as builtIn:true", () => {
@@ -25,7 +30,9 @@ describe("builtinHarnesses", () => {
     for (const h of builtinHarnesses) {
       for (const value of Object.values(h.envTemplate)) {
         for (const token of tokensIn(value)) {
-          expect(ALLOWED_TOKENS).toContain(token as (typeof ALLOWED_TOKENS)[number])
+          expect(ALLOWED_TOKENS).toContain(
+            token as (typeof ALLOWED_TOKENS)[number],
+          )
         }
       }
     }

@@ -1,22 +1,33 @@
-import { describe, it, expect } from "bun:test"
+import { describe, expect, it } from "bun:test"
 import { createFakeCommandResolver } from "./command-resolver"
 
 describe("createFakeCommandResolver", () => {
   it("returns the configured absolute path for a bare command on PATH", () => {
-    const resolver = createFakeCommandResolver({ claude: "/usr/local/bin/claude" })
-    expect(resolver.resolve("claude")).toEqual({ ok: true, value: "/usr/local/bin/claude" })
+    const resolver = createFakeCommandResolver({
+      claude: "/usr/local/bin/claude",
+    })
+    expect(resolver.resolve("claude")).toEqual({
+      ok: true,
+      value: "/usr/local/bin/claude",
+    })
   })
 
   it("accepts an already-absolute command and returns it unchanged", () => {
     const resolver = createFakeCommandResolver({})
-    expect(resolver.resolve("/opt/tools/codex")).toEqual({ ok: true, value: "/opt/tools/codex" })
+    expect(resolver.resolve("/opt/tools/codex")).toEqual({
+      ok: true,
+      value: "/opt/tools/codex",
+    })
   })
 
   it("rejects a relative command with an invalid-command error", () => {
     const resolver = createFakeCommandResolver({})
     expect(resolver.resolve("./local-bin")).toEqual({
       ok: false,
-      error: { kind: "invalid-command", detail: "relative paths are not allowed: ./local-bin" },
+      error: {
+        kind: "invalid-command",
+        detail: "relative paths are not allowed: ./local-bin",
+      },
     })
   })
 
@@ -24,7 +35,10 @@ describe("createFakeCommandResolver", () => {
     const resolver = createFakeCommandResolver({})
     expect(resolver.resolve("/usr/bin/../bin/claude")).toEqual({
       ok: false,
-      error: { kind: "invalid-command", detail: "path traversal is not allowed: /usr/bin/../bin/claude" },
+      error: {
+        kind: "invalid-command",
+        detail: "path traversal is not allowed: /usr/bin/../bin/claude",
+      },
     })
   })
 

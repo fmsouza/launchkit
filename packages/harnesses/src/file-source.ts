@@ -1,4 +1,4 @@
-import { type Result, ok, err } from "@launchkit/utils"
+import { type Result, err, ok } from "@launchkit/utils"
 import type { HarnessError } from "./errors"
 
 /**
@@ -14,6 +14,7 @@ export const createInMemoryHarnessFileSource = (
   defs: readonly unknown[],
   failure?: HarnessError,
 ): HarnessFileSource => ({
-  listDefinitions: async (): Promise<Result<readonly unknown[], HarnessError>> =>
-    failure === undefined ? ok(defs) : err(failure),
+  listDefinitions: async (): Promise<
+    Result<readonly unknown[], HarnessError>
+  > => (failure === undefined ? ok(defs) : err(failure)),
 })

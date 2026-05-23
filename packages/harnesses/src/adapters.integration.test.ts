@@ -1,8 +1,12 @@
-import { describe, it, expect, afterEach } from "bun:test"
+import { afterEach, describe, expect, it } from "bun:test"
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { createPathCommandResolver, createBunProcessSpawner, createDirHarnessFileSource } from "./adapters"
+import {
+  createBunProcessSpawner,
+  createDirHarnessFileSource,
+  createPathCommandResolver,
+} from "./adapters"
 
 const tempDirs: string[] = []
 const makeTempDir = (): string => {
@@ -12,7 +16,8 @@ const makeTempDir = (): string => {
 }
 
 afterEach(() => {
-  for (const dir of tempDirs.splice(0)) rmSync(dir, { recursive: true, force: true })
+  for (const dir of tempDirs.splice(0))
+    rmSync(dir, { recursive: true, force: true })
 })
 
 describe("createPathCommandResolver (real)", () => {
@@ -58,7 +63,9 @@ describe("createDirHarnessFileSource (real)", () => {
   })
 
   it("returns ok with an empty list when the directory does not exist", async () => {
-    const r = await createDirHarnessFileSource(join(makeTempDir(), "missing")).listDefinitions()
+    const r = await createDirHarnessFileSource(
+      join(makeTempDir(), "missing"),
+    ).listDefinitions()
     expect(r).toEqual({ ok: true, value: [] })
   })
 

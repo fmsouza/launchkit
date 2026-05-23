@@ -1,4 +1,4 @@
-import { describe, it, expect } from "bun:test"
+import { describe, expect, it } from "bun:test"
 import { validateEnvTemplate } from "./validate-env-template"
 
 describe("validateEnvTemplate", () => {
@@ -12,12 +12,18 @@ describe("validateEnvTemplate", () => {
   })
 
   it("returns ok for a value with no tokens at all", () => {
-    expect(validateEnvTemplate({ STATIC: "literal-value" })).toEqual({ ok: true, value: undefined })
+    expect(validateEnvTemplate({ STATIC: "literal-value" })).toEqual({
+      ok: true,
+      value: undefined,
+    })
   })
 
   it("returns an invalid-template error naming the first unknown token", () => {
     const r = validateEnvTemplate({ X: "{{proxyUrl}}", Y: "{{secret}}" })
-    expect(r).toEqual({ ok: false, error: { kind: "invalid-template", token: "secret" } })
+    expect(r).toEqual({
+      ok: false,
+      error: { kind: "invalid-template", token: "secret" },
+    })
   })
 
   it("rejects an unknown token even when it appears mid-string", () => {

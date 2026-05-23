@@ -1,7 +1,7 @@
-import { type Result, ok, err, isErr, renderTemplate } from "@launchkit/utils"
 import type { AliasName, HarnessDefinition } from "@launchkit/types"
-import type { HarnessError } from "./errors"
+import { type Result, err, isErr, renderTemplate } from "@launchkit/utils"
 import type { CommandResolver } from "./command-resolver"
+import type { HarnessError } from "./errors"
 import type { ProcessSpawner } from "./process-spawner"
 import { validateEnvTemplate } from "./validate-env-template"
 
@@ -13,7 +13,10 @@ export interface LaunchParams {
 }
 
 export const launchHarness =
-  (deps: { readonly resolver: CommandResolver; readonly spawner: ProcessSpawner }) =>
+  (deps: {
+    readonly resolver: CommandResolver
+    readonly spawner: ProcessSpawner
+  }) =>
   (params: LaunchParams): Result<{ readonly pid: number }, HarnessError> => {
     const { harness, proxyUrl, proxyKey, model } = params
 
@@ -26,7 +29,11 @@ export const launchHarness =
     if (isErr(resolved)) return resolved
 
     // 3. Render each env value with only the three allowed variables.
-    const vars: Readonly<Record<string, string>> = { proxyUrl, proxyKey, model: String(model) }
+    const vars: Readonly<Record<string, string>> = {
+      proxyUrl,
+      proxyKey,
+      model: String(model),
+    }
     const env: Record<string, string> = {}
     for (const [key, template] of Object.entries(harness.envTemplate)) {
       const rendered = renderTemplate(template, vars)

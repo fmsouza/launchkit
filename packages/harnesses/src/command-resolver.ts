@@ -1,4 +1,4 @@
-import { type Result, ok, err } from "@launchkit/utils"
+import { type Result, err, ok } from "@launchkit/utils"
 import type { HarnessError } from "./errors"
 
 /** Resolves a command name/path to a validated absolute path, or rejects it. */
@@ -8,7 +8,9 @@ export interface CommandResolver {
 
 const isAbsolute = (p: string): boolean => p.startsWith("/")
 const isRelativePath = (p: string): boolean =>
-  p.startsWith("./") || p.startsWith("../") || (p.includes("/") && !isAbsolute(p))
+  p.startsWith("./") ||
+  p.startsWith("../") ||
+  (p.includes("/") && !isAbsolute(p))
 
 /**
  * Shared guard used by both the fake and the real resolver: reject relative
@@ -16,10 +18,16 @@ const isRelativePath = (p: string): boolean =>
  */
 export const guardCommand = (command: string): Result<string, HarnessError> => {
   if (isRelativePath(command)) {
-    return err({ kind: "invalid-command", detail: `relative paths are not allowed: ${command}` })
+    return err({
+      kind: "invalid-command",
+      detail: `relative paths are not allowed: ${command}`,
+    })
   }
   if (command.split("/").includes("..")) {
-    return err({ kind: "invalid-command", detail: `path traversal is not allowed: ${command}` })
+    return err({
+      kind: "invalid-command",
+      detail: `path traversal is not allowed: ${command}`,
+    })
   }
   return ok(command)
 }
@@ -37,7 +45,10 @@ export const createFakeCommandResolver = (
     if (isAbsolute(command)) return ok(command)
     const found = pathTable[command]
     if (found === undefined) {
-      return err({ kind: "invalid-command", detail: `command not found on PATH: ${command}` })
+      return err({
+        kind: "invalid-command",
+        detail: `command not found on PATH: ${command}`,
+      })
     }
     return ok(found)
   },

@@ -1,4 +1,8 @@
-import { type HarnessDefinition, HarnessIdSchema, AliasNameSchema } from "@launchkit/types"
+import {
+  AliasNameSchema,
+  type HarnessDefinition,
+  HarnessIdSchema,
+} from "@launchkit/types"
 
 export const claude: HarnessDefinition = {
   id: HarnessIdSchema.parse("claude"),
