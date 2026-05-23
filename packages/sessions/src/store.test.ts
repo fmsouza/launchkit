@@ -136,3 +136,71 @@ describe("createSessionStore.create", () => {
     })
   })
 })
+
+describe("createSessionStore.close", () => {
+  it("returns the updated Session with endedAt and exitCode when close() is called on an open session", () => {
+    const deps = makeDeps()
+    const store = createSessionStore(deps)
+    store.init()
+    const created = store.create({
+      harnessId: "claude" as never,
+      alias: "default" as never,
+    })
+    const id = isOk(created) ? created.value.id : ("" as never)
+    const r = store.close(id, 0)
+    expect(isOk(r) && r.value).toEqual({
+      id: "s_1",
+      harnessId: "claude",
+      alias: "default",
+      startedAt: "2026-05-23T10:00:00.000Z",
+      endedAt: "2026-05-23T10:00:00.000Z",
+      exitCode: 0,
+    })
+  })
+
+  it("issues a parameterized UPDATE whose id is bound in params, not interpolated, when close() is called", () => {
+    const deps = makeDeps()
+    const store = createSessionStore(deps)
+    store.init()
+    const created = store.create({
+      harnessId: "claude" as never,
+      alias: "default" as never,
+    })
+    const id = isOk(created) ? created.value.id : ("" as never)
+    store.close(id, 137)
+    const update = deps.db.statements().find((s) => /^\s*UPDATE/i.test(s.sql))
+    expect(update?.sql).toContain("?")
+    expect(update?.sql).toMatch(/WHERE id = \?/i)
+    expect(update?.sql).not.toContain("s_1")
+    expect(update?.params).toEqual(["2026-05-23T10:00:00.000Z", 137, "s_1"])
+  })
+
+  it("returns a not-found error when close() targets an id that has no row", () => {
+    const deps = makeDeps()
+    const store = createSessionStore(deps)
+    store.init()
+    const r = store.close("s_missing" as never, 0)
+    expect(r).toEqual({ ok: false, error: { kind: "not-found" } })
+  })
+
+  it("returns the db-failed error when the UPDATE fails", () => {
+    const failing = {
+      ...makeDeps(),
+      db: {
+        exec: () => ({ ok: true as const, value: undefined }),
+        run: () => ({
+          ok: false as const,
+          error: { kind: "db-failed" as const, detail: "locked" },
+        }),
+        all: () => ({ ok: true as const, value: [] }),
+        get: () => ({ ok: true as const, value: undefined }),
+      },
+    }
+    const store = createSessionStore(failing)
+    const r = store.close("s_1" as never, 0)
+    expect(r).toEqual({
+      ok: false,
+      error: { kind: "db-failed", detail: "locked" },
+    })
+  })
+})

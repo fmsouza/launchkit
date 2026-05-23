@@ -3,6 +3,7 @@ import {
   type Clock,
   type IdGen,
   type Result,
+  err,
   isErr,
   ok,
 } from "@launchkit/utils"
@@ -43,6 +44,27 @@ const CREATE_INDEX_HARNESS =
   "CREATE INDEX IF NOT EXISTS idx_sessions_harnessId ON sessions (harnessId)"
 const INSERT_SESSION =
   "INSERT INTO sessions (id, harnessId, alias, startedAt) VALUES (?, ?, ?, ?)"
+const UPDATE_CLOSE =
+  "UPDATE sessions SET endedAt = ?, exitCode = ? WHERE id = ?"
+const SELECT_BY_ID =
+  "SELECT id, harnessId, alias, startedAt, endedAt, exitCode FROM sessions WHERE id = ?"
+
+/** Map a raw sqlite row into a Session, dropping NULL endedAt/exitCode. */
+const toSession = (row: Record<string, unknown>): Session => {
+  const base: Session = {
+    id: row.id as SessionId,
+    harnessId: row.harnessId as HarnessId,
+    alias: row.alias as AliasName,
+    startedAt: String(row.startedAt),
+  }
+  const endedAt = row.endedAt
+  const exitCode = row.exitCode
+  return {
+    ...base,
+    ...(typeof endedAt === "string" ? { endedAt } : {}),
+    ...(typeof exitCode === "number" ? { exitCode } : {}),
+  }
+}
 
 export const createSessionStore = (deps: {
   readonly db: Database
@@ -80,8 +102,14 @@ export const createSessionStore = (deps: {
         startedAt,
       })
     },
-    close: () => {
-      throw new Error("not implemented until sessions-04")
+    close: (id: SessionId, exitCode: number): Result<Session, SessionError> => {
+      const endedAt = deps.clock.now().toISOString()
+      const written = db.run(UPDATE_CLOSE, [endedAt, exitCode, id])
+      if (isErr(written)) return written
+      const fetched = db.get(SELECT_BY_ID, [id])
+      if (isErr(fetched)) return fetched
+      if (fetched.value === undefined) return err({ kind: "not-found" })
+      return ok(toSession(fetched.value))
     },
     query: () => {
       throw new Error("not implemented until sessions-05")
