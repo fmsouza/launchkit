@@ -132,13 +132,13 @@ A task is **runnable** when its status is `todo` AND every dependency is `done`.
 
 | ID | Task | Deps | Status | Commit |
 |---|---|---|---|---|
-| ui-01 | Button, StatusDot, Spinner (atoms) | types-07, utils-07 | todo | |
-| ui-02 | TextInput, Select, Badge, Label (atoms) | | todo | |
-| ui-03 | FormField, EmptyState (molecules) | | todo | |
-| ui-04 | ProviderCard, AliasRow (molecules) | | todo | |
-| ui-05 | ProviderList, AliasTable (organisms) | | todo | |
-| ui-06 | HarnessForm, SessionTable (organisms) | | todo | |
-| ui-07 | AppShell, SettingsLayout + barrels + CLAUDE.md | | todo | |
+| ui-01 | Button, StatusDot, Spinner (atoms) | types-07, utils-07 | done | 4eb21a6 |
+| ui-02 | TextInput, Select, Badge, Label (atoms) | | done | 4eb21a6 |
+| ui-03 | FormField, EmptyState (molecules) | | done | 4eb21a6 |
+| ui-04 | ProviderCard, AliasRow (molecules) | | done | 4eb21a6 |
+| ui-05 | ProviderList, AliasTable (organisms) | | done | 4eb21a6 |
+| ui-06 | HarnessForm, SessionTable (organisms) | | done | 4eb21a6 |
+| ui-07 | AppShell, SettingsLayout + barrels + CLAUDE.md | | done | 4eb21a6 |
 
 ## 3 — proxy (`07-proxy.md`)
 

@@ -1,4 +1,10 @@
 {
-  "extends": "@launchkit/tsconfig/lib.json",
-  "compilerOptions": { "rootDir": "src", "outDir": "dist" }
+  "extends": "../../tooling/tsconfig/react.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "dist",
+    "types": ["bun", "react", "react-dom"]
+  },
+  "include": ["src"],
+  "exclude": ["src/**/*.test.ts", "src/**/*.test.tsx"]
 }
