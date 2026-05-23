@@ -1,6 +1,7 @@
 import { type Result, err } from "@launchkit/utils"
 import { parseArgs } from "./parse-args"
 import { list } from "./list"
+import { launchCommand } from "./launch-command"
 import type { CliError } from "./errors"
 import type { CliDeps } from "./deps"
 
@@ -37,11 +38,11 @@ export const runCli =
 // --- command stubs (replaced in cli-03/04/05) ----------------------------------------
 // These return a `usage` Result so dispatch is testable now and nothing throws.
 
-const runLaunch = async (
-  _deps: CliDeps,
-  _rest: readonly string[],
-  _flags: Readonly<Record<string, string | boolean>>,
-): Promise<Result<void, CliError>> => err({ kind: "usage", detail: "launch: not implemented until cli-04" })
+const runLaunch = (
+  deps: CliDeps,
+  rest: readonly string[],
+  flags: Readonly<Record<string, string | boolean>>,
+): Promise<Result<void, CliError>> => launchCommand(deps, rest, flags)
 
 const runList = (deps: CliDeps, rest: readonly string[]): Promise<Result<void, CliError>> =>
   list(deps, rest)
