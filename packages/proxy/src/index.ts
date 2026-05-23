@@ -20,6 +20,8 @@ export { parseOpenAIRequest } from "./adapters/openai-request"
 export { serializeAnthropicStream } from "./adapters/anthropic-stream"
 export { serializeOpenAIStream } from "./adapters/openai-stream"
 export { validateProviderConfig } from "./providers/config-schemas"
+export { createProviderTester } from "./provider-tester"
+export type { ProviderTester, ProviderTestResult } from "./provider-tester"
 export type {
   NormalizedRequest,
   NormalizedMessage,
