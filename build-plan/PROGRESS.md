@@ -45,7 +45,7 @@ A task is **runnable** when its status is `todo` AND every dependency is `done`.
 | phase0-02 | `bun test` + DOM smoke test (first RED→GREEN) | | done | 5df3a34 |
 | phase0-03 | Root `CLAUDE.md` + resume/new-package skills | | done | |
 | phase0-04 | Initialize the Electrobun app shell | | done | 513538a |
-| phase0-05 | CI workflow | | todo | |
+| phase0-05 | CI workflow | | done | |
 | phase0-06 | Green-gate verification + cleanup | | todo | |
 
 ## 1 — types (`01-types.md`)
