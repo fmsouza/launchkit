@@ -126,16 +126,23 @@ launchkit/
 
 **Domain mapping (architecture `src/*` → package):** `proxy → packages/proxy`, `harnesses → packages/harnesses`, `config → packages/config`, `sessions → packages/sessions`, `cli → packages/cli`, `gui + views → apps/desktop` (composing `packages/ui` + `packages/ipc`), inline core types → `packages/types`.
 
-**Dependency DAG (defines build order and parallelism):**
+**Dependency DAG (defines build order and parallelism).** Read as `package → packages it depends on`:
 
 ```
-types ──► utils ──► secrets ─┐
-              │     ipc ──────┼──► config ──► proxy ──┐
-              │     ui ───────┘    sessions ─► harnesses ─► cli ──► apps/desktop
-              └────────────────────────────────────────────────────┘
+types        → (none — foundation)
+utils        → types
+secrets      → utils
+ipc          → types
+ui           → types
+config       → types, utils, secrets
+sessions     → types, utils
+proxy        → types, utils, config
+harnesses    → types, utils, config
+cli          → config, secrets, proxy, harnesses, sessions
+apps/desktop → all packages (composes everything: cli, proxy, ipc, ui, ...)
 ```
 
-Build/implement order: `types → utils → {secrets, ipc, ui} → {config, sessions} → {proxy, harnesses} → cli → desktop`. Braced groups are independent and can be implemented by **parallel subagents**.
+Build/implement order: `types → utils → {secrets, ipc, ui} → {config, sessions} → {proxy, harnesses} → cli → desktop`. Braced groups have no edges between them and can be implemented by **parallel subagents**.
 
 **Package contract rules** (enforced in `02-monorepo/boundaries.md`): every package exposes a single public barrel (`src/index.ts`); cross-package imports go through the package name only (`@launchkit/x`), never deep paths; no cyclic edges; the DAG above is the allowed-edge whitelist.
 
