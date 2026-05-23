@@ -1,0 +1,32 @@
+# Dependencies
+node_modules/
+.bun/
+
+# Build output
+dist/
+build/
+out/
+*.tsbuildinfo
+
+# Turborepo
+.turbo/
+
+# Electrobun
+.electrobun/
+artifacts/
+
+# Local config / secrets (never commit)
+*.local
+.env
+.env.*
+!.env.example
+
+# OS / editor
+.DS_Store
+*.log
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# Test / coverage
+coverage/
