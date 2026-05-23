@@ -3,6 +3,10 @@
   "references": [
     { "path": "apps/desktop" },
     { "path": "packages/types" },
-    { "path": "packages/utils" }
+    { "path": "packages/utils" },
+    { "path": "packages/ui" },
+    { "path": "packages/harnesses" },
+    { "path": "packages/sessions" },
+    { "path": "packages/ipc" }
   ]
 }

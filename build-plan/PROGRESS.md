@@ -108,7 +108,7 @@ A task is **runnable** when its status is `todo` AND every dependency is `done`.
 
 | ID | Task | Deps | Status | Commit |
 |---|---|---|---|---|
-| sessions-01 | SessionError + Database interface + recording fake | types-07, utils-07 | todo | |
+| sessions-01 | SessionError + Database interface + recording fake | types-07, utils-07 | in-progress | |
 | sessions-02 | createSessionStore.init (schema + indexes) | | todo | |
 | sessions-03 | create (parameterized INSERT) | | todo | |
 | sessions-04 | close (parameterized UPDATE; not-found) | | todo | |
