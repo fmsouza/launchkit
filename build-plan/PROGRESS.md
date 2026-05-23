@@ -17,15 +17,15 @@ A task is **runnable** when its status is `todo` AND every dependency is `done`.
 | Order | Package | Plan file | Ready when these are `done` | Tasks | Status |
 |---|---|---|---|---|---|
 | 0 | bootstrap | `04-plans/00-phase0-bootstrap.md` | — | 6 | done |
-| 1 | types | `04-plans/01-types.md` | phase0-06 | 7 | todo |
-| 1 | utils | `04-plans/02-utils.md` | phase0-06 | 7 | todo |
-| 2 | secrets | `04-plans/03-secrets.md` | types-07, utils-07 | 5 | todo |
-| 2 | ipc | `04-plans/04-ipc.md` | types-07, utils-07 | 5 | todo |
+| 1 | types | `04-plans/01-types.md` | phase0-06 | 7 | done |
+| 1 | utils | `04-plans/02-utils.md` | phase0-06 | 7 | done |
+| 2 | secrets | `04-plans/03-secrets.md` | types-07, utils-07 | 5 | done |
+| 2 | ipc | `04-plans/04-ipc.md` | types-07, utils-07 | 5 | done |
 | 2 | config | `04-plans/05-config.md` | types-07, utils-07 | 7 | done |
-| 2 | sessions | `04-plans/06-sessions.md` | types-07, utils-07 | 7 | todo |
+| 2 | sessions | `04-plans/06-sessions.md` | types-07, utils-07 | 7 | done |
 | 2 | harnesses | `04-plans/08-harnesses.md` | types-07, utils-07 | 7 | done |
-| 2 | ui | `04-plans/10-ui.md` | types-07, utils-07 | 7 | todo |
-| 3 | proxy | `04-plans/07-proxy.md` | types-07, utils-07, config-07, secrets-05 | 13 | todo |
+| 2 | ui | `04-plans/10-ui.md` | types-07, utils-07 | 7 | done |
+| 3 | proxy | `04-plans/07-proxy.md` | types-07, utils-07, config-07, secrets-05 | 13 | done |
 | 4 | cli | `04-plans/09-cli.md` | config-07, secrets-05, proxy-13, harnesses-07, sessions-07 | 6 | todo |
 | 4 | gui-pages | `04-plans/12-gui-pages.md` | ui-07, ipc-05 | 7 | todo |
 | 5 | desktop-shell | `04-plans/11-desktop-shell.md` | cli-06, ipc-05, proxy-13, harnesses-07, sessions-07, config-07, secrets-05 | 5 | todo |
@@ -144,19 +144,19 @@ A task is **runnable** when its status is `todo` AND every dependency is `done`.
 
 | ID | Task | Deps | Status | Commit |
 |---|---|---|---|---|
-| proxy-01 | Internal request/stream types + ProxyError | types-07, utils-07, config-07, secrets-05 | todo | |
-| proxy-02 | Request authentication | | todo | |
-| proxy-03 | Anthropic inbound parser | | todo | |
-| proxy-04 | OpenAI inbound parser | | todo | |
-| proxy-05 | Anthropic SSE serializer | | todo | |
-| proxy-06 | OpenAI SSE serializer | | todo | |
-| proxy-07 | Alias router | | todo | |
-| proxy-08 | Provider factory (secrets + lazy SDK + cache) | | todo | |
-| proxy-09 | LanguageModelGateway interface + fake | | todo | |
-| proxy-10 | Request handler (wiring, no real network) | | todo | |
-| proxy-11 | startProxy + isProxyRunning + integration test | | todo | |
-| proxy-12 | Real SDK loader + real gateway (integration) | | todo | |
-| proxy-13 | Barrel + provider config schemas + CLAUDE.md | | todo | |
+| proxy-01 | Internal request/stream types + ProxyError | types-07, utils-07, config-07, secrets-05 | done | 6d3d967 |
+| proxy-02 | Request authentication | | done | 7407330 |
+| proxy-03 | Anthropic inbound parser | | done | b9f9f77 |
+| proxy-04 | OpenAI inbound parser | | done | 0561ec1 |
+| proxy-05 | Anthropic SSE serializer | | done | 6eeb268 |
+| proxy-06 | OpenAI SSE serializer | | done | 2996f1b |
+| proxy-07 | Alias router | | done | ee1c513 |
+| proxy-08 | Provider factory (secrets + lazy SDK + cache) | | done | cf45b00 |
+| proxy-09 | LanguageModelGateway interface + fake | | done | 2622ec7 |
+| proxy-10 | Request handler (wiring, no real network) | | done | c0fadc0 |
+| proxy-11 | startProxy + isProxyRunning + integration test | | done | 09822a4 |
+| proxy-12 | Real SDK loader + real gateway (integration) | | done | b5e1c6c |
+| proxy-13 | Barrel + provider config schemas + CLAUDE.md | | done | 832780e |
 
 ## 4 — cli (`09-cli.md`)
 
