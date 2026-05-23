@@ -198,7 +198,7 @@ A task is **runnable** when its status is `todo` AND every dependency is `done`.
 | tray-polish-01 | `buildTrayMenu` pure fn + `TrayMenu`/`TrayItem` types | harnesses-07 | todo | |
 | tray-polish-02 | `mountTray` Electrobun seam + click routing | desktop-shell-04 | todo | |
 | tray-polish-03 | `createProviderTester` (connectivity probe) | proxy-13 | todo | |
-| tray-polish-04 | `exportConfig` / `importConfig` (pure round-trip) | config-07 | todo | |
+| tray-polish-04 | `exportConfig` / `importConfig` (pure round-trip) | config-07 | done | d807370 |
 | tray-polish-05 | Final end-to-end / integration verification | desktop-shell-05, gui-pages-07, tray-polish-02, tray-polish-03, tray-polish-04 | todo | |
 | tray-polish-06 | Wrap-up — whole-repo gate green + finalize ledger | tray-polish-05 | todo | |
 
