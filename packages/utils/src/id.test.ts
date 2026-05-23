@@ -1,5 +1,5 @@
-import { describe, it, expect } from "bun:test"
-import { createSequentialIdGen, createCryptoIdGen } from "./id"
+import { describe, expect, it } from "bun:test"
+import { createCryptoIdGen, createSequentialIdGen } from "./id"
 
 describe("createSequentialIdGen", () => {
   it("produces deterministic prefixed ids when called repeatedly", () => {

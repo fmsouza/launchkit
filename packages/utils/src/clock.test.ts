@@ -1,5 +1,5 @@
-import { describe, it, expect } from "bun:test"
-import { createSystemClock, createFixedClock } from "./clock"
+import { describe, expect, it } from "bun:test"
+import { createFixedClock, createSystemClock } from "./clock"
 
 describe("createFixedClock", () => {
   it("returns the configured instant whenever now() is called", () => {
