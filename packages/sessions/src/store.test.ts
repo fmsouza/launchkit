@@ -60,3 +60,79 @@ describe("createSessionStore.init", () => {
     }
   })
 })
+
+describe("createSessionStore.create", () => {
+  it("returns a Session with the id from idGen and ISO startedAt from the clock when create() is called", () => {
+    const deps = makeDeps()
+    const store = createSessionStore(deps)
+    store.init()
+    const r = store.create({
+      harnessId: "claude" as never,
+      alias: "default" as never,
+    })
+    expect(isOk(r) && r.value).toEqual({
+      id: "s_1",
+      harnessId: "claude",
+      alias: "default",
+      startedAt: "2026-05-23T10:00:00.000Z",
+    })
+  })
+
+  it("issues a parameterized INSERT whose values live in params, not in the sql, when create() is called", () => {
+    const deps = makeDeps()
+    const store = createSessionStore(deps)
+    store.init()
+    store.create({ harnessId: "claude" as never, alias: "default" as never })
+    const insert = deps.db.statements().find((s) => /^\s*INSERT/i.test(s.sql))
+    expect(insert?.sql).toContain("?")
+    expect(insert?.sql).not.toContain("s_1")
+    expect(insert?.sql).not.toContain("claude")
+    expect(insert?.sql).not.toContain("2026-05-23T10:00:00.000Z")
+    expect(insert?.params).toEqual([
+      "s_1",
+      "claude",
+      "default",
+      "2026-05-23T10:00:00.000Z",
+    ])
+  })
+
+  it("uses the idGen prefix 's' for the generated session id when create() is called", () => {
+    const deps = makeDeps()
+    const store = createSessionStore(deps)
+    store.init()
+    const first = store.create({
+      harnessId: "claude" as never,
+      alias: "default" as never,
+    })
+    const second = store.create({
+      harnessId: "claude" as never,
+      alias: "default" as never,
+    })
+    expect(isOk(first) && first.value.id).toBe("s_1")
+    expect(isOk(second) && second.value.id).toBe("s_2")
+  })
+
+  it("returns the db-failed error when the INSERT fails", () => {
+    const failing = {
+      ...makeDeps(),
+      db: {
+        exec: () => ({ ok: true as const, value: undefined }),
+        run: () => ({
+          ok: false as const,
+          error: { kind: "db-failed" as const, detail: "disk full" },
+        }),
+        all: () => ({ ok: true as const, value: [] }),
+        get: () => ({ ok: true as const, value: undefined }),
+      },
+    }
+    const store = createSessionStore(failing)
+    const r = store.create({
+      harnessId: "claude" as never,
+      alias: "default" as never,
+    })
+    expect(r).toEqual({
+      ok: false,
+      error: { kind: "db-failed", detail: "disk full" },
+    })
+  })
+})

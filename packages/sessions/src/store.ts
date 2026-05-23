@@ -41,6 +41,8 @@ const CREATE_INDEX_STARTED =
   "CREATE INDEX IF NOT EXISTS idx_sessions_startedAt ON sessions (startedAt)"
 const CREATE_INDEX_HARNESS =
   "CREATE INDEX IF NOT EXISTS idx_sessions_harnessId ON sessions (harnessId)"
+const INSERT_SESSION =
+  "INSERT INTO sessions (id, harnessId, alias, startedAt) VALUES (?, ?, ?, ?)"
 
 export const createSessionStore = (deps: {
   readonly db: Database
@@ -61,8 +63,22 @@ export const createSessionStore = (deps: {
 
   return {
     init,
-    create: () => {
-      throw new Error("not implemented until sessions-03")
+    create: (input: SessionInput): Result<Session, SessionError> => {
+      const id = deps.idGen.next("s") as SessionId
+      const startedAt = deps.clock.now().toISOString()
+      const written = db.run(INSERT_SESSION, [
+        id,
+        input.harnessId,
+        input.alias,
+        startedAt,
+      ])
+      if (isErr(written)) return written
+      return ok({
+        id,
+        harnessId: input.harnessId,
+        alias: input.alias,
+        startedAt,
+      })
     },
     close: () => {
       throw new Error("not implemented until sessions-04")
