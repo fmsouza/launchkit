@@ -1,8 +1,12 @@
 import type { ConfigStore } from "@launchkit/config"
+import type { HarnessRegistry, LaunchParams } from "@launchkit/harnesses"
+import type {
+  LanguageModelGateway,
+  ProviderFactory,
+  RunningProxy,
+} from "@launchkit/proxy"
 import type { SecretStore } from "@launchkit/secrets"
 import type { SessionStore } from "@launchkit/sessions"
-import type { LaunchParams, HarnessRegistry } from "@launchkit/harnesses"
-import type { ProviderFactory, LanguageModelGateway, RunningProxy } from "@launchkit/proxy"
 import type { Result } from "@launchkit/utils"
 
 import { homedir } from "node:os"
@@ -13,27 +17,37 @@ import {
   createFsConfigFile,
   defaultConfig,
 } from "@launchkit/config"
-import { createSecretStore, createMacosSecurityBackend, createBunProcessRunner } from "@launchkit/secrets"
-import { createSessionStore, createBunSqliteDatabase } from "@launchkit/sessions"
 import {
-  createRegistry,
-  createDirHarnessFileSource,
-  launchHarness,
-  createPathCommandResolver,
   createBunProcessSpawner,
+  createDirHarnessFileSource,
+  createPathCommandResolver,
+  createRegistry,
+  launchHarness,
 } from "@launchkit/harnesses"
 import {
-  isProxyRunning,
-  startProxy,
-  createRouter,
   createProviderFactory,
-  loadSdk,
   createRealGateway,
+  createRouter,
+  isProxyRunning,
+  loadSdk,
+  startProxy,
 } from "@launchkit/proxy"
-import { ok, createSystemClock, createCryptoIdGen } from "@launchkit/utils"
+import {
+  createBunProcessRunner,
+  createMacosSecurityBackend,
+  createSecretStore,
+} from "@launchkit/secrets"
+import {
+  createBunSqliteDatabase,
+  createSessionStore,
+} from "@launchkit/sessions"
+import { createCryptoIdGen, createSystemClock, ok } from "@launchkit/utils"
 
 /** Result of testing one provider's live connectivity (mirrors ipc TestProviderResult). */
-export type ProviderTestResult = { readonly ok: boolean; readonly latencyMs: number }
+export type ProviderTestResult = {
+  readonly ok: boolean
+  readonly latencyMs: number
+}
 
 /**
  * The wired subsystems — every effectful capability the GUI/CLI needs, already constructed with
@@ -47,15 +61,24 @@ export interface AppContext {
   readonly sessions: SessionStore
   readonly registry: HarnessRegistry
   /** `launchHarness(realDeps)` partially applied — a single `(params) => Result<{ pid }, unknown>`. */
-  readonly launch: (params: LaunchParams) => Result<{ readonly pid: number }, unknown>
+  readonly launch: (
+    params: LaunchParams,
+  ) => Result<{ readonly pid: number }, unknown>
   readonly proxy: {
     isRunning(baseUrl: string): Promise<boolean>
-    start(opts: { host: string; port: number; proxyKey: string; config: import("@launchkit/config").Config }): RunningProxy
+    start(opts: {
+      host: string
+      port: number
+      proxyKey: string
+      config: import("@launchkit/config").Config
+    }): RunningProxy
   }
   readonly factory: ProviderFactory
   readonly gateway: LanguageModelGateway
   /** Test one provider's connectivity. The real implementation is provided by the tray-and-polish plan. */
-  readonly testProvider: (providerId: string) => Promise<Result<ProviderTestResult, unknown>>
+  readonly testProvider: (
+    providerId: string,
+  ) => Promise<Result<ProviderTestResult, unknown>>
   /** The configured proxy port (from `config.settings.proxyPort`), surfaced for `getProxyStatus`. */
   readonly proxyPort: number
   /** The loopback proxy base URL (`http://127.0.0.1:<port>`), used by `proxy.isRunning`. */
@@ -63,7 +86,11 @@ export interface AppContext {
   /** Mints the per-run >=32-byte proxy key (security.md) when the shell starts an ephemeral proxy. */
   readonly genProxyKey: () => string
   /** Resolved settings paths (config + db + harness dir), surfaced for diagnostics/tests. */
-  readonly paths: { readonly configFile: string; readonly dbFile: string; readonly harnessDir: string }
+  readonly paths: {
+    readonly configFile: string
+    readonly dbFile: string
+    readonly harnessDir: string
+  }
 }
 
 /**
@@ -132,7 +159,9 @@ const realDeps: CreateAppContextDeps = {
  * `~/.config/launchkit/`. Covered end-to-end by the tray-and-polish e2e; the wiring shape is pinned
  * by composition.test.ts with injected fake constructors.
  */
-export const createAppContext = (deps: CreateAppContextDeps = realDeps): AppContext => {
+export const createAppContext = (
+  deps: CreateAppContextDeps = realDeps,
+): AppContext => {
   const configDir = join(deps.homeDir(), ".config", "launchkit")
   const configFile = join(configDir, "config.json")
   const dbFile = join(configDir, "launchkit.db")
@@ -145,7 +174,9 @@ export const createAppContext = (deps: CreateAppContextDeps = realDeps): AppCont
 
   // secrets: store( macOS security backend over a Bun process runner, crypto id gen )
   const secrets = deps.createSecretStore({
-    backend: deps.createMacosSecurityBackend({ runner: deps.createBunProcessRunner() }),
+    backend: deps.createMacosSecurityBackend({
+      runner: deps.createBunProcessRunner(),
+    }),
     idGen: deps.createCryptoIdGen(),
   })
 
@@ -158,14 +189,19 @@ export const createAppContext = (deps: CreateAppContextDeps = realDeps): AppCont
   sessions.init()
 
   // harnesses: registry from the user harness dir; launcher partially applied with real adapters
-  const registry = deps.createRegistry({ fileSource: deps.createDirHarnessFileSource(harnessDir) })
+  const registry = deps.createRegistry({
+    fileSource: deps.createDirHarnessFileSource(harnessDir),
+  })
   const launch = deps.launchHarness({
     resolver: deps.createPathCommandResolver(),
     spawner: deps.createBunProcessSpawner(),
   })
 
   // proxy provider layer: factory (secrets + lazy SDK loader) + real streamText gateway
-  const factory = deps.createProviderFactory({ secretStore: secrets, loadSdk: deps.loadSdk })
+  const factory = deps.createProviderFactory({
+    secretStore: secrets,
+    loadSdk: deps.loadSdk,
+  })
   const gateway = deps.createRealGateway()
 
   // proxy settings resolved from the default config shape (loopback only, security.md)

@@ -1,9 +1,9 @@
-import { describe, it, expect } from "bun:test"
-import { ok, err, type Result } from "@launchkit/utils"
-import type { Provider, Session } from "@launchkit/types"
+import { describe, expect, it } from "bun:test"
 import type { Config } from "@launchkit/config"
-import { createIpcHandlers } from "./handlers"
+import type { Provider, Session } from "@launchkit/types"
+import { type Result, err, ok } from "@launchkit/utils"
 import type { AppContext } from "../../composition"
+import { createIpcHandlers } from "./handlers"
 
 // --- a fully in-memory AppContext fake -------------------------------------------------
 
@@ -84,18 +84,37 @@ const makeCtx = (
     },
     proxy: {
       isRunning: async () => over.proxyRunning ?? true,
-      start: () => ({ hostname: "127.0.0.1", port: over.proxyPort ?? 4000, stop: () => {} }),
+      start: () => ({
+        hostname: "127.0.0.1",
+        port: over.proxyPort ?? 4000,
+        stop: () => {},
+      }),
     },
     proxyPort: over.proxyPort ?? 4000,
     proxyBaseUrl: `http://127.0.0.1:${over.proxyPort ?? 4000}`,
     testProvider: async () => ok({ ok: true, latencyMs: 12 }),
     registry: {
-      list: async () => ok([{ id: "claude", name: "Claude Code", command: "claude", apiFormat: "anthropic", envTemplate: {}, defaultAlias: "default", builtIn: true }]),
+      list: async () =>
+        ok([
+          {
+            id: "claude",
+            name: "Claude Code",
+            command: "claude",
+            apiFormat: "anthropic",
+            envTemplate: {},
+            defaultAlias: "default",
+            builtIn: true,
+          },
+        ]),
     },
     genProxyKey: () => "test-key",
     factory: {},
     gateway: {},
-    paths: { configFile: "/tmp/config.json", dbFile: "/tmp/launchkit.db", harnessDir: "/tmp/harnesses" },
+    paths: {
+      configFile: "/tmp/config.json",
+      dbFile: "/tmp/launchkit.db",
+      harnessDir: "/tmp/harnesses",
+    },
   } as unknown as AppContext
 
   return { ctx, saves, secretSets, launchParams, sessionInputs }
@@ -130,7 +149,9 @@ describe("createIpcHandlers.getProviders", () => {
   })
 
   it("never emits a secret ref or value in the ProviderView when listing", async () => {
-    const { ctx } = makeCtx({ providers: [provider({ secrets: { apiKey: { ref: "kc_secret_ref" } } })] })
+    const { ctx } = makeCtx({
+      providers: [provider({ secrets: { apiKey: { ref: "kc_secret_ref" } } })],
+    })
     const handlers = createIpcHandlers(ctx)
 
     const serialized = JSON.stringify(await handlers.getProviders(undefined))
@@ -142,13 +163,23 @@ describe("createIpcHandlers.getProviders", () => {
 
   it("marks a secret field isSet:true for every keychain ref the provider holds", async () => {
     const { ctx } = makeCtx({
-      providers: [provider({ secrets: { apiKey: { ref: "kc_a" }, secretAccessKey: { ref: "kc_b" } } })],
+      providers: [
+        provider({
+          secrets: {
+            apiKey: { ref: "kc_a" },
+            secretAccessKey: { ref: "kc_b" },
+          },
+        }),
+      ],
     })
     const handlers = createIpcHandlers(ctx)
 
     const [view] = await handlers.getProviders(undefined)
 
-    expect(view?.secretFields).toEqual({ apiKey: { isSet: true }, secretAccessKey: { isSet: true } })
+    expect(view?.secretFields).toEqual({
+      apiKey: { isSet: true },
+      secretAccessKey: { isSet: true },
+    })
   })
 })
 
@@ -172,7 +203,9 @@ describe("createIpcHandlers.setProviderSecret", () => {
     expect(secretSets).toEqual(["sk-live-secret"])
     // ... and only the ref (never the value) is persisted on the provider
     expect(saves).toHaveLength(1)
-    const saved = saves[0]?.providers.find((p) => p.id === ("p_openai" as never))
+    const saved = saves[0]?.providers.find(
+      (p) => p.id === ("p_openai" as never),
+    )
     expect(saved?.secrets).toEqual({ apiKey: { ref: "kc_minted" } })
   })
 
@@ -184,7 +217,11 @@ describe("createIpcHandlers.setProviderSecret", () => {
     const handlers = createIpcHandlers(ctx)
 
     await expect(
-      handlers.setProviderSecret({ providerId: "p_openai" as never, field: "apiKey", value: "sk-x" }),
+      handlers.setProviderSecret({
+        providerId: "p_openai" as never,
+        field: "apiKey",
+        value: "sk-x",
+      }),
     ).rejects.toThrow()
   })
 
@@ -193,17 +230,26 @@ describe("createIpcHandlers.setProviderSecret", () => {
     const handlers = createIpcHandlers(ctx)
 
     await expect(
-      handlers.setProviderSecret({ providerId: "p_ghost" as never, field: "apiKey", value: "sk-x" }),
+      handlers.setProviderSecret({
+        providerId: "p_ghost" as never,
+        field: "apiKey",
+        value: "sk-x",
+      }),
     ).rejects.toThrow()
   })
 })
 
 describe("createIpcHandlers.launchHarness", () => {
   it("launches via ctx.launch and records a session, returning the created Session", async () => {
-    const { ctx, launchParams, sessionInputs } = makeCtx({ providers: [provider()] })
+    const { ctx, launchParams, sessionInputs } = makeCtx({
+      providers: [provider()],
+    })
     const handlers = createIpcHandlers(ctx)
 
-    const session = await handlers.launchHarness({ id: "claude" as never, alias: "fast" as never })
+    const session = await handlers.launchHarness({
+      id: "claude" as never,
+      alias: "fast" as never,
+    })
 
     expect(session).toEqual(sampleSession)
     expect(launchParams).toHaveLength(1)
@@ -214,7 +260,9 @@ describe("createIpcHandlers.launchHarness", () => {
     const { ctx } = makeCtx({ providers: [provider()], launchOk: false })
     const handlers = createIpcHandlers(ctx)
 
-    await expect(handlers.launchHarness({ id: "claude" as never })).rejects.toThrow()
+    await expect(
+      handlers.launchHarness({ id: "claude" as never }),
+    ).rejects.toThrow()
   })
 })
 
@@ -223,13 +271,19 @@ describe("createIpcHandlers.getProxyStatus", () => {
     const { ctx } = makeCtx({ proxyRunning: true, proxyPort: 4000 })
     const handlers = createIpcHandlers(ctx)
 
-    expect(await handlers.getProxyStatus(undefined)).toEqual({ running: true, port: 4000 })
+    expect(await handlers.getProxyStatus(undefined)).toEqual({
+      running: true,
+      port: 4000,
+    })
   })
 
   it("reports running:false when the proxy is not up", async () => {
     const { ctx } = makeCtx({ proxyRunning: false, proxyPort: 4000 })
     const handlers = createIpcHandlers(ctx)
 
-    expect(await handlers.getProxyStatus(undefined)).toEqual({ running: false, port: 4000 })
+    expect(await handlers.getProxyStatus(undefined)).toEqual({
+      running: false,
+      port: 4000,
+    })
   })
 })

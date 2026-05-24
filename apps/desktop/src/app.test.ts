@@ -1,4 +1,4 @@
-import { describe, it, expect, mock } from "bun:test"
+import { describe, expect, it, mock } from "bun:test"
 import { runApp } from "./app"
 import type { RunAppDeps } from "./app"
 
@@ -18,7 +18,9 @@ describe("runApp", () => {
     await runApp("cli", argv, deps)
 
     expect(deps.runCli).toHaveBeenCalledTimes(1)
-    expect((deps.runCli as ReturnType<typeof mock>).mock.calls[0]?.[0]).toBe(argv)
+    expect((deps.runCli as ReturnType<typeof mock>).mock.calls[0]?.[0]).toBe(
+      argv,
+    )
     expect(deps.startProxy).toHaveBeenCalledTimes(0)
     expect(deps.openWindow).toHaveBeenCalledTimes(0)
   })

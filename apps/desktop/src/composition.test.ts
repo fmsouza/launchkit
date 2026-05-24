@@ -1,4 +1,4 @@
-import { describe, it, expect } from "bun:test"
+import { describe, expect, it } from "bun:test"
 import { ok } from "@launchkit/utils"
 import { createAppContext } from "./composition"
 import type { CreateAppContextDeps } from "./composition"
@@ -9,10 +9,12 @@ const makeFakeDeps = (): {
   calls: Record<string, unknown[]>
 } => {
   const calls: Record<string, unknown[]> = {}
-  const record = (name: string) => (...args: unknown[]): unknown => {
-    calls[name] = args
-    return { __stub: name }
-  }
+  const record =
+    (name: string) =>
+    (...args: unknown[]): unknown => {
+      calls[name] = args
+      return { __stub: name }
+    }
   const deps: CreateAppContextDeps = {
     homeDir: () => "/home/tester",
     createFsConfigFile: record("createFsConfigFile") as never,
@@ -25,15 +27,20 @@ const makeFakeDeps = (): {
     createBunSqliteDatabase: record("createBunSqliteDatabase") as never,
     createSystemClock: record("createSystemClock") as never,
     createSessionStore: ((..._a: unknown[]) => {
-      calls["createSessionStore"] = _a
-      return { init: () => ok(undefined), create: () => ok(undefined), close: () => ok(undefined), query: () => ok([]) }
+      calls.createSessionStore = _a
+      return {
+        init: () => ok(undefined),
+        create: () => ok(undefined),
+        close: () => ok(undefined),
+        query: () => ok([]),
+      }
     }) as never,
     createDirHarnessFileSource: record("createDirHarnessFileSource") as never,
     createRegistry: record("createRegistry") as never,
     createPathCommandResolver: record("createPathCommandResolver") as never,
     createBunProcessSpawner: record("createBunProcessSpawner") as never,
     launchHarness: ((..._a: unknown[]) => {
-      calls["launchHarness"] = _a
+      calls.launchHarness = _a
       return (..._p: unknown[]) => ok({ pid: 1 })
     }) as never,
     createProviderFactory: record("createProviderFactory") as never,
@@ -50,19 +57,27 @@ describe("createAppContext wiring", () => {
     createAppContext(deps)
 
     // fs file is created at the resolved config path under the home dir
-    expect((calls["createFsConfigFile"]?.[0] as string)).toContain("/home/tester/.config/launchkit/config.json")
+    expect(calls.createFsConfigFile?.[0] as string).toContain(
+      "/home/tester/.config/launchkit/config.json",
+    )
     // the file store receives that fs file ...
-    expect(calls["createFileConfigStore"]?.[0]).toEqual({ file: { __stub: "createFsConfigFile" } })
+    expect(calls.createFileConfigStore?.[0]).toEqual({
+      file: { __stub: "createFsConfigFile" },
+    })
     // ... and the cached store wraps the file store
-    expect(calls["createCachedConfigStore"]?.[0]).toEqual({ __stub: "createFileConfigStore" })
+    expect(calls.createCachedConfigStore?.[0]).toEqual({
+      __stub: "createFileConfigStore",
+    })
   })
 
   it("builds the secret store from a macOS backend driven by a Bun process runner + crypto id gen", () => {
     const { deps, calls } = makeFakeDeps()
     createAppContext(deps)
 
-    expect(calls["createMacosSecurityBackend"]?.[0]).toEqual({ runner: { __stub: "createBunProcessRunner" } })
-    expect(calls["createSecretStore"]?.[0]).toEqual({
+    expect(calls.createMacosSecurityBackend?.[0]).toEqual({
+      runner: { __stub: "createBunProcessRunner" },
+    })
+    expect(calls.createSecretStore?.[0]).toEqual({
       backend: { __stub: "createMacosSecurityBackend" },
       idGen: { __stub: "createCryptoIdGen" },
     })
@@ -72,8 +87,14 @@ describe("createAppContext wiring", () => {
     const { deps, calls } = makeFakeDeps()
     createAppContext(deps)
 
-    expect((calls["createBunSqliteDatabase"]?.[0] as string)).toContain("/home/tester/.config/launchkit/launchkit.db")
-    const sessionArgs = calls["createSessionStore"]?.[0] as { db: unknown; clock: unknown; idGen: unknown }
+    expect(calls.createBunSqliteDatabase?.[0] as string).toContain(
+      "/home/tester/.config/launchkit/launchkit.db",
+    )
+    const sessionArgs = calls.createSessionStore?.[0] as {
+      db: unknown
+      clock: unknown
+      idGen: unknown
+    }
     expect(sessionArgs.db).toEqual({ __stub: "createBunSqliteDatabase" })
     expect(sessionArgs.clock).toEqual({ __stub: "createSystemClock" })
   })
@@ -89,15 +110,19 @@ describe("createAppContext wiring", () => {
     const { deps, calls } = makeFakeDeps()
     createAppContext(deps)
 
-    expect((calls["createDirHarnessFileSource"]?.[0] as string)).toContain("/home/tester/.config/launchkit/harnesses")
-    expect(calls["createRegistry"]?.[0]).toEqual({ fileSource: { __stub: "createDirHarnessFileSource" } })
+    expect(calls.createDirHarnessFileSource?.[0] as string).toContain(
+      "/home/tester/.config/launchkit/harnesses",
+    )
+    expect(calls.createRegistry?.[0]).toEqual({
+      fileSource: { __stub: "createDirHarnessFileSource" },
+    })
   })
 
   it("partially applies launchHarness with the real resolver + spawner", () => {
     const { deps, calls } = makeFakeDeps()
     createAppContext(deps)
 
-    expect(calls["launchHarness"]?.[0]).toEqual({
+    expect(calls.launchHarness?.[0]).toEqual({
       resolver: { __stub: "createPathCommandResolver" },
       spawner: { __stub: "createBunProcessSpawner" },
     })
@@ -107,7 +132,10 @@ describe("createAppContext wiring", () => {
     const { deps, calls } = makeFakeDeps()
     createAppContext(deps)
 
-    const factoryArgs = calls["createProviderFactory"]?.[0] as { secretStore: unknown; loadSdk: unknown }
+    const factoryArgs = calls.createProviderFactory?.[0] as {
+      secretStore: unknown
+      loadSdk: unknown
+    }
     expect(factoryArgs.secretStore).toEqual({ __stub: "createSecretStore" })
     expect(typeof factoryArgs.loadSdk).toBe("function")
   })

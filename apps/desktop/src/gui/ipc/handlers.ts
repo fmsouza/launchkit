@@ -1,6 +1,6 @@
-import { isOk } from "@launchkit/utils"
+import type { IpcHandlers, ProviderView } from "@launchkit/ipc"
 import type { Provider, SecretRef } from "@launchkit/types"
-import type { ProviderView, IpcHandlers } from "@launchkit/ipc"
+import { isOk } from "@launchkit/utils"
 import type { AppContext } from "../../composition"
 
 /**
@@ -14,7 +14,9 @@ const toProviderView = (provider: Provider): ProviderView => ({
   sdkProvider: provider.sdkProvider,
   config: provider.config,
   secretFields: Object.fromEntries(
-    Object.keys(provider.secrets).map((field) => [field, { isSet: true }] as const),
+    Object.keys(provider.secrets).map(
+      (field) => [field, { isSet: true }] as const,
+    ),
   ),
   models: provider.models,
 })
@@ -57,7 +59,10 @@ export const createIpcHandlers = (ctx: AppContext): IpcHandlers => {
         secrets: {},
         models: input.models,
       }
-      const saved = await ctx.config.save({ ...config, providers: [...config.providers, provider] })
+      const saved = await ctx.config.save({
+        ...config,
+        providers: [...config.providers, provider],
+      })
       if (!isOk(saved)) return fail("could not save provider")
       return toProviderView(provider)
     },
@@ -98,7 +103,8 @@ export const createIpcHandlers = (ctx: AppContext): IpcHandlers => {
     setProviderSecret: async ({ providerId, field, value }) => {
       const config = await loadConfig()
       const existing = config.providers.find((p) => p.id === providerId)
-      if (existing === undefined) return fail(`unknown provider: ${String(providerId)}`)
+      if (existing === undefined)
+        return fail(`unknown provider: ${String(providerId)}`)
 
       // The ONLY inbound secret path: write the raw value straight to the keychain ...
       const set = await ctx.secrets.set(value)
@@ -106,8 +112,13 @@ export const createIpcHandlers = (ctx: AppContext): IpcHandlers => {
       const ref: SecretRef = set.value
 
       // ... then persist ONLY the returned ref on the provider (never the value).
-      const updated: Provider = { ...existing, secrets: { ...existing.secrets, [field]: ref } }
-      const providers = config.providers.map((p) => (p.id === providerId ? updated : p))
+      const updated: Provider = {
+        ...existing,
+        secrets: { ...existing.secrets, [field]: ref },
+      }
+      const providers = config.providers.map((p) =>
+        p.id === providerId ? updated : p,
+      )
       const saved = await ctx.config.save({ ...config, providers })
       if (!isOk(saved)) return fail("could not save secret reference")
       return null
@@ -121,14 +132,21 @@ export const createIpcHandlers = (ctx: AppContext): IpcHandlers => {
 
     addAlias: async (alias) => {
       const config = await loadConfig()
-      const saved = await ctx.config.save({ ...config, aliases: [...config.aliases, alias] })
+      const saved = await ctx.config.save({
+        ...config,
+        aliases: [...config.aliases, alias],
+      })
       if (!isOk(saved)) return fail("could not save alias")
       return alias
     },
 
     updateAlias: async ({ alias, input }) => {
       const config = await loadConfig()
-      const next = { alias, providerId: input.providerId, providerModel: input.providerModel }
+      const next = {
+        alias,
+        providerId: input.providerId,
+        providerModel: input.providerModel,
+      }
       const aliases = config.aliases.map((a) => (a.alias === alias ? next : a))
       const saved = await ctx.config.save({ ...config, aliases })
       if (!isOk(saved)) return fail("could not update alias")
@@ -172,17 +190,32 @@ export const createIpcHandlers = (ctx: AppContext): IpcHandlers => {
       const proxyUrl = `http://${config.settings.proxyHost}:${config.settings.proxyPort}`
 
       // The GUI proxy runs persistently while the app is open; the launcher still needs *a* key.
-      const launched = ctx.launch({ harness, proxyUrl, proxyKey: ctx.genProxyKey(), model: resolvedAlias })
+      const launched = ctx.launch({
+        harness,
+        proxyUrl,
+        proxyKey: ctx.genProxyKey(),
+        model: resolvedAlias,
+      })
       if (!isOk(launched)) return fail("failed to launch harness")
 
-      const session = ctx.sessions.create({ harnessId: harness.id, alias: resolvedAlias })
+      const session = ctx.sessions.create({
+        harnessId: harness.id,
+        alias: resolvedAlias,
+      })
       if (!isOk(session)) return fail("failed to record session")
       return session.value
     },
 
     // ── Sessions & proxy ─────────────────────────────────────────────────────────────────
     getSessions: async (filter) => {
-      const queried = ctx.sessions.query(filter)
+      // Build a SessionFilter from IPC params, handling exactOptionalPropertyTypes
+      const sessionFilter =
+        filter === undefined
+          ? undefined
+          : (Object.fromEntries(
+              Object.entries(filter).filter(([, v]) => v !== undefined),
+            ) as import("@launchkit/sessions").SessionFilter)
+      const queried = ctx.sessions.query(sessionFilter)
       if (!isOk(queried)) return fail("could not query sessions")
       return [...queried.value]
     },
