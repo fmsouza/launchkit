@@ -2,6 +2,12 @@
 
 **This file is the single source of truth for build state.** See `EXECUTION.md` for the protocol. Update it in the same commit as the work it tracks.
 
+## Status: Phase 3 complete
+
+All build-plan tasks are `done`. The LaunchKit binary builds, the full gate
+(`bun run typecheck && bun run lint && bun test`) is green, and the manual-verification checklist
+(`apps/desktop/MANUAL-VERIFICATION.md`) covers the native window/tray paths that automated tests cannot.
+
 ## Status legend
 `todo` · `in-progress` · `done` · `blocked`
 
@@ -26,10 +32,10 @@ A task is **runnable** when its status is `todo` AND every dependency is `done`.
 | 2 | harnesses | `04-plans/08-harnesses.md` | types-07, utils-07 | 7 | done |
 | 2 | ui | `04-plans/10-ui.md` | types-07, utils-07 | 7 | done |
 | 3 | proxy | `04-plans/07-proxy.md` | types-07, utils-07, config-07, secrets-05 | 13 | done |
-| 4 | cli | `04-plans/09-cli.md` | config-07, secrets-05, proxy-13, harnesses-07, sessions-07 | 6 | todo |
-| 4 | gui-pages | `04-plans/12-gui-pages.md` | ui-07, ipc-05 | 7 | todo |
+| 4 | cli | `04-plans/09-cli.md` | config-07, secrets-05, proxy-13, harnesses-07, sessions-07 | 6 | done |
+| 4 | gui-pages | `04-plans/12-gui-pages.md` | ui-07, ipc-05 | 7 | done |
 | 5 | desktop-shell | `04-plans/11-desktop-shell.md` | cli-06, ipc-05, proxy-13, harnesses-07, sessions-07, config-07, secrets-05 | 5 | done |
-| 6 | tray-polish | `04-plans/13-tray-and-polish.md` | desktop-shell-05, gui-pages-07 (per-task deps below) | 6 | todo |
+| 6 | tray-polish | `04-plans/13-tray-and-polish.md` | desktop-shell-05, gui-pages-07 (per-task deps below) | 6 | done |
 
 **Parallelism:** Order-1 (types, utils) → Order-2 (six packages, fully parallel) → proxy → {cli, gui-pages} → desktop-shell → tray-polish. Dispatch parallel subagents per the orchestrator section of `EXECUTION.md`.
 
@@ -200,7 +206,7 @@ A task is **runnable** when its status is `todo` AND every dependency is `done`.
 | tray-polish-03 | `createProviderTester` (connectivity probe) | proxy-13 | done | 47e1c50 |
 | tray-polish-04 | `exportConfig` / `importConfig` (pure round-trip) | config-07 | done | d807370 |
 | tray-polish-05 | Final end-to-end / integration verification | desktop-shell-05, gui-pages-07, tray-polish-02, tray-polish-03, tray-polish-04 | done | d14cfe7 |
-| tray-polish-06 | Wrap-up — whole-repo gate green + finalize ledger | tray-polish-05 | todo | |
+| tray-polish-06 | Wrap-up — whole-repo gate green + finalize ledger | tray-polish-05 | done | 8e9d054 |
 
 ---
 

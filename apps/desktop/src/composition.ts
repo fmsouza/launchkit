@@ -26,6 +26,7 @@ import {
 } from "@launchkit/harnesses"
 import {
   createProviderFactory,
+  createProviderTester,
   createRealGateway,
   createRouter,
   isProxyRunning,
@@ -41,7 +42,8 @@ import {
   createBunSqliteDatabase,
   createSessionStore,
 } from "@launchkit/sessions"
-import { createCryptoIdGen, createSystemClock, ok } from "@launchkit/utils"
+import { createCryptoIdGen, createSystemClock } from "@launchkit/utils"
+import { err } from "@launchkit/utils"
 
 /** Result of testing one provider's live connectivity (mirrors ipc TestProviderResult). */
 export type ProviderTestResult = {
@@ -153,6 +155,37 @@ const realDeps: CreateAppContextDeps = {
 }
 
 /**
+ * Build the `testProvider` function that delegates to `@launchkit/proxy`'s
+ * `createProviderTester`. Resolves the provider from the live config, picks its
+ * first model (falling back to the provider id), and measures connectivity with
+ * the already-wired factory + gateway. Extracted so Biome's noUnusedImports
+ * rule sees the `err` / `createProviderTester` usage at module scope.
+ */
+const createTestProvider = (
+  config: ConfigStore,
+  factory: ProviderFactory,
+  gateway: LanguageModelGateway,
+  createSystemClock: () => import("@launchkit/utils").Clock,
+): AppContext["testProvider"] => {
+  return async (providerId) => {
+    const loaded = await config.load()
+    if (!loaded.ok) return loaded
+    const provider = loaded.value.providers.find(
+      (p) => String(p.id) === providerId,
+    )
+    if (provider === undefined)
+      return err({ kind: "unknown-provider", providerId })
+    const providerModel = provider.models[0] ?? providerId
+    const providerTester = createProviderTester({
+      factory,
+      gateway,
+      clock: createSystemClock(),
+    })
+    return providerTester(provider, providerModel)
+  }
+}
+
+/**
  * Construct the real adapters and inject them into the wired `AppContext`. FLAT and logic-free:
  * every line is a `create*` call wiring one dependency into the next — no branching, no IO logic
  * (that lives in the injected, separately-tested functions). All paths sit under
@@ -241,9 +274,11 @@ export const createAppContext = (
     proxy: { isRunning: isProxyRunning, start: startProxyAdapter },
     factory,
     gateway,
-    // The tray-and-polish plan replaces this with a real connectivity probe; ok-stub keeps the
-    // contract typed until then (the IPC handler simply forwards whatever this returns).
-    testProvider: async () => ok({ ok: true, latencyMs: 0 }),
+    // tray-and-polish-03: real connectivity probe wired here — resolve the provider from the
+    // live config, pick its first model, and delegate to the proxy's createProviderTester.
+    testProvider: createTestProvider(config, factory, gateway, () =>
+      deps.createSystemClock(),
+    ),
     proxyPort,
     proxyBaseUrl,
     genProxyKey: deps.genProxyKey,
