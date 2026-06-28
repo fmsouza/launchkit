@@ -19,6 +19,8 @@ export type MessageItem = {
   text: string
   /** Set when this message carries a turn error (e.g. a provider failure) — render in error state. */
   tone?: "error"
+  /** Correlation id from the originating `run-send`; lets the renderer reconcile its outbox entry. */
+  clientSendId?: string
 }
 export type ReasoningItem = {
   kind: "reasoning"
@@ -171,6 +173,9 @@ export const reduce = (state: RunState, event: CanonicalEvent): RunState => {
               messageId: event.messageId,
               role: event.role ?? "assistant",
               text: event.text,
+              ...(event.clientSendId !== undefined
+                ? { clientSendId: event.clientSendId }
+                : {}),
             },
           ]
         }

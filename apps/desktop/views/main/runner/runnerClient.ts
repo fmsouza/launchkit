@@ -15,7 +15,7 @@ import type { ModelId, SessionId } from "@spectrum/types"
  */
 export interface RunnerClient {
   attach(id: SessionId): void
-  send(id: SessionId, text: string): void
+  send(id: SessionId, text: string, clientSendId?: string): void
   approve(id: SessionId, requestId: string, decision: ApprovalDecision): void
   answer(id: SessionId, requestId: string, answer: QuestionAnswer): void
   interrupt(id: SessionId): void
@@ -37,6 +37,10 @@ export interface RunnerClient {
    * a fresh restart (no resumable history). Returns an unsubscribe fn.
    */
   onResumeToken(cb: (id: SessionId, resumeToken: string) => void): () => void
+  /** The transport lost its socket (error/close); fans out to onConnectionLost subscribers. */
+  connectionLost(): void
+  /** Subscribe to transport-loss notifications. Returns an unsubscribe fn. */
+  onConnectionLost(cb: () => void): () => void
 }
 
 export const createRunnerClient = (
@@ -50,6 +54,7 @@ export const createRunnerClient = (
   const resumeTokenListeners = new Set<
     (id: SessionId, resumeToken: string) => void
   >()
+  const connectionLostListeners = new Set<() => void>()
 
   type Dispatcher = (message: RunnerOutbound) => void
   const dispatchers: Map<RunnerOutbound["type"], Dispatcher> = new Map([
@@ -82,8 +87,13 @@ export const createRunnerClient = (
     attach: (id) => {
       send({ type: "run-attach", id })
     },
-    send: (id, text) => {
-      send({ type: "run-send", id, text })
+    send: (id, text, clientSendId) => {
+      send({
+        type: "run-send",
+        id,
+        text,
+        ...(clientSendId !== undefined ? { clientSendId } : {}),
+      })
     },
     approve: (id, requestId, decision) => {
       send({ type: "run-approve", id, requestId, decision })
@@ -124,6 +134,15 @@ export const createRunnerClient = (
       resumeTokenListeners.add(cb)
       return () => {
         resumeTokenListeners.delete(cb)
+      }
+    },
+    connectionLost: () => {
+      for (const cb of connectionLostListeners) cb()
+    },
+    onConnectionLost: (cb) => {
+      connectionLostListeners.add(cb)
+      return () => {
+        connectionLostListeners.delete(cb)
       }
     },
   }

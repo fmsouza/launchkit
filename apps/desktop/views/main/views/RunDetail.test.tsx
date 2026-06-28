@@ -1,4 +1,4 @@
-import { describe, expect, it, mock } from "bun:test"
+import { beforeEach, describe, expect, it, jest, mock } from "bun:test"
 import type { RunnerOutbound } from "@spectrum/agent-driver"
 import type { CanonicalEvent, StoredEvent } from "@spectrum/agent-events"
 import {
@@ -12,7 +12,7 @@ import { cleanup, fireEvent, screen, waitFor } from "@testing-library/react"
 import type { RunnerClient } from "../runner/runnerClient"
 import { createFakeIpcClient } from "../test/fake-client"
 import { renderWithProviders } from "../test/renderWithProviders"
-import { RunDetail } from "./RunDetail"
+import { RunDetail, SEND_ACK_TIMEOUT_MS } from "./RunDetail"
 
 const id = SessionIdSchema.parse("s_00000000-0000-4000-8000-000000000000")
 
@@ -23,8 +23,10 @@ const makeFakeRunner = (): RunnerClient & {
   readonly setModes: Array<{ id: SessionId; mode: string }>
   readonly setModels: Array<{ id: SessionId; modelId: ModelId | null }>
   push: (event: StoredEvent) => void
+  connectionLost: () => void
 } => {
   let listener: ((event: StoredEvent) => void) | undefined
+  const connectionLostListeners = new Set<() => void>()
   const attached: SessionId[] = []
   const sends: string[] = []
   const setModes: Array<{ id: SessionId; mode: string }> = []
@@ -47,6 +49,15 @@ const makeFakeRunner = (): RunnerClient & {
     onAny: () => () => {},
     onSessionRenamed: () => () => {},
     onResumeToken: () => () => {},
+    onConnectionLost: (cb) => {
+      connectionLostListeners.add(cb)
+      return () => {
+        connectionLostListeners.delete(cb)
+      }
+    },
+    connectionLost: () => {
+      for (const cb of connectionLostListeners) cb()
+    },
     push: (event) => listener?.(event),
   }
 }
@@ -59,6 +70,11 @@ const stored = (seq: number, event: CanonicalEvent): StoredEvent => ({
 })
 
 describe("RunDetail (live)", () => {
+  beforeEach(() => {
+    // Clear localStorage so outbox hydration never loads entries from prior tests.
+    globalThis.localStorage?.clear()
+  })
+
   it("attaches the runner socket on mount", () => {
     const runner = makeFakeRunner()
     renderWithProviders(
@@ -334,7 +350,7 @@ describe("RunDetail (live)", () => {
     cleanup()
   })
 
-  it("re-sends the last user prompt over the runner socket when Retry is clicked", async () => {
+  it("re-sends the last user prompt over the runner socket when Resend is clicked", async () => {
     const runner = makeFakeRunner()
     renderWithProviders(
       <RunDetail mode="live" sessionId={id} runnerClient={runner} />,
@@ -369,10 +385,10 @@ describe("RunDetail (live)", () => {
     )
     await waitFor(() =>
       expect(
-        screen.getByRole("button", { name: /retry/i }),
+        screen.getByRole("button", { name: /resend/i }),
       ).toBeInTheDocument(),
     )
-    fireEvent.click(screen.getByRole("button", { name: /retry/i }))
+    fireEvent.click(screen.getByRole("button", { name: /resend/i }))
     expect(runner.sends).toEqual(["fix the bug"])
     cleanup()
   })
@@ -687,6 +703,322 @@ describe("RunDetail (replay)", () => {
     await waitFor(() =>
       expect(prefsCalls).toEqual([{ harnessId: "claude", modelId: "mdl_new" }]),
     )
+    cleanup()
+  })
+})
+
+describe("RunDetail (outbox / optimistic send)", () => {
+  beforeEach(() => {
+    // Clear localStorage so outbox hydration never loads entries from prior tests.
+    globalThis.localStorage?.clear()
+  })
+
+  // A fake runner that captures the full 3-arg send signature for clientSendId inspection.
+  const makeRichFakeRunner = (): RunnerClient & {
+    readonly attached: SessionId[]
+    readonly richSends: Array<{
+      id: SessionId
+      text: string
+      clientSendId: string | undefined
+    }>
+    push: (event: StoredEvent) => void
+    connectionLost: () => void
+  } => {
+    let listener: ((event: StoredEvent) => void) | undefined
+    const connectionLostListeners = new Set<() => void>()
+    const attached: SessionId[] = []
+    const richSends: Array<{
+      id: SessionId
+      text: string
+      clientSendId: string | undefined
+    }> = []
+    return {
+      attached,
+      richSends,
+      attach: (sid) => attached.push(sid),
+      send: (sid, text, clientSendId) =>
+        richSends.push({ id: sid, text, clientSendId }),
+      approve: () => {},
+      interrupt: () => {},
+      setMode: () => {},
+      setModel: () => {},
+      dispatch: (_m: RunnerOutbound) => {},
+      onEvent: (_sid, cb) => {
+        listener = cb
+      },
+      onAny: () => () => {},
+      onSessionRenamed: () => () => {},
+      onResumeToken: () => () => {},
+      onConnectionLost: (cb) => {
+        connectionLostListeners.add(cb)
+        return () => {
+          connectionLostListeners.delete(cb)
+        }
+      },
+      connectionLost: () => {
+        for (const cb of connectionLostListeners) cb()
+      },
+      push: (event) => listener?.(event),
+    }
+  }
+
+  it("enqueues an optimistic sending bubble and sends with a clientSendId", async () => {
+    const runner = makeRichFakeRunner()
+    renderWithProviders(
+      <RunDetail mode="live" sessionId={id} runnerClient={runner} />,
+      createFakeIpcClient({}),
+    )
+    // Emit runner-started so the composer becomes visible.
+    runner.push(
+      stored(0, { type: "runner-started", runnerId: "run_root" as never }),
+    )
+    await waitFor(() => screen.getByRole("button", { name: "Send message" }))
+
+    // Type and submit.
+    fireEvent.change(screen.getByRole("textbox"), {
+      target: { value: "hello" },
+    })
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }))
+
+    // send() was called once with a uuid clientSendId.
+    expect(runner.richSends).toHaveLength(1)
+    expect(runner.richSends[0]?.text).toBe("hello")
+    expect(runner.richSends[0]?.id).toBe(id)
+    expect(typeof runner.richSends[0]?.clientSendId).toBe("string")
+    expect(runner.richSends[0]?.clientSendId).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+    )
+
+    // The optimistic bubble is in the DOM with data-status="sending".
+    await waitFor(() =>
+      expect(document.querySelector('[data-status="sending"]')).not.toBeNull(),
+    )
+    expect(
+      document.querySelector('[data-status="sending"]')?.textContent,
+    ).toContain("hello")
+
+    cleanup()
+  })
+
+  it("marks a send as failed when the connection is lost", async () => {
+    const runner = makeRichFakeRunner()
+    renderWithProviders(
+      <RunDetail mode="live" sessionId={id} runnerClient={runner} />,
+      createFakeIpcClient({}),
+    )
+    runner.push(
+      stored(0, { type: "runner-started", runnerId: "run_root" as never }),
+    )
+    await waitFor(() => screen.getByRole("button", { name: "Send message" }))
+
+    // Send a message.
+    fireEvent.change(screen.getByRole("textbox"), {
+      target: { value: "hello" },
+    })
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }))
+
+    // Wait for the sending bubble.
+    await waitFor(() =>
+      expect(document.querySelector('[data-status="sending"]')).not.toBeNull(),
+    )
+
+    // Trigger connection loss.
+    runner.connectionLost()
+
+    // The bubble should flip to data-status="failed" with a Resend button.
+    await waitFor(() => {
+      expect(document.querySelector('[data-status="failed"]')).not.toBeNull()
+      expect(
+        screen.getByRole("button", { name: /resend/i }),
+      ).toBeInTheDocument()
+    })
+
+    cleanup()
+  })
+
+  it("marks a send as failed after the ack timeout elapses", async () => {
+    jest.useFakeTimers()
+    try {
+      const runner = makeRichFakeRunner()
+      renderWithProviders(
+        <RunDetail mode="live" sessionId={id} runnerClient={runner} />,
+        createFakeIpcClient({}),
+      )
+      runner.push(
+        stored(0, { type: "runner-started", runnerId: "run_root" as never }),
+      )
+      await waitFor(() => screen.getByRole("button", { name: "Send message" }))
+
+      // Send a message.
+      fireEvent.change(screen.getByRole("textbox"), {
+        target: { value: "hello" },
+      })
+      fireEvent.click(screen.getByRole("button", { name: "Send message" }))
+
+      // Wait for the sending bubble.
+      await waitFor(() =>
+        expect(
+          document.querySelector('[data-status="sending"]'),
+        ).not.toBeNull(),
+      )
+
+      // Advance time past the ack timeout — no echo delivered.
+      jest.advanceTimersByTime(SEND_ACK_TIMEOUT_MS + 1)
+
+      // The bubble should flip to data-status="failed".
+      await waitFor(() => {
+        expect(document.querySelector('[data-status="failed"]')).not.toBeNull()
+      })
+    } finally {
+      jest.useRealTimers()
+      cleanup()
+    }
+  })
+
+  it("resend re-dispatches a failed send with a new clientSendId", async () => {
+    const runner = makeRichFakeRunner()
+    renderWithProviders(
+      <RunDetail mode="live" sessionId={id} runnerClient={runner} />,
+      createFakeIpcClient({}),
+    )
+    runner.push(
+      stored(0, { type: "runner-started", runnerId: "run_root" as never }),
+    )
+    await waitFor(() => screen.getByRole("button", { name: "Send message" }))
+
+    // Send "hello".
+    fireEvent.change(screen.getByRole("textbox"), {
+      target: { value: "hello" },
+    })
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }))
+
+    // Wait for the sending bubble.
+    await waitFor(() =>
+      expect(document.querySelector('[data-status="sending"]')).not.toBeNull(),
+    )
+
+    const firstClientSendId = runner.richSends[0]?.clientSendId as string
+
+    // Trigger connection loss to flip it to failed.
+    runner.connectionLost()
+
+    await waitFor(() =>
+      expect(document.querySelector('[data-status="failed"]')).not.toBeNull(),
+    )
+
+    // Click Resend.
+    fireEvent.click(screen.getByRole("button", { name: /resend/i }))
+
+    // A second send must have been dispatched with a DIFFERENT clientSendId.
+    await waitFor(() => expect(runner.richSends).toHaveLength(2))
+    expect(runner.richSends[1]?.text).toBe("hello")
+    expect(runner.richSends[1]?.clientSendId).not.toBe(firstClientSendId)
+    expect(runner.richSends[1]?.clientSendId).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+    )
+
+    // A sending bubble must be present again.
+    await waitFor(() =>
+      expect(document.querySelector('[data-status="sending"]')).not.toBeNull(),
+    )
+
+    cleanup()
+  })
+
+  it("cancel removes the failed bubble and restores the text to the composer", async () => {
+    const runner = makeRichFakeRunner()
+    renderWithProviders(
+      <RunDetail mode="live" sessionId={id} runnerClient={runner} />,
+      createFakeIpcClient({}),
+    )
+    runner.push(
+      stored(0, { type: "runner-started", runnerId: "run_root" as never }),
+    )
+    await waitFor(() => screen.getByRole("button", { name: "Send message" }))
+
+    // Send "hello".
+    fireEvent.change(screen.getByRole("textbox"), {
+      target: { value: "hello" },
+    })
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }))
+
+    // Wait for the sending bubble.
+    await waitFor(() =>
+      expect(document.querySelector('[data-status="sending"]')).not.toBeNull(),
+    )
+
+    // Trigger connection loss.
+    runner.connectionLost()
+
+    await waitFor(() =>
+      expect(document.querySelector('[data-status="failed"]')).not.toBeNull(),
+    )
+
+    // Click Cancel.
+    fireEvent.click(screen.getByRole("button", { name: /cancel/i }))
+
+    // No "hello" bubble should remain (failed or otherwise).
+    await waitFor(() => {
+      expect(document.querySelector('[data-status="failed"]')).toBeNull()
+      expect(document.querySelector('[data-status="sending"]')).toBeNull()
+    })
+
+    // The composer textarea must be pre-filled with "hello".
+    const textarea = screen.getByRole("textbox") as HTMLTextAreaElement
+    expect(textarea.value).toBe("hello")
+
+    cleanup()
+  })
+
+  it("removes the optimistic bubble once the echo with the same clientSendId arrives", async () => {
+    const runner = makeRichFakeRunner()
+    renderWithProviders(
+      <RunDetail mode="live" sessionId={id} runnerClient={runner} />,
+      createFakeIpcClient({}),
+    )
+    // Start the runner.
+    runner.push(
+      stored(0, { type: "runner-started", runnerId: "run_root" as never }),
+    )
+    await waitFor(() => screen.getByRole("button", { name: "Send message" }))
+
+    // Send a message to enqueue an optimistic bubble.
+    fireEvent.change(screen.getByRole("textbox"), {
+      target: { value: "hello" },
+    })
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }))
+
+    // Wait for the sending bubble to appear.
+    await waitFor(() =>
+      expect(document.querySelector('[data-status="sending"]')).not.toBeNull(),
+    )
+
+    // Read back the generated clientSendId from the captured send call.
+    const clientSendId = runner.richSends[0]?.clientSendId as string
+
+    // Deliver the backend echo: a text-delta with role:"user" and the same clientSendId.
+    runner.push(
+      stored(1, {
+        type: "text-delta",
+        runnerId: "run_root" as never,
+        messageId: "echo1",
+        text: "hello",
+        role: "user",
+        clientSendId,
+      }),
+    )
+
+    // The sending bubble should be reconciled away — no data-status="sending" elements,
+    // and exactly ONE MessageBubble with data-role="user" containing "hello".
+    await waitFor(() => {
+      expect(document.querySelector('[data-status="sending"]')).toBeNull()
+      // Count distinct MessageBubble containers (data-role="user" divs) that contain "hello".
+      const userBubbles = Array.from(
+        document.querySelectorAll('[data-role="user"]'),
+      ).filter((el) => el.textContent?.includes("hello"))
+      expect(userBubbles).toHaveLength(1)
+    })
+
     cleanup()
   })
 })

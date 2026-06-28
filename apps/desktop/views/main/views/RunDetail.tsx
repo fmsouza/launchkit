@@ -1,12 +1,13 @@
 import {
   type CanonicalEvent,
+  type MessageItem,
   type RunState,
   initialRunState,
   reduce,
 } from "@spectrum/agent-events"
 import type { HarnessId, ModelId, ModelRoute, SessionId } from "@spectrum/types"
 import { EmptyState, RunView, Spinner } from "@spectrum/ui"
-import { type ReactElement, useEffect, useState } from "react"
+import { type ReactElement, useEffect, useRef, useState } from "react"
 import { useStore } from "zustand"
 import { useIpcClient } from "../IpcClientContext"
 import {
@@ -17,7 +18,13 @@ import { useElapsedSeconds } from "../hooks/useElapsedSeconds"
 import { useTerminal } from "../hooks/useTerminal"
 import type { RunnerClient } from "../runner/runnerClient"
 import { useStores } from "../stores/createStores"
+import { pendingToRender } from "../stores/outbox"
+import type { OutboxEntry } from "../stores/outbox"
 import type { TerminalClient } from "../terminal/terminalClient"
+
+export const SEND_ACK_TIMEOUT_MS = 15_000
+
+const EMPTY_OUTBOX: readonly OutboxEntry[] = []
 
 /**
  * Fold a recorded backlog into a RunState, and extract the seed for the composer
@@ -142,6 +149,20 @@ const LiveRunDetail = ({
   const openSub = useStore(store, (s) => s.openSub)
   const closeSub = useStore(store, (s) => s.closeSub)
 
+  const outbox = useStores().outbox
+  const outboxEntries = useStore(
+    outbox,
+    (s) => s.bySession[sessionId] ?? EMPTY_OUTBOX,
+  )
+  const enqueueSend = useStore(outbox, (s) => s.enqueue)
+  const reconcileOutbox = useStore(outbox, (s) => s.reconcile)
+  const hydrateOutbox = useStore(outbox, (s) => s.hydrate)
+  const markSendFailed = useStore(outbox, (s) => s.markFailed)
+  const failAllSending = useStore(outbox, (s) => s.failAllSending)
+  const removeSend = useStore(outbox, (s) => s.remove)
+
+  const timers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
+
   const { mode, onModeChange, model, onModelChange } = useComposerModeModel(
     sessionId,
     harnessId,
@@ -175,11 +196,113 @@ const LiveRunDetail = ({
     if (!skipAttach) runnerClient.attach(sessionId)
   }, [sessionId, runnerClient, applyEvent, skipAttach])
 
+  // Hydrate outbox from localStorage once per session (failSending restores crash-aborted entries).
+  useEffect(() => {
+    hydrateOutbox(sessionId)
+  }, [sessionId, hydrateOutbox])
+
   const state = runState ?? initialRunState
   const root =
     state.rootRunnerId === undefined
       ? undefined
       : state.runners.get(state.rootRunnerId)
+
+  // Compute the set of clientSendIds that have landed in the reduced timeline
+  // (safe before the root guard: empty set when root is not yet present).
+  const presentIds = new Set(
+    (root?.items ?? [])
+      .filter(
+        (i): i is MessageItem =>
+          i.kind === "message" &&
+          i.role === "user" &&
+          i.clientSendId !== undefined,
+      )
+      .map((i) => i.clientSendId as string),
+  )
+  const pendingKey = [...presentIds].sort().join(",")
+  // biome-ignore lint/correctness/useExhaustiveDependencies: pendingKey is the reconcile signal.
+  useEffect(() => {
+    reconcileOutbox(sessionId, presentIds)
+    for (const id of presentIds) {
+      const t = timers.current.get(id)
+      if (t !== undefined) {
+        clearTimeout(t)
+        timers.current.delete(id)
+      }
+    }
+  }, [sessionId, pendingKey, reconcileOutbox])
+
+  // Subscribe to transport loss — flip all in-flight sends to failed.
+  useEffect(() => {
+    const off = runnerClient.onConnectionLost(() => failAllSending())
+    return off
+  }, [runnerClient, failAllSending])
+
+  // Clear all pending timers on unmount.
+  useEffect(() => {
+    const map = timers.current
+    return () => {
+      for (const t of map.values()) clearTimeout(t)
+      map.clear()
+    }
+  }, [])
+
+  const pending = pendingToRender(outboxEntries, presentIds)
+
+  const handleSend = (text: string): void => {
+    const clientSendId = crypto.randomUUID()
+    enqueueSend(sessionId, { clientSendId, text, status: "sending" })
+    runnerClient.send(sessionId, text, clientSendId)
+    const t = setTimeout(() => {
+      markSendFailed(sessionId, clientSendId)
+      timers.current.delete(clientSendId)
+    }, SEND_ACK_TIMEOUT_MS)
+    timers.current.set(clientSendId, t)
+  }
+
+  const [prefill, setPrefill] = useState<
+    { readonly text: string; readonly key: string } | undefined
+  >(undefined)
+  const [dismissedErrorId, setDismissedErrorId] = useState<string | undefined>(
+    undefined,
+  )
+
+  const handleResend = (entry: {
+    readonly clientSendId?: string
+    readonly text: string
+  }): void => {
+    if (entry.clientSendId !== undefined) {
+      const t = timers.current.get(entry.clientSendId)
+      if (t !== undefined) {
+        clearTimeout(t)
+        timers.current.delete(entry.clientSendId)
+      }
+      removeSend(sessionId, entry.clientSendId)
+    }
+    handleSend(entry.text)
+  }
+
+  const handleCancel = (entry: {
+    readonly clientSendId?: string
+    readonly text: string
+  }): void => {
+    if (entry.clientSendId !== undefined) {
+      const t = timers.current.get(entry.clientSendId)
+      if (t !== undefined) {
+        clearTimeout(t)
+        timers.current.delete(entry.clientSendId)
+      }
+      removeSend(sessionId, entry.clientSendId)
+    } else {
+      // Provider-error message: persisted in run_events; dismiss its footer.
+      const lastError = root?.items.findLast(
+        (i): i is MessageItem => i.kind === "message" && i.tone === "error",
+      )
+      if (lastError !== undefined) setDismissedErrorId(lastError.messageId)
+    }
+    setPrefill({ text: entry.text, key: crypto.randomUUID() })
+  }
+
   if (root === undefined)
     return (
       <EmptyState title="Starting…" hint="Waiting for the agent to begin." />
@@ -197,8 +320,14 @@ const LiveRunDetail = ({
       subBreadcrumb={breadcrumb}
       onOpenSubRunner={(rid) => openSub(sessionId, rid)}
       onCloseSub={() => closeSub(sessionId)}
-      onSend={(text) => runnerClient.send(sessionId, text)}
-      onRetry={(prompt) => runnerClient.send(sessionId, prompt)}
+      onSend={handleSend}
+      onResend={handleResend}
+      onCancel={handleCancel}
+      {...(dismissedErrorId === undefined ? {} : { dismissedErrorId })}
+      {...(prefill === undefined
+        ? {}
+        : { prefillText: prefill.text, prefillKey: prefill.key })}
+      pending={pending}
       onDecide={(requestId, decision) =>
         runnerClient.approve(sessionId, requestId, decision)
       }

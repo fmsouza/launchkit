@@ -1004,9 +1004,28 @@
   cursor: default;
 }
 
-.lk-message-bubble__retry {
-  align-self: flex-start;
+/* Sending/failed delivery states ──────────────────────────────────────────── */
+.lk-message-bubble[data-status="sending"] {
+  opacity: 0.6;
+}
+
+.lk-message-bubble[data-status="failed"] {
+  background: var(--sp-danger-soft);
+  border-color: var(--sp-danger);
+  color: var(--sp-danger);
+}
+
+/* Action row rendered inside a failed bubble (Resend + Cancel). */
+.lk-message-bubble__actions {
+  display: flex;
+  flex-direction: row;
+  gap: var(--sp-space-2);
   margin-top: var(--sp-space-2);
+}
+
+.lk-message-bubble__resend,
+.lk-message-bubble__cancel {
+  align-self: flex-start;
   padding: var(--sp-space-1) var(--sp-space-2);
   border: 1px solid var(--sp-border);
   border-radius: var(--sp-radius-sm);

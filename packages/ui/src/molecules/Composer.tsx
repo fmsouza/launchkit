@@ -55,6 +55,10 @@ export type ComposerProps = {
   readonly models?: readonly ModelRoute[]
   readonly providerNames?: Readonly<Record<string, string>>
   readonly onModelChange?: (modelId: string) => void
+  /** Text to drop into the input (e.g. a cancelled failed send restored for editing). */
+  readonly prefillText?: string
+  /** Bump to re-apply `prefillText` even when the text is unchanged. */
+  readonly prefillKey?: string
 }
 
 export const Composer = ({
@@ -69,9 +73,18 @@ export const Composer = ({
   models,
   providerNames,
   onModelChange,
+  prefillText,
+  prefillKey,
 }: ComposerProps): ReactElement => {
   const [text, setText] = useState("")
   const inputRef = useRef<HTMLTextAreaElement>(null)
+
+  // Apply an external prefill (Cancel → restore text to composer). Keyed so repeated cancels of the
+  // same text re-apply. Intentionally omits `prefillText` from deps so only a key bump triggers it.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: prefillKey is the apply signal.
+  useEffect(() => {
+    if (prefillText !== undefined) setText(prefillText)
+  }, [prefillKey])
 
   const grow = (el: HTMLTextAreaElement): void => {
     const height = growTextareaHeight(el, resolveMaxHeightPx(el))

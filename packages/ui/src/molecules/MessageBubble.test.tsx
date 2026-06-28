@@ -52,46 +52,6 @@ describe("MessageBubble", () => {
     cleanup()
   })
 
-  it("renders a Retry button and fires onRetry when tone is error", () => {
-    let retried = 0
-    render(
-      <MessageBubble
-        text="API Error: rate limited"
-        tone="error"
-        onRetry={() => {
-          retried += 1
-        }}
-      />,
-    )
-    fireEvent.click(screen.getByRole("button", { name: /retry/i }))
-    expect(retried).toBe(1)
-    cleanup()
-  })
-
-  it("does not render a Retry button when there is no error tone", () => {
-    render(<MessageBubble text="all good" onRetry={() => {}} />)
-    expect(screen.queryByRole("button", { name: /retry/i })).toBeNull()
-    cleanup()
-  })
-
-  it("Retry button is described by the message body element (aria-describedby)", () => {
-    const { container } = render(
-      <MessageBubble
-        text="API Error: rate limited"
-        tone="error"
-        onRetry={() => {}}
-      />,
-    )
-    const button = screen.getByRole("button", { name: /retry/i })
-    const describedById = button.getAttribute("aria-describedby")
-    expect(describedById).not.toBeNull()
-    expect(describedById).not.toBe("")
-    const bodyEl = container.querySelector(`#${describedById}`)
-    expect(bodyEl).not.toBeNull()
-    expect(bodyEl?.textContent).toContain("API Error: rate limited")
-    cleanup()
-  })
-
   it("calls onOpenLink with the href when a link is clicked and onOpenLink is provided", () => {
     let opened: string | undefined
     render(
@@ -129,5 +89,37 @@ describe("MessageBubble", () => {
     fireEvent.click(screen.getByRole("link", { name: "a link" }))
     expect(opened).toBeUndefined()
     cleanup()
+  })
+})
+
+describe("MessageBubble failed state", () => {
+  it("renders Resend and Cancel when failed and fires the callbacks", () => {
+    let resent = 0
+    let cancelled = 0
+    render(
+      <MessageBubble
+        text="hi"
+        author="user"
+        status="failed"
+        onResend={() => {
+          resent += 1
+        }}
+        onCancel={() => {
+          cancelled += 1
+        }}
+      />,
+    )
+    fireEvent.click(screen.getByRole("button", { name: "Resend" }))
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }))
+    expect(resent).toBe(1)
+    expect(cancelled).toBe(1)
+  })
+
+  it("shows a sending state without action buttons", () => {
+    const { container } = render(
+      <MessageBubble text="hi" author="user" status="sending" />,
+    )
+    expect(container.querySelector('[data-status="sending"]')).not.toBeNull()
+    expect(screen.queryByRole("button", { name: "Resend" })).toBeNull()
   })
 })

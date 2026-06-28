@@ -46,6 +46,9 @@ const createWsRunnerClient = (url: string): RunnerClient => {
     }
     client.dispatch(parsed as RunnerOutbound)
   })
+  const onLost = (): void => client.connectionLost()
+  ws.addEventListener("error", onLost)
+  ws.addEventListener("close", onLost)
   return client
 }
 

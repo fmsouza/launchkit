@@ -120,6 +120,10 @@ export const CanonicalEventSchema = z.discriminatedUnion("type", [
       // Who authored the message. Defaults to "assistant" (harness output). The runtime stamps
       // "user" on the turns the user sends, so they render as their own bubbles in the timeline.
       role: z.enum(["user", "assistant"]).optional(),
+      // Correlation id minted by the renderer on submit and persisted in its durable outbox before
+      // dispatch. Echoed back here so the renderer can deterministically reconcile the optimistic
+      // "sending" bubble against the landed message. Only meaningful for role:"user".
+      clientSendId: z.string().optional(),
     })
     .strict(),
   z

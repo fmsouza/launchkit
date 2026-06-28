@@ -2,6 +2,8 @@ import { describe, expect, it } from "bun:test"
 import {
   type CanonicalEvent,
   type RunState,
+  type RunnerId,
+  type RunnerState,
   initialRunState,
   reduce,
 } from "@spectrum/agent-events"
@@ -606,4 +608,27 @@ describe("RunView", () => {
     expect(document.querySelector(".lk-terminal-pane")).toBeNull()
     cleanup()
   })
+})
+
+const rvRoot = "rnr_root" as RunnerId
+const rvBase: RunnerState = { id: rvRoot, status: "running", items: [] }
+
+it("forwards a failed pending send's Resend through RunView", () => {
+  const calls: Array<{ clientSendId?: string; text: string }> = []
+  render(
+    <RunView
+      root={rvBase}
+      runners={new Map()}
+      subBreadcrumb={["main", "sub"]}
+      onOpenSubRunner={() => {}}
+      onCloseSub={() => {}}
+      onSend={() => {}}
+      onDecide={() => {}}
+      onAnswer={() => {}}
+      pending={[{ clientSendId: "c1", text: "lost", status: "failed" }]}
+      onResend={(e) => calls.push(e)}
+    />,
+  )
+  fireEvent.click(screen.getByRole("button", { name: "Resend" }))
+  expect(calls).toEqual([{ clientSendId: "c1", text: "lost" }])
 })

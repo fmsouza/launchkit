@@ -176,6 +176,21 @@ describe("Composer", () => {
     cleanup()
   })
 
+  it("fills the textarea when prefillKey changes", () => {
+    const { rerender } = render(<Composer onSend={() => {}} />)
+    rerender(
+      <Composer
+        onSend={() => {}}
+        prefillText="restored draft"
+        prefillKey="k1"
+      />,
+    )
+    const ta = screen.getByPlaceholderText(
+      /Send a message/,
+    ) as HTMLTextAreaElement
+    expect(ta.value).toBe("restored draft")
+  })
+
   it("applies an inline height to the textarea as the user types", () => {
     // jsdom returns 0px for computed max-height, which the fallback turns
     // into innerHeight/3 — a positive number, so the helper clamps to 160.

@@ -5,6 +5,7 @@ import {
   initialRunState,
   reduce,
 } from "@spectrum/agent-events"
+import type { RunnerId, RunnerState } from "@spectrum/agent-events"
 import { RunnerIdSchema } from "@spectrum/types"
 import { cleanup, fireEvent, render, screen } from "@testing-library/react"
 import { ConversationTimeline } from "./ConversationTimeline"
@@ -296,93 +297,38 @@ describe("ConversationTimeline", () => {
     })
     cleanup()
   })
+})
 
-  it("does NOT render a Retry button when an error-toned message is not the last visible item", () => {
-    // Error is NOT the last item — a subsequent user message follows it.
-    const state = fold([
-      { type: "runner-started", runnerId: root },
-      {
-        type: "text-delta",
-        runnerId: root,
-        messageId: "u1",
-        text: "first prompt",
-        role: "user",
-      },
-      {
-        type: "text-delta",
-        runnerId: root,
-        messageId: "a1",
-        text: "Error: rate limited",
-      },
-      {
-        type: "turn-finished",
-        runnerId: root,
-        error: { detail: "Error: rate limited", messageId: "a1" },
-      },
-      // A later user message makes the error non-last:
-      {
-        type: "text-delta",
-        runnerId: root,
-        messageId: "u2",
-        text: "second prompt",
-        role: "user",
-      },
-    ])
-    const runner = state.runners.get(root)
-    if (runner === undefined) throw new Error("no root runner")
+describe("ConversationTimeline pending sends", () => {
+  const baseRunner: RunnerState = {
+    id: RunnerIdSchema.parse("rnr_root"),
+    status: "running",
+    items: [],
+  }
+
+  const noop = {
+    runners: new Map<RunnerId, RunnerState>(),
+    onOpenSubRunner: () => {},
+    onDecide: () => {},
+    onAnswer: () => {},
+  }
+
+  it("renders a failed pending send with Resend/Cancel carrying the clientSendId", () => {
+    const calls: Array<{ clientSendId?: string; text: string }> = []
     render(
       <ConversationTimeline
-        runner={runner}
-        runners={state.runners}
-        onOpenSubRunner={() => {}}
-        onDecide={() => {}}
-        onAnswer={() => {}}
-        onRetry={() => {}}
+        runner={baseRunner}
+        {...noop}
+        pending={[
+          { clientSendId: "c1", text: "lost prompt", status: "failed" },
+        ]}
+        onResend={(e) => calls.push(e)}
+        onCancel={(e) => calls.push(e)}
       />,
     )
-    expect(screen.queryByRole("button", { name: /retry/i })).toBeNull()
-    cleanup()
-  })
-
-  it("fires onRetry with the last user prompt when the last message is a turn error", () => {
-    const state = fold([
-      { type: "runner-started", runnerId: root },
-      {
-        type: "text-delta",
-        runnerId: root,
-        messageId: "u1",
-        text: "summarize this repo",
-        role: "user",
-      },
-      {
-        type: "text-delta",
-        runnerId: root,
-        messageId: "a1",
-        text: "Error: rate limited",
-      },
-      {
-        type: "turn-finished",
-        runnerId: root,
-        error: { detail: "Error: rate limited", messageId: "a1" },
-      },
-    ])
-    const runner = state.runners.get(root)
-    if (runner === undefined) throw new Error("no root runner")
-    let retried: string | undefined
-    render(
-      <ConversationTimeline
-        runner={runner}
-        runners={state.runners}
-        onOpenSubRunner={() => {}}
-        onDecide={() => {}}
-        onAnswer={() => {}}
-        onRetry={(p) => {
-          retried = p
-        }}
-      />,
-    )
-    fireEvent.click(screen.getByRole("button", { name: /retry/i }))
-    expect(retried).toBe("summarize this repo")
+    expect(screen.getByText("lost prompt")).toBeDefined()
+    fireEvent.click(screen.getByRole("button", { name: "Resend" }))
+    expect(calls).toEqual([{ clientSendId: "c1", text: "lost prompt" }])
     cleanup()
   })
 })
