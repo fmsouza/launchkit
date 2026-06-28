@@ -15,8 +15,5 @@
     "typecheck": "tsc --noEmit",
     "test": "bun test"
   },
-  "type": "module",
-  "optionalDependencies": {
-    "node-pty": "^1.1.0"
-  }
+  "type": "module"
 }

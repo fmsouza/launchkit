@@ -85,6 +85,14 @@ export const createTerminalManager = (
         tabId: input.tabId,
         message,
       })
+      // Surface the failure to the webview so the pane shows a toast instead of
+      // a silent black screen (the webview's onError handler notifies).
+      send({
+        type: "term-error",
+        sessionId: input.sessionId,
+        tabId: input.tabId,
+        message,
+      })
       return r
     }
     const handle = r.value
@@ -222,13 +230,30 @@ const fromBase64 = (data: string): Uint8Array =>
 
 /**
  * No-op terminal manager used when the native PTY addon cannot be loaded
- * (e.g. a packaged GUI build missing `node-pty`'s prebuilt). The webview
- * surfaces the resulting `{ kind: "not-implemented" }` as the "Terminal
- * unavailable" notice rather than crashing the app at boot.
+ * (e.g. a packaged GUI build missing `node-pty`'s prebuilt). Rather than
+ * silently swallowing `term-open` (which leaves the pane a black box with no
+ * feedback), it emits a `term-error` on any terminal-starting frame so the
+ * webview surfaces a "Terminal unavailable" toast.
  */
-export const createNoopTerminalManager = (): TerminalManager => ({
-  launch: () => ({ ok: false, error: { kind: "not-implemented" } }),
-  handleInbound: () => {},
-  bindSend: () => {},
-  dispose: () => {},
-})
+export const createNoopTerminalManager = (): TerminalManager => {
+  let sink: (message: TerminalOutbound) => void = () => {}
+  const message =
+    "Terminal unavailable: the native terminal component (node-pty) could not be loaded in this build."
+  return {
+    launch: () => ({ ok: false, error: { kind: "not-implemented" } }),
+    handleInbound: (frame) => {
+      if (frame.type === "term-open" || frame.type === "term-attach") {
+        sink({
+          type: "term-error",
+          sessionId: frame.sessionId,
+          tabId: frame.tabId,
+          message,
+        })
+      }
+    },
+    bindSend: (next) => {
+      sink = next
+    },
+    dispose: () => {},
+  }
+}

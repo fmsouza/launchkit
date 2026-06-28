@@ -50,7 +50,7 @@ import type { Logger } from "@spectrum/logger"
 import {
   type TerminalManager,
   checkNativePtyAvailable,
-  createNodePtySpawner,
+  createBunFfiPtySpawner,
   createNoopTerminalManager,
   createTerminalManager,
 } from "@spectrum/pty"
@@ -290,12 +290,26 @@ export const createGuiContext = (
   // The TerminalManager owns a single PTY per (sessionId, tabId) pair; the socket fans PTY bytes
   // out to the webview over a separate loopback WebSocket (independent of the runner socket).
   //
-  // If the native `node-pty` addon fails to load (e.g. packaged GUI build missing the prebuilt),
-  // fall back to a no-op manager whose `launch` returns `{ kind: "not-implemented" }`. The
-  // webview surfaces that error as the "Terminal unavailable" notice rather than crashing boot.
-  const terminalManager = checkNativePtyAvailable()
+  // The PTY is allocated with libc `openpty(3)` via `bun:ffi` (Bun-native; node-pty
+  // does not deliver bytes under the Bun runtime). When that's unavailable (Windows,
+  // or `bun:ffi`/libutil missing), fall back to a no-op manager that emits a
+  // "Terminal unavailable" `term-error` so the pane shows a toast instead of a silent
+  // black box.
+  const nativePtyAvailable = checkNativePtyAvailable()
+  if (nativePtyAvailable) {
+    log
+      .child("terminal")
+      .info("native pty available, using bun:ffi terminal manager")
+  } else {
+    log
+      .child("terminal")
+      .warn(
+        "native pty unavailable (bun:ffi openpty could not load) — using no-op terminal manager; the in-app terminal will report 'Terminal unavailable'",
+      )
+  }
+  const terminalManager = nativePtyAvailable
     ? createTerminalManager({
-        spawner: createNodePtySpawner(),
+        spawner: createBunFfiPtySpawner(),
         log: log.child("terminal"),
       })
     : createNoopTerminalManager()

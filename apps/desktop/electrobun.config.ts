@@ -115,18 +115,22 @@ const config = {
 // `ElectrobunConfig` type. Attach them AFTER the `satisfies` check so the core config is still
 // type-validated while these extra, runtime-only keys pass through.
 //
-// `external: ["node-pty"]` keeps the native Node addon out of the webview's `target: "browser"`
-// bundle. The webview imports only the PURE terminal protocol (`isTerminalOutbound`, schemas, types)
-// from `@spectrum/pty`, whose barrel also re-exports the node-pty adapters; without this the browser
-// bundler eagerly follows `require("node-pty")` into `child_process` and fails. Marking it external
-// lets Bun tree-shake the unused native code out of the webview bundle entirely.
+// The webview's `target: "browser"` bundle imports only the PURE terminal protocol
+// (`isTerminalOutbound`, schemas, types) from `@spectrum/pty`, whose barrel also re-exports
+// the Bun-native PTY spawner (`bun-ffi-pty.ts`). That module lazily `require`s `bun:ffi` and
+// `node:fs` — both unavailable in a browser bundle — so we mark them external. Without this the
+// browser bundler tries to resolve them and the webview build fails; marking them external lets
+// Bun tree-shake the unused native code out of the webview bundle entirely.
 export default {
   ...config,
   build: {
     ...config.build,
     views: {
       ...config.build.views,
-      main: { ...config.build.views.main, external: ["node-pty"] },
+      main: {
+        ...config.build.views.main,
+        external: ["bun:ffi", "node:fs"],
+      },
     },
     watch: ["../../packages"],
     watchIgnore: ["**/*.test.ts", "**/*.test.tsx", "**/*.test.js"],
