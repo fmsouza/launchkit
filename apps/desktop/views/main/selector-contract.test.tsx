@@ -71,6 +71,7 @@ import { render } from "@testing-library/react"
 import { App } from "./app"
 import type { RunnerClient } from "./runner/runnerClient"
 import { createFakeIpcClient } from "./test/fake-client"
+import { createUpdateClient } from "./update/updateClient"
 
 // ---------------------------------------------------------------------------
 // Fakes (mirror what app.test.tsx uses)
@@ -603,6 +604,7 @@ const renderAllStates = async (): Promise<ReadonlyArray<ParentNode>> => {
       <App
         client={client}
         runnerClient={fakeRunnerClient}
+        updateClient={createUpdateClient()}
         initialView="sessions"
       />,
     )
@@ -645,6 +647,7 @@ const renderAllStates = async (): Promise<ReadonlyArray<ParentNode>> => {
       <App
         client={client}
         runnerClient={fakeRunnerClient}
+        updateClient={createUpdateClient()}
         // Select the failedSession so its danger badge renders in the row
         initialView={`sessions/${failedSession.id}`}
       />,
@@ -669,6 +672,7 @@ const renderAllStates = async (): Promise<ReadonlyArray<ParentNode>> => {
       <App
         client={client}
         runnerClient={fakeRunnerClient}
+        updateClient={createUpdateClient()}
         initialView="sessions"
       />,
     )
@@ -696,6 +700,7 @@ const renderAllStates = async (): Promise<ReadonlyArray<ParentNode>> => {
       <App
         client={client}
         runnerClient={fakeRunnerClient}
+        updateClient={createUpdateClient()}
         initialView="settings/general"
       />,
     )
@@ -717,6 +722,7 @@ const renderAllStates = async (): Promise<ReadonlyArray<ParentNode>> => {
       <App
         client={client}
         runnerClient={fakeRunnerClient}
+        updateClient={createUpdateClient()}
         initialView="settings/providers"
       />,
     )
@@ -742,6 +748,7 @@ const renderAllStates = async (): Promise<ReadonlyArray<ParentNode>> => {
       <App
         client={client}
         runnerClient={fakeRunnerClient}
+        updateClient={createUpdateClient()}
         initialView="settings/models"
       />,
     )
@@ -773,6 +780,7 @@ const renderAllStates = async (): Promise<ReadonlyArray<ParentNode>> => {
       <App
         client={client}
         runnerClient={fakeRunnerClient}
+        updateClient={createUpdateClient()}
         initialView="settings/harnesses"
       />,
     )
@@ -807,6 +815,7 @@ const renderAllStates = async (): Promise<ReadonlyArray<ParentNode>> => {
       <App
         client={client}
         runnerClient={fakeRunnerClient}
+        updateClient={createUpdateClient()}
         initialView="sessions"
       />,
     )
@@ -841,6 +850,7 @@ const renderAllStates = async (): Promise<ReadonlyArray<ParentNode>> => {
       <App
         client={client}
         runnerClient={fakeRunnerClient}
+        updateClient={createUpdateClient()}
         initialView="sessions"
       />,
     )

@@ -42,6 +42,7 @@ import { StoreProvider, useStores } from "./stores/createStores"
 import { type LocationAdapter, windowLocationAdapter } from "./stores/location"
 import { encodeView } from "./stores/uiStore"
 import type { TerminalClient } from "./terminal/terminalClient"
+import type { UpdateClient } from "./update/updateClient"
 import { SessionsView } from "./views/SessionsView"
 import { SettingsView } from "./views/SettingsView"
 import { withTimeout } from "./withTimeout"
@@ -74,6 +75,12 @@ export type AppProps = {
    * real WS client via `createRealClients` in `clients.ts`.
    */
   readonly terminalClient?: TerminalClient
+  /**
+   * The update push client for receiving server-pushed UpdateState frames over
+   * a dedicated loopback WebSocket. Required — production supplies a real WS
+   * client via `createRealClients`; tests supply a `createUpdateClient()` stub.
+   */
+  readonly updateClient: UpdateClient
   /** Injected so the hash-sync effect is testable; defaults to window. */
   readonly location?: LocationAdapter
 }
@@ -476,13 +483,18 @@ export const App = ({
   initialView = "sessions",
   runnerClient,
   terminalClient,
+  updateClient,
   location = windowLocationAdapter,
 }: AppProps): ReactElement => {
   const log = createWebviewLogger({ forward: (p) => client.logClientError(p) })
   return (
     <IpcClientProvider client={client}>
       <LoggerProvider logger={log}>
-        <StoreProvider client={client} initialView={initialView}>
+        <StoreProvider
+          client={client}
+          initialView={initialView}
+          updateClient={updateClient}
+        >
           <AppInner
             runnerClient={runnerClient}
             {...(terminalClient === undefined ? {} : { terminalClient })}
@@ -502,17 +514,15 @@ export const mount = async (): Promise<void> => {
   try {
     const startView = window.location.hash.replace(/^#/, "")
     // Bound the startup IPC: a wedged Electrobun RPC must surface a fallback, not hang blank.
-    const { ipcClient, runnerClient, terminalClient } = await withTimeout(
-      createRealClients(),
-      10000,
-      "client init",
-    )
+    const { ipcClient, runnerClient, terminalClient, updateClient } =
+      await withTimeout(createRealClients(), 10000, "client init")
     root.render(
       <StrictMode>
         <App
           client={ipcClient}
           runnerClient={runnerClient}
           terminalClient={terminalClient}
+          updateClient={updateClient}
           initialView={startView}
         />
       </StrictMode>,

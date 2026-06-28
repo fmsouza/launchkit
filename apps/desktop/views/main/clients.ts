@@ -8,6 +8,7 @@ import {
   type TerminalClient,
   createTerminalClient,
 } from "./terminal/terminalClient"
+import { type UpdateClient, createUpdateClient } from "./update/updateClient"
 
 /** The Electroview only carries the IPC requests channel now (run events run over a WebSocket). */
 type EmptySchema = {
@@ -84,15 +85,38 @@ const createWsTerminalClient = (url: string): TerminalClient => {
 }
 
 /**
+ * Build an `UpdateClient` over a dedicated loopback WebSocket (served by the bun
+ * side — see apps/desktop/src/gui/update-socket.ts): inbound `UpdateState` frames
+ * are JSON-parsed and dispatched (zod-validated inside `dispatch`). Push-only — the
+ * webview sends nothing on this socket.
+ */
+const createWsUpdateClient = (url: string): UpdateClient => {
+  const ws = new WebSocket(url)
+  const client = createUpdateClient()
+  ws.addEventListener("message", (event: MessageEvent) => {
+    if (typeof event.data !== "string") return
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(event.data)
+    } catch {
+      return
+    }
+    client.dispatch(parsed)
+  })
+  return client
+}
+
+/**
  * Construct the single Electroview (IPC requests only) and return all clients: the typed `IpcClient`
- * over Electrobun, a `RunnerClient` over the dedicated runner WebSocket, and a `TerminalClient` over
- * the dedicated terminal WebSocket — both URLs fetched from the bun side via IPC. Called once by
- * `app.tsx`.
+ * over Electrobun, a `RunnerClient` over the dedicated runner WebSocket, a `TerminalClient` over
+ * the dedicated terminal WebSocket, and an `UpdateClient` over the dedicated update WebSocket —
+ * all URLs fetched from the bun side via IPC. Called once by `app.tsx`.
  */
 export const createRealClients = async (): Promise<{
   ipcClient: IpcClient
   runnerClient: RunnerClient
   terminalClient: TerminalClient
+  updateClient: UpdateClient
 }> => {
   const rpc = Electroview.defineRPC<EmptySchema>({
     maxRequestTime: Number.POSITIVE_INFINITY, // transport owns per-method timeouts
@@ -102,9 +126,10 @@ export const createRealClients = async (): Promise<{
   const ipcClient = createIpcClient(
     createElectrobunTransport(view.rpc as unknown as ElectrobunRpc),
   )
-  const [runnerRes, termRes] = await Promise.all([
+  const [runnerRes, termRes, updateRes] = await Promise.all([
     ipcClient.getRunnerSocketUrl(undefined),
     ipcClient.getTerminalSocketUrl(undefined),
+    ipcClient.getUpdateSocketUrl(undefined),
   ])
   const runnerClient = runnerRes.ok
     ? createWsRunnerClient(runnerRes.value.url)
@@ -112,5 +137,8 @@ export const createRealClients = async (): Promise<{
   const terminalClient = termRes.ok
     ? createWsTerminalClient(termRes.value.url)
     : createTerminalClient(() => {})
-  return { ipcClient, runnerClient, terminalClient }
+  const updateClient = updateRes.ok
+    ? createWsUpdateClient(updateRes.value.url)
+    : createUpdateClient()
+  return { ipcClient, runnerClient, terminalClient, updateClient }
 }

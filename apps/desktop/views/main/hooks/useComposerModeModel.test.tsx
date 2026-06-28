@@ -4,6 +4,7 @@ import { act, renderHook } from "@testing-library/react"
 import { IpcClientProvider } from "../IpcClientContext"
 import { StoreProvider, type Stores, useStores } from "../stores/createStores"
 import { type FakeIpcClient, createFakeIpcClient } from "../test/fake-client"
+import { createUpdateClient } from "../update/updateClient"
 import {
   type ComposerForward,
   type ComposerSeed,
@@ -41,7 +42,7 @@ const renderWith = (
     {
       wrapper: ({ children }) => (
         <IpcClientProvider client={client}>
-          <StoreProvider client={client}>
+          <StoreProvider client={client} updateClient={createUpdateClient()}>
             <Capture />
             {children}
           </StoreProvider>
@@ -98,7 +99,12 @@ describe("useComposerModeModel", () => {
       {
         wrapper: ({ children }) => (
           <IpcClientProvider client={replayClient}>
-            <StoreProvider client={replayClient}>{children}</StoreProvider>
+            <StoreProvider
+              client={replayClient}
+              updateClient={createUpdateClient()}
+            >
+              {children}
+            </StoreProvider>
           </IpcClientProvider>
         ),
       },

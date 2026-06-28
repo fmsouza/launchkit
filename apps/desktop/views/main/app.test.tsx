@@ -6,6 +6,7 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { App } from "./app"
 import { type RunnerClient, createRunnerClient } from "./runner/runnerClient"
 import { createFakeIpcClient } from "./test/fake-client"
+import { createUpdateClient } from "./update/updateClient"
 
 /**
  * Build a real `runner-started` frame for session `id`. A PARENTLESS start records the session's
@@ -95,6 +96,8 @@ const fakeRunnerClient: RunnerClient = {
   onResumeToken: () => () => {},
 } as unknown as RunnerClient
 
+const fakeUpdateClient = createUpdateClient()
+
 const baseStubs = {
   getSessions: async () => ({ ok: true as const, value: [] }),
   getHarnesses: async () => ({ ok: true as const, value: [] }),
@@ -112,7 +115,11 @@ describe("App view model", () => {
   it("mounts the toast stack in the app shell", async () => {
     const client = createFakeIpcClient(baseStubs)
     const { container } = render(
-      <App client={client} runnerClient={fakeRunnerClient} />,
+      <App
+        client={client}
+        runnerClient={fakeRunnerClient}
+        updateClient={fakeUpdateClient}
+      />,
     )
     // The notifications engine's ToastContainer is mounted in the shell; its
     // (initially empty) stack container is always present.
@@ -124,7 +131,13 @@ describe("App view model", () => {
   it("defaults to the sessions view and writes #sessions to the hash", async () => {
     window.location.hash = ""
     const client = createFakeIpcClient(baseStubs)
-    render(<App client={client} runnerClient={fakeRunnerClient} />)
+    render(
+      <App
+        client={client}
+        runnerClient={fakeRunnerClient}
+        updateClient={fakeUpdateClient}
+      />,
+    )
     await waitFor(() => expect(window.location.hash).toBe("#sessions"))
   })
 
@@ -134,6 +147,7 @@ describe("App view model", () => {
       <App
         client={client}
         runnerClient={fakeRunnerClient}
+        updateClient={fakeUpdateClient}
         initialView="settings/providers"
       />,
     )
@@ -148,6 +162,7 @@ describe("App view model", () => {
       <App
         client={client}
         runnerClient={fakeRunnerClient}
+        updateClient={fakeUpdateClient}
         initialView="dashboard"
       />,
     )
@@ -156,7 +171,13 @@ describe("App view model", () => {
 
   it("renders the AppShell in sessions mode by default", async () => {
     const client = createFakeIpcClient(baseStubs)
-    render(<App client={client} runnerClient={fakeRunnerClient} />)
+    render(
+      <App
+        client={client}
+        runnerClient={fakeRunnerClient}
+        updateClient={fakeUpdateClient}
+      />,
+    )
     await waitFor(() => expect(window.location.hash).toBe("#sessions"))
   })
 
@@ -189,6 +210,7 @@ describe("App view model", () => {
       <App
         client={client}
         runnerClient={fakeRunnerClient}
+        updateClient={fakeUpdateClient}
         initialView="sessions"
       />,
     )
@@ -241,6 +263,7 @@ describe("App view model", () => {
       <App
         client={client}
         runnerClient={fakeRunnerClient}
+        updateClient={fakeUpdateClient}
         initialView="sessions"
       />,
     )
@@ -286,6 +309,7 @@ describe("App view model", () => {
       <App
         client={client}
         runnerClient={fakeRunnerClient}
+        updateClient={fakeUpdateClient}
         initialView="sessions"
       />,
     )
@@ -327,6 +351,7 @@ describe("App view model", () => {
       <App
         client={client}
         runnerClient={fakeRunnerClient}
+        updateClient={fakeUpdateClient}
         initialView="sessions"
       />,
     )
@@ -352,6 +377,7 @@ describe("App view model", () => {
       <App
         client={client}
         runnerClient={fakeRunnerClient}
+        updateClient={fakeUpdateClient}
         initialView="sessions"
       />,
     )
@@ -386,6 +412,7 @@ describe("App view model", () => {
       <App
         client={client}
         runnerClient={fakeRunnerClient}
+        updateClient={fakeUpdateClient}
         initialView="sessions"
       />,
     )
@@ -428,6 +455,7 @@ describe("App view model", () => {
       <App
         client={client}
         runnerClient={fakeRunnerClient}
+        updateClient={fakeUpdateClient}
         initialView="sessions"
       />,
     )
@@ -462,6 +490,7 @@ describe("App view model", () => {
       <App
         client={client}
         runnerClient={fakeRunnerClient}
+        updateClient={fakeUpdateClient}
         initialView="sessions"
       />,
     )
@@ -512,6 +541,7 @@ describe("App view model", () => {
       <App
         client={client}
         runnerClient={fakeRunnerClient}
+        updateClient={fakeUpdateClient}
         initialView="sessions"
       />,
     )
@@ -560,6 +590,7 @@ describe("App view model", () => {
       <App
         client={client}
         runnerClient={fakeRunnerClient}
+        updateClient={fakeUpdateClient}
         initialView="sessions"
       />,
     )
@@ -616,6 +647,7 @@ describe("App view model", () => {
       <App
         client={client}
         runnerClient={fakeRunnerClient}
+        updateClient={fakeUpdateClient}
         initialView="sessions"
       />,
     )
@@ -659,6 +691,7 @@ describe("App view model", () => {
       <App
         client={client}
         runnerClient={fakeRunnerClient}
+        updateClient={fakeUpdateClient}
         initialView="sessions"
       />,
     )
@@ -701,6 +734,7 @@ describe("App view model", () => {
       <App
         client={client}
         runnerClient={fakeRunnerClient}
+        updateClient={fakeUpdateClient}
         initialView="sessions"
       />,
     )
@@ -728,6 +762,7 @@ describe("App view model", () => {
       <App
         client={client}
         runnerClient={runnerClient}
+        updateClient={fakeUpdateClient}
         initialView="sessions"
       />,
     )
@@ -750,6 +785,7 @@ describe("App view model", () => {
       <App
         client={client}
         runnerClient={runnerClient}
+        updateClient={fakeUpdateClient}
         initialView="sessions"
       />,
     )
@@ -769,6 +805,7 @@ describe("App view model", () => {
       <App
         client={client}
         runnerClient={runnerClient}
+        updateClient={fakeUpdateClient}
         // Viewing s_open: a runner-finished for it must be suppressed.
         initialView="sessions/s_open"
       />,
@@ -791,6 +828,7 @@ describe("App view model", () => {
       <App
         client={client}
         runnerClient={runnerClient}
+        updateClient={fakeUpdateClient}
         initialView="sessions"
       />,
     )
@@ -811,6 +849,7 @@ describe("App view model", () => {
       <App
         client={client}
         runnerClient={runnerClient}
+        updateClient={fakeUpdateClient}
         initialView="sessions"
       />,
     )
@@ -889,6 +928,7 @@ describe("App — skipAttach is sticky across resume (no double-replay)", () => 
       <App
         client={client}
         runnerClient={runnerClient}
+        updateClient={fakeUpdateClient}
         initialView="sessions/s_v"
       />,
     )
@@ -995,6 +1035,7 @@ describe("App — firehose populates runViewStore (defense-in-depth)", () => {
       <App
         client={client}
         runnerClient={runnerClient}
+        updateClient={fakeUpdateClient}
         initialView="sessions/s_v"
       />,
     )
