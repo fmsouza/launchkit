@@ -120,22 +120,36 @@ export const createBunFfiPtySpawner = (): PtySpawner => {
             "inherit",
           ],
         })
-        // Close the PARENT's copy of the slave fd now that the child has dup'd it.
-        // If we keep it open, the pty never sees EOF when the child exits and the
-        // master read stream keeps Bun's event loop alive forever (leaked handle).
-        try {
-          fs.closeSync(slaveFd)
-        } catch {
-          /* already closed */
-        }
 
         // Late-bound listener arrays: launch() registers onData/onExit AFTER
         // spawn returns, but stream 'data' events fire on later ticks, so no
         // initial output (the prompt) is lost.
         const dataCbs: Array<(bytes: Uint8Array) => void> = []
         const exitCbs: Array<(exitCode: number) => void> = []
+        // Track each fd's close separately: an fd number can be reused after
+        // close, so double-closing risks clobbering an unrelated fd.
+        let slaveClosed = false
+        let masterClosed = false
         let closed = false
 
+        // Close the PARENT's slave fd. CRUCIAL TIMING: this must happen only
+        // AFTER the child has exited — NOT right after spawn. The pty buffers the
+        // child's output on the master side; on Linux, closing the last slave fd
+        // makes the next master read return EIO and DROPS any not-yet-read bytes.
+        // A fast-exiting child (e.g. `sh -c "echo hi"`) writes + exits before the
+        // read stream's first tick, so closing the slave early loses its output
+        // (works on macOS, fails on Linux). Keeping the slave open until exit lets
+        // the master deliver everything, then closing it triggers EOF/EIO so the
+        // read stream ends and the event loop drains (no leaked handle).
+        const closeSlave = (): void => {
+          if (slaveClosed) return
+          slaveClosed = true
+          try {
+            fs.closeSync(slaveFd)
+          } catch {
+            /* already closed */
+          }
+        }
         const closeMaster = (): void => {
           if (closed) return
           closed = true
@@ -144,11 +158,15 @@ export const createBunFfiPtySpawner = (): PtySpawner => {
           } catch {
             /* already gone */
           }
-          try {
-            fs.closeSync(masterFd)
-          } catch {
-            /* already closed */
+          if (!masterClosed) {
+            masterClosed = true
+            try {
+              fs.closeSync(masterFd)
+            } catch {
+              /* already closed */
+            }
           }
+          closeSlave()
         }
 
         const stream = fs.createReadStream("", {
@@ -161,15 +179,16 @@ export const createBunFfiPtySpawner = (): PtySpawner => {
           const bytes = new Uint8Array(buf)
           for (const cb of dataCbs) cb(bytes)
         })
-        // The master read stream errors with EIO when the slave side closes on
-        // some platforms; that's the normal end-of-pty signal, not a fault.
-        stream.on("error", () => {
-          /* surfaced via onExit below */
-        })
+        // `end` (macOS EOF) and `error` (Linux EIO) both signal end-of-pty once
+        // the slave is closed — tear down the master either way.
+        stream.on("end", closeMaster)
+        stream.on("error", closeMaster)
 
         void child.exited.then((code: number) => {
           for (const cb of exitCbs) cb(code)
-          closeMaster()
+          // Now that the child is gone, close the slave so the master drains its
+          // buffer and then EOFs — which fires `end`/`error` → closeMaster.
+          closeSlave()
         })
 
         const handle: PtyHandle = {
