@@ -651,6 +651,53 @@ describe("createDriver", () => {
     })
   })
 
+  it("forwards setThinkingEffort to the adapter handle (queued before start)", async () => {
+    const calls: string[] = []
+    const adapter: DriverAdapter = {
+      start: async () => ({
+        send: () => {},
+        interrupt: () => {},
+        close: () => {},
+        setThinkingEffort: (e) => {
+          calls.push(e)
+        },
+      }),
+    }
+    const driver = createDriver({
+      adapter,
+      idGen: createSequentialIdGen(),
+      scheduler: sync,
+    })
+    const started = driver.start(startInput)
+    if (!started.ok) throw new Error("expected ok")
+    const session = started.value
+    session.setThinkingEffort?.("medium")
+    await Promise.resolve()
+    expect(calls).toEqual(["medium"])
+  })
+
+  it("emits thinkingEffort on the up-front runner-started when the start input carries one", () => {
+    const fake = makeFakeAdapter()
+    let run: (() => void) | undefined
+    const driver = createDriver({
+      adapter: fake.adapter,
+      idGen: createSequentialIdGen(),
+      scheduler: (fn) => {
+        run = fn
+      },
+    })
+    const started = driver.start({ ...startInput, thinkingEffort: "high" })
+    if (!started.ok) throw new Error("expected ok")
+    const seen: CanonicalEvent[] = []
+    started.value.onEvent((e) => seen.push(e))
+    run?.()
+    expect(seen[0]).toEqual({
+      type: "runner-started",
+      runnerId: "rnr_1" as RunnerId,
+      thinkingEffort: "high",
+    })
+  })
+
   it("emits question-requested and resolves requestQuestion on respondQuestion", async () => {
     const events: CanonicalEvent[] = []
     let resolved: QuestionAnswer | undefined

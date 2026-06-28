@@ -11,6 +11,7 @@ import type {
   QuestionAnswer,
   QuestionPrompt,
   RunnerId,
+  ThinkingEffort,
 } from "@spectrum/agent-events"
 import type { ModelId, SessionId } from "@spectrum/types"
 import { type IdGen, type Result, ok } from "@spectrum/utils"
@@ -105,6 +106,9 @@ export const createDriver = (deps: {
         ...(input.modelId !== undefined
           ? { model: String(input.modelId) }
           : {}),
+        ...(input.thinkingEffort !== undefined
+          ? { thinkingEffort: input.thinkingEffort }
+          : {}),
       })
       deps.adapter.start(input, ctx).then(
         (h) => {
@@ -183,6 +187,10 @@ export const createDriver = (deps: {
       },
       setMode: (mode: PermissionMode) => {
         runOrQueue((h) => h.setMode?.(mode))
+        return ok(undefined)
+      },
+      setThinkingEffort: (effort: ThinkingEffort) => {
+        runOrQueue((h) => h.setThinkingEffort?.(effort))
         return ok(undefined)
       },
       setModel: (
