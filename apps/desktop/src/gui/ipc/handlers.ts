@@ -434,6 +434,8 @@ export const createIpcHandlers = (ctx: GuiContext): IpcHandlers => {
 
     getRunnerSocketUrl: async () => ({ url: ctx.runnerSocketUrl }),
 
+    getUpdateSocketUrl: async () => ({ url: ctx.updateSocketUrl }),
+
     // ── Terminal (in-app terminal panel) ──────────────────────────────────────
     // The terminal socket URL is wired in Task 7; the handler is registered here so the contract
     // is complete and only the composition needs to add the `terminalSocketUrl` field.
@@ -571,7 +573,10 @@ export const createIpcHandlers = (ctx: GuiContext): IpcHandlers => {
       // A failed check is non-fatal — the adapter records phase "error" in its
       // raw snapshot; we do NOT re-throw so the webview gets the error state.
       await ctx.updater.check(config.settings.updateChannel as Channel)
-      return buildUpdateState()
+      const state = await buildUpdateState()
+      // Also push so any webview listening on the update socket sees the fresh state.
+      void ctx.pushUpdateState()
+      return state
     },
 
     startUpdateDownload: async () => {
@@ -616,7 +621,9 @@ export const createIpcHandlers = (ctx: GuiContext): IpcHandlers => {
       // still follows the pre-restart channel (version.json is cached for the process),
       // so this queries the current channel until Spectrum restarts — see setChannel.
       await ctx.updater.check(channel)
-      return buildUpdateState()
+      const state = await buildUpdateState()
+      void ctx.pushUpdateState()
+      return state
     },
 
     // ── Dialogs ───────────────────────────────────────────────────────────────
