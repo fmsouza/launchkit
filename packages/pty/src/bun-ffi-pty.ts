@@ -25,7 +25,7 @@ import type { PtyHandle, PtySpawner } from "./pty-adapter"
 const TIOCSWINSZ_DARWIN = 0x80087467n
 const TIOCSWINSZ_LINUX = 0x5414n
 
-interface NativeBindings {
+export interface NativeBindings {
   openpty(
     amaster: NodeJS.TypedArray,
     aslave: NodeJS.TypedArray,
@@ -35,12 +35,31 @@ interface NativeBindings {
   ): number
   ioctl(fd: number, request: bigint, argp: NodeJS.TypedArray): number
   tiocswinsz: bigint
+  /**
+   * Retained `dlopen` Library handles. `bun:ffi` compiles a per-symbol native
+   * trampoline that is owned by the Library handle; if that handle is garbage
+   * collected the trampoline memory is freed, and the next call to a symbol
+   * branches into freed code — on arm64e (Apple Silicon) that surfaces as a
+   * pointer-authentication trap (PAC IB) and a hard process crash. Keeping the
+   * handles reachable for as long as the symbols are callable prevents that.
+   * Never invoked directly; the array exists purely to anchor the references.
+   */
+  readonly handles: readonly unknown[]
 }
 
-/** dlopen libc/libutil for `openpty` + `ioctl`. Throws if the platform is unsupported. */
-const loadNative = (): NativeBindings => {
+/** The slice of `bun:ffi` that {@link loadNative} consumes (injectable for tests). */
+type FfiModule = Pick<typeof import("bun:ffi"), "dlopen" | "FFIType">
+
+/**
+ * dlopen libc/libutil for `openpty` + `ioctl`. Throws if the platform is
+ * unsupported. The returned bindings retain the `dlopen` handle(s) (see
+ * {@link NativeBindings.handles}) so the native trampolines stay alive.
+ */
+export const loadNative = (
   // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const { dlopen, FFIType } = require("bun:ffi") as typeof import("bun:ffi")
+  ffi: FfiModule = require("bun:ffi") as FfiModule,
+): NativeBindings => {
+  const { dlopen, FFIType } = ffi
   const platform = process.platform
   const openptyDef = {
     args: [FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr],
@@ -53,18 +72,21 @@ const loadNative = (): NativeBindings => {
 
   let openptyFn: NativeBindings["openpty"]
   let ioctlFn: NativeBindings["ioctl"]
+  const handles: unknown[] = []
   if (platform === "darwin") {
     // libutil.dylib re-exports libSystem, so one handle has both symbols.
     const lib = dlopen("libutil.dylib", {
       openpty: openptyDef,
       ioctl: ioctlDef,
     })
+    handles.push(lib)
     openptyFn = lib.symbols.openpty as NativeBindings["openpty"]
     ioctlFn = lib.symbols.ioctl as NativeBindings["ioctl"]
   } else {
     // Linux: openpty in libutil, ioctl in libc.
     const util = dlopen("libutil.so.1", { openpty: openptyDef })
     const libc = dlopen("libc.so.6", { ioctl: ioctlDef })
+    handles.push(util, libc)
     openptyFn = util.symbols.openpty as NativeBindings["openpty"]
     ioctlFn = libc.symbols.ioctl as NativeBindings["ioctl"]
   }
@@ -72,6 +94,7 @@ const loadNative = (): NativeBindings => {
     openpty: openptyFn,
     ioctl: ioctlFn,
     tiocswinsz: platform === "darwin" ? TIOCSWINSZ_DARWIN : TIOCSWINSZ_LINUX,
+    handles,
   }
 }
 
@@ -79,11 +102,24 @@ const loadNative = (): NativeBindings => {
 const winsize = (cols: number, rows: number): Uint16Array =>
   new Uint16Array([rows, cols, 0, 0])
 
-export const createBunFfiPtySpawner = (): PtySpawner => {
+export const createBunFfiPtySpawner = (
+  loadNativeFn: () => NativeBindings = loadNative,
+): PtySpawner => {
+  // Load the native bindings ONCE and reuse them for every spawn. This both
+  // avoids re-`dlopen`-ing per launch and — crucially — keeps the single
+  // Library handle (and its native trampolines) reachable for the lifetime of
+  // the spawner, which composition holds for the whole process. Re-dlopening
+  // per spawn would discard each prior handle, risking a freed trampoline and
+  // an arm64e pointer-authentication crash (see NativeBindings.handles).
+  let cached: NativeBindings | undefined
+  const getNative = (): NativeBindings => {
+    if (!cached) cached = loadNativeFn()
+    return cached
+  }
   return {
     spawn(input) {
       try {
-        const native = loadNative()
+        const native = getNative()
         // eslint-disable-next-line @typescript-eslint/no-var-requires
         const fs = require("node:fs") as typeof import("node:fs")
 
