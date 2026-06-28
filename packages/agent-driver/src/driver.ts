@@ -55,7 +55,10 @@ export interface AgentStartInput {
 export interface AgentSession {
   readonly rootRunnerId: RunnerId
   onEvent(cb: (e: CanonicalEvent) => void): void
-  send(turn: { text: string }): Result<void, DriverError>
+  send(turn: {
+    readonly text: string
+    readonly clientSendId?: string
+  }): Result<void, DriverError>
   respondApproval(
     requestId: string,
     decision: ApprovalDecision,

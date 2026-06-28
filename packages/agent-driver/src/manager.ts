@@ -223,15 +223,23 @@ export const createRunManager = (deps: RunManagerDeps): RunManager => {
   // run-send for an ended session seeds the queue and triggers `doResume`; any
   // concurrent sends for the same session pile onto the queue and are flushed
   // when the resume completes. This serializes "two rapid sends" into ONE resume.
-  const resuming = new Map<SessionId, string[]>()
+  const resuming = new Map<
+    SessionId,
+    Array<{ text: string; clientSendId?: string }>
+  >()
 
-  const resumeAndSend = (id: SessionId, text: string): void => {
+  const resumeAndSend = (
+    id: SessionId,
+    text: string,
+    clientSendId?: string,
+  ): void => {
+    const turn = clientSendId !== undefined ? { text, clientSendId } : { text }
     const queued = resuming.get(id)
     if (queued !== undefined) {
-      queued.push(text)
+      queued.push(turn)
       return
     }
-    resuming.set(id, [text])
+    resuming.set(id, [turn])
     void doResume(id)
   }
 
@@ -325,7 +333,7 @@ export const createRunManager = (deps: RunManagerDeps): RunManager => {
     const queued = resuming.get(id) ?? []
     resuming.delete(id)
     for (const q of queued) {
-      agent.send({ text: q })
+      agent.send(q)
     }
   }
 
@@ -346,7 +354,7 @@ export const createRunManager = (deps: RunManagerDeps): RunManager => {
       // No live session — try to lazily auto-resume for run-send; the other
       // commands are safe no-ops for an unknown/ended session id.
       if (message.type === "run-send") {
-        resumeAndSend(message.id, message.text)
+        resumeAndSend(message.id, message.text, message.clientSendId)
       }
       return
     }
@@ -356,7 +364,11 @@ export const createRunManager = (deps: RunManagerDeps): RunManager => {
     // the normal persist+forward path.
     switch (message.type) {
       case "run-send":
-        agent.send({ text: message.text })
+        agent.send(
+          message.clientSendId !== undefined
+            ? { text: message.text, clientSendId: message.clientSendId }
+            : { text: message.text },
+        )
         return
       case "run-approve":
         agent.respondApproval(message.requestId, message.decision)
