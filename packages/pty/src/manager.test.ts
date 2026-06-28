@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test"
 import { SessionIdSchema } from "@spectrum/types"
 import { createFakePtySpawner } from "./fake-pty"
-import { createTerminalManager } from "./manager"
+import { createNoopTerminalManager, createTerminalManager } from "./manager"
 import type { TerminalOutbound } from "./protocol"
 
 const sessionId = SessionIdSchema.parse(
@@ -27,6 +27,43 @@ describe("TerminalManager", () => {
     mgr.handleInbound({ type: "term-input", sessionId, tabId, data: "bHM=" })
     expect(sent.some((m) => m.type === "term-opened")).toBe(true)
     expect(sent.some((m) => m.type === "term-output")).toBe(true)
+  })
+
+  it("spawns a PTY and emits term-opened when handleInbound receives term-open for a new tab", () => {
+    const spawner = createFakePtySpawner()
+    const { sent, sink } = capturingSink()
+    const mgr = createTerminalManager({ spawner })
+    mgr.bindSend(sink)
+    mgr.handleInbound({
+      type: "term-open",
+      sessionId,
+      tabId,
+      cwd: "/tmp",
+      cols: 80,
+      rows: 24,
+    })
+    expect(spawner.calls.length).toBe(1)
+    expect(spawner.calls[0]?.cwd).toBe("/tmp")
+    expect(sent.some((m) => m.type === "term-opened")).toBe(true)
+    expect(sent.some((m) => m.type === "term-error")).toBe(false)
+  })
+
+  it("treats term-open for an already-live tab as an idempotent re-attach (no second spawn, no error)", () => {
+    const spawner = createFakePtySpawner()
+    const { sent, sink } = capturingSink()
+    const mgr = createTerminalManager({ spawner })
+    mgr.bindSend(sink)
+    mgr.launch(baseLaunch)
+    mgr.handleInbound({
+      type: "term-open",
+      sessionId,
+      tabId,
+      cwd: "/tmp",
+      cols: 80,
+      rows: 24,
+    })
+    expect(spawner.calls.length).toBe(1)
+    expect(sent.some((m) => m.type === "term-error")).toBe(false)
   })
 
   it("routes term-resize to session.resize with cols/rows", () => {
@@ -92,5 +129,41 @@ describe("TerminalManager", () => {
     const r = mgr.launch(baseLaunch)
     expect(r.ok).toBe(false)
     if (!r.ok) expect(r.error.kind).toBe("spawn-failed")
+  })
+
+  it("sends a term-error frame (not just a Result) when the spawner fails", () => {
+    const failingSpawner = {
+      spawn: () => ({
+        ok: false,
+        error: { kind: "spawn-failed", message: "boom" } as const,
+      }),
+    }
+    const { sent, sink } = capturingSink()
+    const mgr = createTerminalManager({ spawner: failingSpawner })
+    mgr.bindSend(sink)
+    mgr.launch(baseLaunch)
+    const err = sent.find((m) => m.type === "term-error")
+    expect(err).toBeDefined()
+    if (err?.type === "term-error") expect(err.message).toContain("boom")
+  })
+})
+
+describe("createNoopTerminalManager", () => {
+  it("emits a term-error explaining the terminal is unavailable on term-open", () => {
+    const mgr = createNoopTerminalManager()
+    const { sent, sink } = capturingSink()
+    mgr.bindSend(sink)
+    mgr.handleInbound({
+      type: "term-open",
+      sessionId,
+      tabId,
+      cwd: "/tmp",
+      cols: 80,
+      rows: 24,
+    })
+    const err = sent.find((m) => m.type === "term-error")
+    expect(err).toBeDefined()
+    if (err?.type === "term-error")
+      expect(err.message.toLowerCase()).toContain("unavailable")
   })
 })

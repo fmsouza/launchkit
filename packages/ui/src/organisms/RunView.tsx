@@ -198,8 +198,13 @@ export const RunView = ({
           {...(providerNames === undefined ? {} : { providerNames })}
           {...(onModelChange === undefined ? {} : { onModelChange })}
         />
-        {terminal?.paneOpen ? (
+        {terminal && (terminal.paneOpen || terminal.tabs.length > 0) ? (
+          // Keep the pane MOUNTED whenever the pane is open OR has live tabs, and
+          // collapse it via the `hidden` attribute. Unmounting on collapse would
+          // tear down the xterm DOM and kill the running PTYs — so a closed pane
+          // would lose every session. Hiding preserves them for reopen.
           <TerminalPane
+            hidden={!terminal.paneOpen}
             tabs={terminal.tabs}
             activeTabId={terminal.activeTabId}
             paneHeightPx={terminal.paneHeightPx}

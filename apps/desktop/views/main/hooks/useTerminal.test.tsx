@@ -1,4 +1,4 @@
-import { describe, expect, it } from "bun:test"
+import { beforeEach, describe, expect, it } from "bun:test"
 import { SessionIdSchema } from "@spectrum/types"
 import { renderHook } from "@testing-library/react"
 import type { ReactNode } from "react"
@@ -8,7 +8,18 @@ import { useTerminalStore } from "../stores/terminalStore"
 import { createTerminalClient } from "../terminal/terminalClient"
 import { createFakeIpcClient } from "../test/fake-client"
 import { createUpdateClient } from "../update/updateClient"
-import { useTerminal } from "./useTerminal"
+import {
+  disposeTerminalSession,
+  resetTerminalRegistryForTests,
+  useTerminal,
+} from "./useTerminal"
+
+beforeEach(() => {
+  // The terminal instance registry is module-level (survives hook remounts), so
+  // reset it between tests to avoid cross-test leakage.
+  resetTerminalRegistryForTests()
+  useTerminalStore.setState({ sessions: {} })
+})
 
 const sessionId = SessionIdSchema.parse(
   "s_00000000-0000-4000-8000-000000000000",
@@ -219,6 +230,135 @@ describe("useTerminal", () => {
     // call must have been issued (term-resize message in `sent`).
     expect(observers.length).toBeGreaterThan(0)
     void fakeFit
+  })
+
+  it("mountTerminal re-attaches an existing terminal's element into a new container", async () => {
+    // Background survival across pane collapse / tab swaps: when a tab's xterm
+    // already exists and is re-mounted into a DIFFERENT container, its DOM must
+    // be re-parented into the new container — otherwise it stays orphaned in the
+    // old (detached) node and the pane renders blank.
+    useTerminalStore.setState({ sessions: {} })
+    const sent: unknown[] = []
+    const terminalClient = createTerminalClient((m) => sent.push(m))
+    const client = createFakeIpcClient({})
+    const { wrapper } = renderWithStores(client)
+    const { result } = renderHook(
+      () =>
+        useTerminal({
+          sessionId,
+          ipcClient: fakeIpc("/tmp") as never,
+          terminalClient,
+        }),
+      { wrapper },
+    )
+
+    const OriginalRO = globalThis.ResizeObserver
+    class FakeRO {
+      observe(): void {}
+      disconnect(): void {}
+    }
+    ;(globalThis as { ResizeObserver: typeof FakeRO }).ResizeObserver = FakeRO
+
+    const c1 = document.createElement("div")
+    const c2 = document.createElement("div")
+    document.body.appendChild(c1)
+    document.body.appendChild(c2)
+
+    result.current.mountTerminal("tab-x", c1)
+    expect(c1.childElementCount).toBeGreaterThan(0)
+
+    // Re-mount the SAME tab into a fresh container (mimics pane reopen).
+    result.current.mountTerminal("tab-x", c2)
+    expect(c2.childElementCount).toBeGreaterThan(0)
+    expect(c1.childElementCount).toBe(0)
+    ;(globalThis as { ResizeObserver: typeof OriginalRO }).ResizeObserver =
+      OriginalRO
+    document.body.removeChild(c1)
+    document.body.removeChild(c2)
+  })
+
+  it("persists a tab's terminal instance across a hook remount (active-session switch)", () => {
+    // Switching the active agent session remounts RunDetail (keyed by sessionId),
+    // which unmounts/remounts useTerminal. The tab's xterm instance must survive:
+    // re-mounting the SAME tab into a NEW container re-attaches the SAME element,
+    // it is not recreated. (Recreating would drop scrollback + the live PTY view.)
+    const terminalClient = createTerminalClient(() => {})
+    const client = createFakeIpcClient({})
+    const { wrapper } = renderWithStores(client)
+
+    const OriginalRO = globalThis.ResizeObserver
+    class FakeRO {
+      observe(): void {}
+      disconnect(): void {}
+    }
+    ;(globalThis as { ResizeObserver: typeof FakeRO }).ResizeObserver = FakeRO
+
+    const c1 = document.createElement("div")
+    const c2 = document.createElement("div")
+    document.body.appendChild(c1)
+    document.body.appendChild(c2)
+
+    const h1 = renderHook(
+      () =>
+        useTerminal({
+          sessionId,
+          ipcClient: fakeIpc("/tmp") as never,
+          terminalClient,
+        }),
+      { wrapper },
+    )
+    h1.result.current.mountTerminal("persist-tab", c1)
+    const el1 = c1.firstElementChild
+    expect(el1).not.toBeNull()
+    // Simulate switching to another session: the hook unmounts.
+    h1.unmount()
+
+    // Switch back: a fresh hook mounts and re-mounts the tab into a new node.
+    const h2 = renderHook(
+      () =>
+        useTerminal({
+          sessionId,
+          ipcClient: fakeIpc("/tmp") as never,
+          terminalClient,
+        }),
+      { wrapper },
+    )
+    h2.result.current.mountTerminal("persist-tab", c2)
+    // Same xterm DOM element re-parented into the new container — not recreated.
+    expect(c2.firstElementChild).toBe(el1)
+    ;(globalThis as { ResizeObserver: typeof OriginalRO }).ResizeObserver =
+      OriginalRO
+    document.body.removeChild(c1)
+    document.body.removeChild(c2)
+  })
+
+  it("disposeTerminalSession closes every tab's PTY and clears the session", async () => {
+    const sent: unknown[] = []
+    const terminalClient = createTerminalClient((m) => sent.push(m))
+    const client = createFakeIpcClient({})
+    const { wrapper } = renderWithStores(client)
+    const { result } = renderHook(
+      () =>
+        useTerminal({
+          sessionId,
+          ipcClient: fakeIpc("/tmp") as never,
+          terminalClient,
+        }),
+      { wrapper },
+    )
+    await result.current.openPane()
+    await result.current.newTab()
+    const before = useTerminalStore.getState().sessions[sessionId]?.tabs ?? []
+    expect(before.length).toBe(2)
+
+    disposeTerminalSession(terminalClient, sessionId)
+
+    const closes = sent.filter(
+      (m) => (m as { type: string }).type === "term-close",
+    )
+    expect(closes.length).toBe(2)
+    // The session's terminal state is gone (tabs removed).
+    expect(useTerminalStore.getState().sessions[sessionId]).toBeUndefined()
   })
 
   it("closeTab disconnects the ResizeObserver so no further term-resize fires", async () => {

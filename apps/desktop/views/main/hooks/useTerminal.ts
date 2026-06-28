@@ -1,7 +1,11 @@
 import type { SessionId } from "@spectrum/types"
 import { isOk } from "@spectrum/utils"
-import { useCallback, useEffect, useMemo, useRef } from "react"
-import { useTerminalStore } from "../stores/terminalStore"
+import { useCallback, useEffect, useMemo } from "react"
+import {
+  type SessionTerminalState,
+  type TerminalTab,
+  useTerminalStore,
+} from "../stores/terminalStore"
 import type { TerminalClient } from "../terminal/terminalClient"
 import {
   type XtermFitAddon,
@@ -58,26 +62,111 @@ export interface UseTerminalResult {
 const DEFAULT_COLS = 80
 const DEFAULT_ROWS = 24
 
+// Stable fallback for a session with no terminal state yet. MUST be a single
+// frozen reference (not an inline object literal in the selector): zustand uses
+// Object.is equality, so returning a fresh object each render — which happens
+// after `clearSession` removes the entry — triggers an infinite re-render loop.
+const EMPTY_SESSION_STATE: SessionTerminalState = Object.freeze({
+  tabs: [] as TerminalTab[],
+  activeTabId: null,
+  paneOpen: false,
+  paneHeightPx: 220,
+})
+
+// ---------------------------------------------------------------------------
+// Module-level terminal registry.
+//
+// Keyed by tabId (client-generated UUIDs — globally unique across sessions).
+// This lives OUTSIDE the React hook on purpose: `RunDetail` is keyed by
+// sessionId and fully REMOUNTS when the active agent session changes, which
+// would otherwise tear down per-hook refs and lose every terminal. Keeping the
+// xterm instances + their PTY output subscriptions here means a session's
+// terminals persist across active-session switches (and pane collapse). They
+// are torn down ONLY by:
+//   - closeTab (the user closes a tab),
+//   - disposeTerminalSession (the agent session is canceled/removed), or
+//   - process exit (the app is closed/killed).
+const terms = new Map<string, XtermTerminal>()
+const fits = new Map<string, XtermFitAddon>()
+const resizeObservers = new Map<string, ResizeObserver>()
+// Per-tab terminalClient listener disposers (onOutput/onExited/onError).
+const unsubs = new Map<string, Array<() => void>>()
+
+/**
+ * Subscribe a tab to its PTY output/exit/error frames. Idempotent across
+ * re-opens: the client keys listeners by (sessionId, tabId) and overwrites on
+ * re-subscribe, so we simply replace the stored disposer array (calling an old
+ * disposer would remove the freshly-registered listener). The output listener
+ * writes into the module-level `terms` registry, so it keeps delivering bytes to
+ * the (persistent) xterm even while the session is not the active view.
+ */
+const subscribeTab = (
+  terminalClient: TerminalClient,
+  sessionId: SessionId,
+  tabId: string,
+  notify: (n: { tone: "error"; message: string }) => void,
+): void => {
+  const offs: Array<() => void> = [
+    terminalClient.onOutput(sessionId, tabId, (data) => {
+      terms.get(tabId)?.write(atob(data))
+    }),
+    terminalClient.onExited(sessionId, tabId, (exitCode) => {
+      useTerminalStore.getState().setTabExit(sessionId, tabId, exitCode)
+    }),
+    terminalClient.onError(sessionId, tabId, (message) => {
+      notify({ tone: "error", message })
+    }),
+  ]
+  unsubs.set(tabId, offs)
+}
+
+/** Tear down everything tracked for a single tab (idempotent). */
+const teardownTab = (tabId: string): void => {
+  resizeObservers.get(tabId)?.disconnect()
+  resizeObservers.delete(tabId)
+  for (const u of unsubs.get(tabId) ?? []) u()
+  unsubs.delete(tabId)
+  const term = terms.get(tabId)
+  if (term) {
+    term.dispose()
+    terms.delete(tabId)
+  }
+  fits.delete(tabId)
+}
+
+/**
+ * Kill every terminal belonging to an agent session — used when the session is
+ * canceled/removed. Sends `term-close` to the backend PTY for each tab, disposes
+ * the frontend xterm, and clears the session's tabs from the store.
+ */
+export const disposeTerminalSession = (
+  terminalClient: TerminalClient,
+  sessionId: SessionId,
+): void => {
+  const s = useTerminalStore.getState().sessions[sessionId]
+  for (const tab of s?.tabs ?? []) {
+    terminalClient.close({ sessionId, tabId: tab.id })
+    teardownTab(tab.id)
+  }
+  useTerminalStore.getState().clearSession(sessionId)
+}
+
+/** Test-only: drop all registry state so module-level maps don't leak between tests. */
+export const resetTerminalRegistryForTests = (): void => {
+  for (const id of [...terms.keys()]) teardownTab(id)
+  terms.clear()
+  fits.clear()
+  resizeObservers.clear()
+  unsubs.clear()
+}
+
 export const useTerminal = (input: UseTerminalInput): UseTerminalResult => {
   const { notify } = useNotifications()
   const state = useTerminalStore(
-    (s) =>
-      s.sessions[input.sessionId] ?? {
-        tabs: [],
-        activeTabId: null,
-        paneOpen: false,
-        paneHeightPx: 220,
-      },
+    (s) => s.sessions[input.sessionId] ?? EMPTY_SESSION_STATE,
   )
-  // xterm instances keyed by tabId — kept alive while paneOpen=false for
-  // scrollback survival; disposed only on explicit closeTab.
-  const terms = useRef(new Map<string, XtermTerminal>())
-  const fits = useRef(new Map<string, XtermFitAddon>())
-  // Per-tab ResizeObservers — disconnect on closeTab so the observer dies
-  // with the terminal. Each observer calls fit() and forwards the new
-  // cols/rows to term-resize, so pane drag + window resize both reach
-  // node-pty's TIOCSWINSZ.
-  const resizeObservers = useRef(new Map<string, ResizeObserver>())
+  // Terminal instances + observers live in the module-level registry above so
+  // they survive this hook's remount on active-session switch.
 
   const measureColsRows = useCallback(
     (container?: HTMLElement): { cols: number; rows: number } => {
@@ -101,7 +190,7 @@ export const useTerminal = (input: UseTerminalInput): UseTerminalResult => {
   // unavailable (older addon or test stub).
   const refitAndResize = useCallback(
     (tabId: string): void => {
-      const fit = fits.current.get(tabId)
+      const fit = fits.get(tabId)
       if (!fit) return
       fit.fit()
       const proposed = fit.proposeDimensions?.()
@@ -152,15 +241,7 @@ export const useTerminal = (input: UseTerminalInput): UseTerminalResult => {
       cols,
       rows,
     })
-    input.terminalClient.onOutput(input.sessionId, tab.id, (data) => {
-      terms.current.get(tab.id)?.write(atob(data))
-    })
-    input.terminalClient.onExited(input.sessionId, tab.id, (exitCode) => {
-      useTerminalStore.getState().setTabExit(input.sessionId, tab.id, exitCode)
-    })
-    input.terminalClient.onError(input.sessionId, tab.id, (message) => {
-      notify({ tone: "error", message })
-    })
+    subscribeTab(input.terminalClient, input.sessionId, tab.id, notify)
   }, [input, measureColsRows, notify])
 
   const closePane = useCallback(() => {
@@ -192,31 +273,13 @@ export const useTerminal = (input: UseTerminalInput): UseTerminalResult => {
       cols,
       rows,
     })
-    input.terminalClient.onOutput(input.sessionId, tab.id, (data) =>
-      terms.current.get(tab.id)?.write(atob(data)),
-    )
-    input.terminalClient.onExited(input.sessionId, tab.id, (exitCode) =>
-      useTerminalStore.getState().setTabExit(input.sessionId, tab.id, exitCode),
-    )
-    input.terminalClient.onError(input.sessionId, tab.id, (message) =>
-      notify({ tone: "error", message }),
-    )
+    subscribeTab(input.terminalClient, input.sessionId, tab.id, notify)
   }, [input, measureColsRows, notify])
 
   const closeTab = useCallback(
     (tabId: string) => {
       input.terminalClient.close({ sessionId: input.sessionId, tabId })
-      const observer = resizeObservers.current.get(tabId)
-      if (observer) {
-        observer.disconnect()
-        resizeObservers.current.delete(tabId)
-      }
-      const term = terms.current.get(tabId)
-      if (term) {
-        term.dispose()
-        terms.current.delete(tabId)
-        fits.current.delete(tabId)
-      }
+      teardownTab(tabId)
       useTerminalStore.getState().closeTab(input.sessionId, tabId)
     },
     [input],
@@ -250,10 +313,20 @@ export const useTerminal = (input: UseTerminalInput): UseTerminalResult => {
 
   const mountTerminal = useCallback(
     (tabId: string, container: HTMLElement): (() => void) => {
-      const existing = terms.current.get(tabId)
+      const existing = terms.get(tabId)
       if (existing) {
-        if (!existing.element) existing.open(container)
-        fits.current.get(tabId)?.fit()
+        // Re-mount into `container`. If the terminal has never been opened,
+        // open it here. If it WAS opened but its element now lives in a stale
+        // container (the pane was collapsed/reopened, or this tab's node was
+        // recreated), re-parent the existing element into the live container —
+        // xterm can't be re-`open()`ed, so move its DOM. Without this the
+        // terminal stays orphaned in the detached node and the pane is blank.
+        if (!existing.element) {
+          existing.open(container)
+        } else if (existing.element.parentElement !== container) {
+          container.appendChild(existing.element)
+        }
+        fits.get(tabId)?.fit()
         return () => {
           // Background survival: the terminal stays mounted across tab swaps;
           // do nothing on cleanup unless the tab is being explicitly closed.
@@ -296,8 +369,8 @@ export const useTerminal = (input: UseTerminalInput): UseTerminalResult => {
         /* search addon failed to init — noop */
       }
       term.onData((data) => sendInput(tabId, data))
-      terms.current.set(tabId, term)
-      fits.current.set(tabId, fit)
+      terms.set(tabId, term)
+      fits.set(tabId, fit)
       if (!term.element) term.open(container)
       fit.fit()
       // ResizeObserver on the container: pane drag + window resize both
@@ -308,9 +381,9 @@ export const useTerminal = (input: UseTerminalInput): UseTerminalResult => {
         refitAndResize(tabId)
       })
       observer.observe(container)
-      resizeObservers.current.set(tabId, observer)
+      resizeObservers.set(tabId, observer)
       return () => {
-        // Background survival: xterm instances live in `terms.current` and
+        // Background survival: xterm instances live in `terms` and
         // are torn down only by `closeTab`. The observer likewise stays
         // attached for the lifetime of the tab; `closeTab` disconnects it.
       }

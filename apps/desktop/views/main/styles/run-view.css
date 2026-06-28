@@ -1089,6 +1089,12 @@
   transition: height 120ms ease-out;
   overflow: hidden;
 }
+/* Collapsed pane: kept mounted (PTYs alive) but fully hidden. The explicit rule
+   is required because `display: flex` above otherwise overrides the UA
+   `[hidden] { display: none }` rule, leaving a collapsed pane visible. */
+.lk-terminal-pane[hidden] {
+  display: none;
+}
 .lk-terminal-tabs {
   display: flex;
   flex-direction: column;
@@ -1127,8 +1133,15 @@
   position: absolute;
   right: var(--sp-space-2);
 }
+/* Wrapper holding one persistent screen node per tab; only the active tab's
+   node is shown (the others are display:none, set inline by TerminalPane). */
+.lk-terminal-pane__screens {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  padding: 0 var(--sp-space-2);
+}
 .lk-terminal-pane__screen {
   flex: 1 1 auto;
   min-height: 0;
-  padding: 0 var(--sp-space-2);
 }

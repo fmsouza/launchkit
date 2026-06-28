@@ -562,4 +562,48 @@ describe("RunView", () => {
     expect(followsComposer).toBeTruthy()
     cleanup()
   })
+
+  it("keeps the terminal pane mounted (hidden) when collapsed but tabs exist", () => {
+    const terminal = {
+      paneOpen: false,
+      tabs: [
+        { id: "t1", title: "Terminal", exitCode: null, closed: false },
+      ] as const,
+      activeTabId: "t1",
+      paneHeightPx: 220,
+      openPane: async () => {},
+      closePane: () => {},
+      newTab: async () => {},
+      closeTab: () => {},
+      resizeHeight: () => {},
+      selectTab: () => {},
+      mountTerminal: () => () => {},
+    }
+    render(<RunView {...base} terminal={terminal} cwd="/tmp" />)
+    // Collapsing must NOT unmount the pane (that would kill the PTYs); it stays
+    // in the DOM but hidden so the running sessions survive.
+    const pane = document.querySelector<HTMLElement>(".lk-terminal-pane")
+    if (pane === null) throw new Error("expected terminal pane to stay mounted")
+    expect(pane.hidden).toBe(true)
+    cleanup()
+  })
+
+  it("does not render the terminal pane when collapsed with no tabs", () => {
+    const terminal = {
+      paneOpen: false,
+      tabs: [] as const,
+      activeTabId: null,
+      paneHeightPx: 220,
+      openPane: async () => {},
+      closePane: () => {},
+      newTab: async () => {},
+      closeTab: () => {},
+      resizeHeight: () => {},
+      selectTab: () => {},
+      mountTerminal: () => () => {},
+    }
+    render(<RunView {...base} terminal={terminal} cwd="/tmp" />)
+    expect(document.querySelector(".lk-terminal-pane")).toBeNull()
+    cleanup()
+  })
 })
