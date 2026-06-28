@@ -178,4 +178,25 @@ describe("createRunnerClient", () => {
     c.dispatch({ type: "session-resume-token", id, resumeToken: "" })
     expect(got).toEqual([""])
   })
+
+  it("includes clientSendId in the run-send message", () => {
+    const sent: unknown[] = []
+    const client = createRunnerClient((m) => sent.push(m))
+    client.send(id, "hi", "c1")
+    expect(sent).toEqual([
+      { type: "run-send", id, text: "hi", clientSendId: "c1" },
+    ])
+  })
+
+  it("notifies onConnectionLost subscribers when the transport drops", () => {
+    const client = createRunnerClient(() => {})
+    let lost = 0
+    const off = client.onConnectionLost(() => {
+      lost += 1
+    })
+    client.connectionLost()
+    off()
+    client.connectionLost()
+    expect(lost).toBe(1)
+  })
 })
