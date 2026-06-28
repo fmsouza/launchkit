@@ -414,6 +414,7 @@ export const UpdateStateSchema = z
     showBanner: z.boolean(),
   })
   .strict()
+export type UpdateState = z.infer<typeof UpdateStateSchema>
 
 export const GetUpdateStateParamsSchema = z.undefined()
 export const GetUpdateStateResultSchema = UpdateStateSchema
