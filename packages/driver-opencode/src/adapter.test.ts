@@ -532,6 +532,15 @@ describe("createOpencodeAdapter", () => {
 
   // --- setModel: fresh server restart ---------------------------------------------------
 
+  it("accepts setThinkingEffort without throwing and does not disrupt a subsequent send", async () => {
+    const t = setup()
+    const handle = await t.adapter.start(START, t.ctx)
+    expect(() => handle.setThinkingEffort?.("high")).not.toThrow()
+    handle.send("after-effort")
+    await new Promise((r) => setTimeout(r, 0))
+    expect(t.prompts).toContainEqual({ id: S_ROOT, text: "after-effort" })
+  })
+
   it("setModel restarts the server with the new model, closes the old server, and re-emits runner-started with the new model", async () => {
     // Custom fake-connect: each call records its config + returns a fresh server + a fresh client
     // whose session.create returns a distinct session id, so we can prove the new session was created.
