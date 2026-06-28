@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test"
-import type { IpcClient } from "@spectrum/ipc"
+import type { IpcClient, UpdateState } from "@spectrum/ipc"
 import { err, ok } from "@spectrum/utils"
 import { createUpdateStore } from "./updateStore"
 
@@ -189,5 +189,39 @@ describe("createUpdateStore", () => {
     })
     await store.getState().apply()
     expect(messages).toContain("Couldn't apply the update.")
+  })
+
+  it("onUpdateState replaces state with the pushed frame", () => {
+    const store = createUpdateStore({ client: fakeClient(), notify: () => {} })
+    const pushed: UpdateState = {
+      ...available,
+      latestVersion: "1.2.0",
+      latestHash: "hashB",
+    }
+    store.getState().onUpdateState(pushed)
+    expect(store.getState().state?.latestVersion).toBe("1.2.0")
+    expect(store.getState().state?.latestHash).toBe("hashB")
+  })
+
+  it("a pushed frame with showBanner=false hides the banner", () => {
+    const store = createUpdateStore({ client: fakeClient(), notify: () => {} })
+    // First show the banner.
+    store.getState().onUpdateState({ ...available, showBanner: true })
+    expect(store.getState().state?.showBanner).toBe(true)
+    // Then a pushed frame hides it (e.g. same dismissed hash, server-resolved).
+    store.getState().onUpdateState({ ...available, showBanner: false })
+    expect(store.getState().state?.showBanner).toBe(false)
+  })
+
+  it("a pushed frame with a new hash and showBanner=true shows the banner", () => {
+    const store = createUpdateStore({ client: fakeClient(), notify: () => {} })
+    store
+      .getState()
+      .onUpdateState({ ...available, showBanner: false, latestHash: "hashA" })
+    store
+      .getState()
+      .onUpdateState({ ...available, showBanner: true, latestHash: "hashC" })
+    expect(store.getState().state?.showBanner).toBe(true)
+    expect(store.getState().state?.latestHash).toBe("hashC")
   })
 })
