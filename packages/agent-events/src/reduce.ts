@@ -111,6 +111,18 @@ export const reduce = (state: RunState, event: CanonicalEvent): RunState => {
       // may emit its own `runner-started` afterwards (e.g. claude's system/init). Preserve any
       // items/title already accumulated so the in-flight conversation is not reset to empty.
       const existing = state.runners.get(event.runnerId)
+      // Resume continuation: a NEW root runner-started (a different id) arriving
+      // when a prior root with history already exists is a resumed run — carry the
+      // prior root's items forward so resume continues the conversation instead of
+      // clearing it. The manager guarantees the backlog is folded before the
+      // resumed run starts, so the prior root is already populated here.
+      const priorRoot =
+        existing === undefined &&
+        event.parentRunnerId === undefined &&
+        state.rootRunnerId !== undefined &&
+        state.rootRunnerId !== event.runnerId
+          ? state.runners.get(state.rootRunnerId)
+          : undefined
       const title = event.title ?? existing?.title
       const agentType = event.agentType ?? existing?.agentType
       const parentRunnerId = event.parentRunnerId ?? existing?.parentRunnerId
@@ -118,17 +130,17 @@ export const reduce = (state: RunState, event: CanonicalEvent): RunState => {
       const runner: RunnerState = {
         id: event.runnerId,
         status: "running",
-        items: existing?.items ?? [],
+        items: existing?.items ?? priorRoot?.items ?? [],
         ...(parentRunnerId !== undefined ? { parentRunnerId } : {}),
         ...(agentType !== undefined ? { agentType } : {}),
         ...(title !== undefined ? { title } : {}),
         ...(supportedModes !== undefined ? { supportedModes } : {}),
       }
       let next = withRunner(state, runner)
-      if (
-        event.parentRunnerId === undefined &&
-        next.rootRunnerId === undefined
-      ) {
+      if (event.parentRunnerId === undefined) {
+        // The newest root becomes the rendered root. Idempotent for a same-id
+        // re-emit (claude's system/init), and re-points to the resumed root so
+        // the new turn renders under a runner that already holds the history.
         next = { ...next, rootRunnerId: event.runnerId }
       }
       if (
