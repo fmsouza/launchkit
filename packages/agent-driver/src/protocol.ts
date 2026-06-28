@@ -42,7 +42,7 @@ export type RunnerInbound =
       readonly type: "run-send"
       readonly id: SessionId
       readonly text: string
-      readonly clientSendId?: string
+      readonly clientSendId?: string | undefined
     }
   | {
       readonly type: "run-approve"
@@ -99,7 +99,7 @@ const InboundSchema = z.discriminatedUnion("type", [
     id: SessionIdSchema,
     modelId: ModelIdSchema.nullable(),
   }),
-]) as unknown as z.ZodType<RunnerInbound>
+])
 
 export const decodeRunnerInbound = (
   raw: unknown,

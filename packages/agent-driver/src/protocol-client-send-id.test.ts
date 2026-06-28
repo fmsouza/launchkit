@@ -21,5 +21,8 @@ describe("decodeRunnerInbound run-send clientSendId", () => {
   it("still decodes a run-send with no clientSendId", () => {
     const res = decodeRunnerInbound({ type: "run-send", id, text: "hi" })
     expect(res.ok).toBe(true)
+    if (res.ok && res.value.type === "run-send") {
+      expect(res.value.clientSendId).toBeUndefined()
+    }
   })
 })
