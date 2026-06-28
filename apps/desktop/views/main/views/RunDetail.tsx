@@ -159,6 +159,7 @@ const LiveRunDetail = ({
   const hydrateOutbox = useStore(outbox, (s) => s.hydrate)
   const markSendFailed = useStore(outbox, (s) => s.markFailed)
   const failAllSending = useStore(outbox, (s) => s.failAllSending)
+  const removeSend = useStore(outbox, (s) => s.remove)
 
   const timers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
 
@@ -263,18 +264,15 @@ const LiveRunDetail = ({
     readonly clientSendId?: string
     readonly text: string
   }): void => {
-    const clientSendId = entry.clientSendId ?? crypto.randomUUID()
-    enqueueSend(sessionId, {
-      clientSendId,
-      text: entry.text,
-      status: "sending",
-    })
-    runnerClient.send(sessionId, entry.text, clientSendId)
-    const t = setTimeout(() => {
-      markSendFailed(sessionId, clientSendId)
-      timers.current.delete(clientSendId)
-    }, SEND_ACK_TIMEOUT_MS)
-    timers.current.set(clientSendId, t)
+    if (entry.clientSendId !== undefined) {
+      const t = timers.current.get(entry.clientSendId)
+      if (t !== undefined) {
+        clearTimeout(t)
+        timers.current.delete(entry.clientSendId)
+      }
+      removeSend(sessionId, entry.clientSendId)
+    }
+    handleSend(entry.text)
   }
 
   if (root === undefined)
