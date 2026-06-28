@@ -7,7 +7,7 @@ import {
 } from "@spectrum/agent-events"
 import type { HarnessId, ModelId, ModelRoute, SessionId } from "@spectrum/types"
 import { EmptyState, RunView, Spinner } from "@spectrum/ui"
-import { type ReactElement, useEffect, useState } from "react"
+import { type ReactElement, useEffect, useRef, useState } from "react"
 import { useStore } from "zustand"
 import { useIpcClient } from "../IpcClientContext"
 import {
@@ -21,6 +21,8 @@ import { useStores } from "../stores/createStores"
 import { pendingToRender } from "../stores/outbox"
 import type { OutboxEntry } from "../stores/outbox"
 import type { TerminalClient } from "../terminal/terminalClient"
+
+export const SEND_ACK_TIMEOUT_MS = 15_000
 
 const EMPTY_OUTBOX: readonly OutboxEntry[] = []
 
@@ -155,6 +157,10 @@ const LiveRunDetail = ({
   const enqueueSend = useStore(outbox, (s) => s.enqueue)
   const reconcileOutbox = useStore(outbox, (s) => s.reconcile)
   const hydrateOutbox = useStore(outbox, (s) => s.hydrate)
+  const markSendFailed = useStore(outbox, (s) => s.markFailed)
+  const failAllSending = useStore(outbox, (s) => s.failAllSending)
+
+  const timers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
 
   const { mode, onModeChange, model, onModelChange } = useComposerModeModel(
     sessionId,
@@ -216,13 +222,59 @@ const LiveRunDetail = ({
   // biome-ignore lint/correctness/useExhaustiveDependencies: pendingKey is the reconcile signal.
   useEffect(() => {
     reconcileOutbox(sessionId, presentIds)
+    for (const id of presentIds) {
+      const t = timers.current.get(id)
+      if (t !== undefined) {
+        clearTimeout(t)
+        timers.current.delete(id)
+      }
+    }
   }, [sessionId, pendingKey, reconcileOutbox])
+
+  // Subscribe to transport loss — flip all in-flight sends to failed.
+  useEffect(() => {
+    const off = runnerClient.onConnectionLost(() => failAllSending())
+    return off
+  }, [runnerClient, failAllSending])
+
+  // Clear all pending timers on unmount.
+  useEffect(() => {
+    const map = timers.current
+    return () => {
+      for (const t of map.values()) clearTimeout(t)
+      map.clear()
+    }
+  }, [])
+
   const pending = pendingToRender(outboxEntries, presentIds)
 
   const handleSend = (text: string): void => {
     const clientSendId = crypto.randomUUID()
     enqueueSend(sessionId, { clientSendId, text, status: "sending" })
     runnerClient.send(sessionId, text, clientSendId)
+    const t = setTimeout(() => {
+      markSendFailed(sessionId, clientSendId)
+      timers.current.delete(clientSendId)
+    }, SEND_ACK_TIMEOUT_MS)
+    timers.current.set(clientSendId, t)
+  }
+
+  const handleResend = (entry: {
+    readonly clientSendId?: string
+    readonly text: string
+  }): void => {
+    const clientSendId = entry.clientSendId ?? crypto.randomUUID()
+    enqueueSend(sessionId, {
+      clientSendId,
+      text: entry.text,
+      status: "sending",
+    })
+    runnerClient.send(sessionId, entry.text, clientSendId)
+    const t = setTimeout(() => {
+      markSendFailed(sessionId, clientSendId)
+      timers.current.delete(clientSendId)
+    }, SEND_ACK_TIMEOUT_MS)
+    timers.current.set(clientSendId, t)
   }
 
   if (root === undefined)
@@ -244,6 +296,7 @@ const LiveRunDetail = ({
       onCloseSub={() => closeSub(sessionId)}
       onSend={handleSend}
       onRetry={(prompt) => runnerClient.send(sessionId, prompt)}
+      onResend={handleResend}
       pending={pending}
       onDecide={(requestId, decision) =>
         runnerClient.approve(sessionId, requestId, decision)

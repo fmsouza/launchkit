@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, mock } from "bun:test"
+import { beforeEach, describe, expect, it, jest, mock } from "bun:test"
 import type { RunnerOutbound } from "@spectrum/agent-driver"
 import type { CanonicalEvent, StoredEvent } from "@spectrum/agent-events"
 import {
@@ -12,7 +12,7 @@ import { cleanup, fireEvent, screen, waitFor } from "@testing-library/react"
 import type { RunnerClient } from "../runner/runnerClient"
 import { createFakeIpcClient } from "../test/fake-client"
 import { renderWithProviders } from "../test/renderWithProviders"
-import { RunDetail } from "./RunDetail"
+import { RunDetail, SEND_ACK_TIMEOUT_MS } from "./RunDetail"
 
 const id = SessionIdSchema.parse("s_00000000-0000-4000-8000-000000000000")
 
@@ -23,8 +23,10 @@ const makeFakeRunner = (): RunnerClient & {
   readonly setModes: Array<{ id: SessionId; mode: string }>
   readonly setModels: Array<{ id: SessionId; modelId: ModelId | null }>
   push: (event: StoredEvent) => void
+  connectionLost: () => void
 } => {
   let listener: ((event: StoredEvent) => void) | undefined
+  const connectionLostListeners = new Set<() => void>()
   const attached: SessionId[] = []
   const sends: string[] = []
   const setModes: Array<{ id: SessionId; mode: string }> = []
@@ -47,6 +49,15 @@ const makeFakeRunner = (): RunnerClient & {
     onAny: () => () => {},
     onSessionRenamed: () => () => {},
     onResumeToken: () => () => {},
+    onConnectionLost: (cb) => {
+      connectionLostListeners.add(cb)
+      return () => {
+        connectionLostListeners.delete(cb)
+      }
+    },
+    connectionLost: () => {
+      for (const cb of connectionLostListeners) cb()
+    },
     push: (event) => listener?.(event),
   }
 }
@@ -59,6 +70,11 @@ const stored = (seq: number, event: CanonicalEvent): StoredEvent => ({
 })
 
 describe("RunDetail (live)", () => {
+  beforeEach(() => {
+    // Clear localStorage so outbox hydration never loads entries from prior tests.
+    globalThis.localStorage?.clear()
+  })
+
   it("attaches the runner socket on mount", () => {
     const runner = makeFakeRunner()
     renderWithProviders(
@@ -334,7 +350,7 @@ describe("RunDetail (live)", () => {
     cleanup()
   })
 
-  it("re-sends the last user prompt over the runner socket when Retry is clicked", async () => {
+  it("re-sends the last user prompt over the runner socket when Resend is clicked", async () => {
     const runner = makeFakeRunner()
     renderWithProviders(
       <RunDetail mode="live" sessionId={id} runnerClient={runner} />,
@@ -369,10 +385,10 @@ describe("RunDetail (live)", () => {
     )
     await waitFor(() =>
       expect(
-        screen.getByRole("button", { name: /retry/i }),
+        screen.getByRole("button", { name: /resend/i }),
       ).toBeInTheDocument(),
     )
-    fireEvent.click(screen.getByRole("button", { name: /retry/i }))
+    fireEvent.click(screen.getByRole("button", { name: /resend/i }))
     expect(runner.sends).toEqual(["fix the bug"])
     cleanup()
   })
@@ -706,8 +722,10 @@ describe("RunDetail (outbox / optimistic send)", () => {
       clientSendId: string | undefined
     }>
     push: (event: StoredEvent) => void
+    connectionLost: () => void
   } => {
     let listener: ((event: StoredEvent) => void) | undefined
+    const connectionLostListeners = new Set<() => void>()
     const attached: SessionId[] = []
     const richSends: Array<{
       id: SessionId
@@ -731,6 +749,15 @@ describe("RunDetail (outbox / optimistic send)", () => {
       onAny: () => () => {},
       onSessionRenamed: () => () => {},
       onResumeToken: () => () => {},
+      onConnectionLost: (cb) => {
+        connectionLostListeners.add(cb)
+        return () => {
+          connectionLostListeners.delete(cb)
+        }
+      },
+      connectionLost: () => {
+        for (const cb of connectionLostListeners) cb()
+      },
       push: (event) => listener?.(event),
     }
   }
@@ -771,6 +798,81 @@ describe("RunDetail (outbox / optimistic send)", () => {
     ).toContain("hello")
 
     cleanup()
+  })
+
+  it("marks a send as failed when the connection is lost", async () => {
+    const runner = makeRichFakeRunner()
+    renderWithProviders(
+      <RunDetail mode="live" sessionId={id} runnerClient={runner} />,
+      createFakeIpcClient({}),
+    )
+    runner.push(
+      stored(0, { type: "runner-started", runnerId: "run_root" as never }),
+    )
+    await waitFor(() => screen.getByRole("button", { name: "Send message" }))
+
+    // Send a message.
+    fireEvent.change(screen.getByRole("textbox"), {
+      target: { value: "hello" },
+    })
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }))
+
+    // Wait for the sending bubble.
+    await waitFor(() =>
+      expect(document.querySelector('[data-status="sending"]')).not.toBeNull(),
+    )
+
+    // Trigger connection loss.
+    runner.connectionLost()
+
+    // The bubble should flip to data-status="failed" with a Resend button.
+    await waitFor(() => {
+      expect(document.querySelector('[data-status="failed"]')).not.toBeNull()
+      expect(
+        screen.getByRole("button", { name: /resend/i }),
+      ).toBeInTheDocument()
+    })
+
+    cleanup()
+  })
+
+  it("marks a send as failed after the ack timeout elapses", async () => {
+    jest.useFakeTimers()
+    try {
+      const runner = makeRichFakeRunner()
+      renderWithProviders(
+        <RunDetail mode="live" sessionId={id} runnerClient={runner} />,
+        createFakeIpcClient({}),
+      )
+      runner.push(
+        stored(0, { type: "runner-started", runnerId: "run_root" as never }),
+      )
+      await waitFor(() => screen.getByRole("button", { name: "Send message" }))
+
+      // Send a message.
+      fireEvent.change(screen.getByRole("textbox"), {
+        target: { value: "hello" },
+      })
+      fireEvent.click(screen.getByRole("button", { name: "Send message" }))
+
+      // Wait for the sending bubble.
+      await waitFor(() =>
+        expect(
+          document.querySelector('[data-status="sending"]'),
+        ).not.toBeNull(),
+      )
+
+      // Advance time past the ack timeout — no echo delivered.
+      jest.advanceTimersByTime(SEND_ACK_TIMEOUT_MS + 1)
+
+      // The bubble should flip to data-status="failed".
+      await waitFor(() => {
+        expect(document.querySelector('[data-status="failed"]')).not.toBeNull()
+      })
+    } finally {
+      jest.useRealTimers()
+      cleanup()
+    }
   })
 
   it("removes the optimistic bubble once the echo with the same clientSendId arrives", async () => {
