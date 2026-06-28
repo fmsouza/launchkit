@@ -28,6 +28,18 @@ export type ConversationTimelineProps = {
   readonly inert?: boolean
   /** Open a chat link in the OS browser; threaded to each `MessageBubble`. */
   readonly onOpenLink?: (url: string) => void
+  /** Optimistic / failed sends not yet reconciled with the backend echo. Rendered after the feed. */
+  readonly pending?: readonly {
+    readonly clientSendId: string
+    readonly text: string
+    readonly status: "sending" | "failed"
+  }[]
+  /** Re-dispatch a prompt (failed pending send, or the last errored turn). */
+  readonly onResend?: (entry: { clientSendId?: string; text: string }) => void
+  /** Discard a failed send + restore its text to the composer. */
+  readonly onCancel?: (entry: { clientSendId?: string; text: string }) => void
+  /** Suppress the Resend/Cancel footer on this errored message id (it was dismissed via Cancel). */
+  readonly dismissedErrorId?: string
 }
 
 export const ConversationTimeline = ({
@@ -39,6 +51,10 @@ export const ConversationTimeline = ({
   onRetry,
   inert = false,
   onOpenLink,
+  pending,
+  onResend,
+  onCancel,
+  dismissedErrorId,
 }: ConversationTimelineProps): ReactElement => {
   // Per-item expand state lives here (the page-level store holds RunState, not
   // ephemeral toggle bits): collapsed ids that the user has opened.
@@ -63,18 +79,28 @@ export const ConversationTimeline = ({
       {visible.map((item, i) => {
         switch (item.kind) {
           case "message": {
-            const canRetry =
+            const isLastError =
               i === visible.length - 1 &&
               item.tone === "error" &&
-              onRetry !== undefined &&
+              item.messageId !== dismissedErrorId &&
               lastUserPrompt !== undefined
+            const useNewActions =
+              isLastError && (onResend !== undefined || onCancel !== undefined)
+            const useLegacyRetry =
+              isLastError && !useNewActions && onRetry !== undefined
             return (
               <MessageBubble
                 key={`m-${item.messageId}`}
                 text={item.text}
                 author={item.role}
                 {...(item.tone !== undefined ? { tone: item.tone } : {})}
-                {...(canRetry
+                {...(useNewActions && onResend !== undefined
+                  ? { onResend: () => onResend({ text: lastUserPrompt }) }
+                  : {})}
+                {...(useNewActions && onCancel !== undefined
+                  ? { onCancel: () => onCancel({ text: lastUserPrompt }) }
+                  : {})}
+                {...(useLegacyRetry
                   ? { onRetry: () => onRetry(lastUserPrompt) }
                   : {})}
                 {...(onOpenLink === undefined ? {} : { onOpenLink })}
@@ -140,6 +166,27 @@ export const ConversationTimeline = ({
           }
         }
       })}
+      {(pending ?? []).map((p) => (
+        <MessageBubble
+          key={`p-${p.clientSendId}`}
+          text={p.text}
+          author="user"
+          status={p.status}
+          {...(p.status === "failed" && onResend !== undefined
+            ? {
+                onResend: () =>
+                  onResend({ clientSendId: p.clientSendId, text: p.text }),
+              }
+            : {})}
+          {...(p.status === "failed" && onCancel !== undefined
+            ? {
+                onCancel: () =>
+                  onCancel({ clientSendId: p.clientSendId, text: p.text }),
+              }
+            : {})}
+          {...(onOpenLink === undefined ? {} : { onOpenLink })}
+        />
+      ))}
       {runner.usage === undefined ? null : <UsageFooter usage={runner.usage} />}
     </div>
   )

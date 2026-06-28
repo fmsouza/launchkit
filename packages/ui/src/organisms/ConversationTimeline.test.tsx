@@ -5,6 +5,7 @@ import {
   initialRunState,
   reduce,
 } from "@spectrum/agent-events"
+import type { RunnerId, RunnerState } from "@spectrum/agent-events"
 import { RunnerIdSchema } from "@spectrum/types"
 import { cleanup, fireEvent, render, screen } from "@testing-library/react"
 import { ConversationTimeline } from "./ConversationTimeline"
@@ -383,6 +384,40 @@ describe("ConversationTimeline", () => {
     )
     fireEvent.click(screen.getByRole("button", { name: /retry/i }))
     expect(retried).toBe("summarize this repo")
+    cleanup()
+  })
+})
+
+describe("ConversationTimeline pending sends", () => {
+  const baseRunner: RunnerState = {
+    id: RunnerIdSchema.parse("rnr_root"),
+    status: "running",
+    items: [],
+  }
+
+  const noop = {
+    runners: new Map<RunnerId, RunnerState>(),
+    onOpenSubRunner: () => {},
+    onDecide: () => {},
+    onAnswer: () => {},
+  }
+
+  it("renders a failed pending send with Resend/Cancel carrying the clientSendId", () => {
+    const calls: Array<{ clientSendId?: string; text: string }> = []
+    render(
+      <ConversationTimeline
+        runner={baseRunner}
+        {...noop}
+        pending={[
+          { clientSendId: "c1", text: "lost prompt", status: "failed" },
+        ]}
+        onResend={(e) => calls.push(e)}
+        onCancel={(e) => calls.push(e)}
+      />,
+    )
+    expect(screen.getByText("lost prompt")).toBeDefined()
+    fireEvent.click(screen.getByRole("button", { name: "Resend" }))
+    expect(calls).toEqual([{ clientSendId: "c1", text: "lost prompt" }])
     cleanup()
   })
 })
