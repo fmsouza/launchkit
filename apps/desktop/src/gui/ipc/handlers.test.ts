@@ -113,6 +113,8 @@ const makeCtx = (
       { readonly kind: string; readonly detail?: string }
     >
     mintSessionProxyKey?: (modelId: string) => Promise<string>
+    updateSocketUrl?: string
+    pushUpdateState?: () => Promise<void>
   } = {},
 ): {
   ctx: AppContext
@@ -286,6 +288,8 @@ const makeCtx = (
       },
     },
     runnerSocketUrl: "ws://localhost:23456/",
+    updateSocketUrl: over.updateSocketUrl ?? "ws://localhost:0/",
+    pushUpdateState: over.pushUpdateState ?? (async () => {}),
     runEvents: {
       read: (id: unknown) => {
         runEventsIds.push(id as string)
@@ -1324,6 +1328,41 @@ describe("createIpcHandlers.getRunnerSocketUrl", () => {
     const handlers = createIpcHandlers(ctx)
     const result = await handlers.getRunnerSocketUrl()
     expect(result).toEqual({ url: "ws://localhost:23456/" })
+  })
+})
+
+describe("createIpcHandlers.getUpdateSocketUrl", () => {
+  it("returns the update socket url from the context", async () => {
+    const { ctx } = makeCtx({ updateSocketUrl: "ws://localhost:9999/" })
+    const handlers = createIpcHandlers(ctx)
+    const result = await handlers.getUpdateSocketUrl(undefined)
+    expect(result).toEqual({ url: "ws://localhost:9999/" })
+  })
+})
+
+describe("createIpcHandlers push-on-check", () => {
+  it("checkForUpdate pushes the built state via pushUpdateState", async () => {
+    const pushed: unknown[] = []
+    const { ctx } = makeCtx({
+      pushUpdateState: async () => {
+        pushed.push("pushed")
+      },
+    })
+    const handlers = createIpcHandlers(ctx)
+    await handlers.checkForUpdate(undefined)
+    expect(pushed).toEqual(["pushed"])
+  })
+
+  it("setUpdateChannel pushes the built state via pushUpdateState", async () => {
+    const pushed: unknown[] = []
+    const { ctx } = makeCtx({
+      pushUpdateState: async () => {
+        pushed.push("pushed")
+      },
+    })
+    const handlers = createIpcHandlers(ctx)
+    await handlers.setUpdateChannel({ channel: "canary" })
+    expect(pushed).toEqual(["pushed"])
   })
 })
 

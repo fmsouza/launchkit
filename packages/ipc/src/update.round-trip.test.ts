@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test"
-import { IpcMethodSchemas } from "./methods"
+import { GetUpdateSocketUrlResultSchema, IpcMethodSchemas } from "./methods"
 
 const sampleState = {
   phase: "available",
@@ -65,5 +65,12 @@ describe("update IPC schemas", () => {
   it("encodes void results as null for download/apply", () => {
     expect(IpcMethodSchemas.startUpdateDownload.result.parse(null)).toBeNull()
     expect(IpcMethodSchemas.applyUpdate.result.parse(null)).toBeNull()
+  })
+
+  it("getUpdateSocketUrl result round-trips", () => {
+    const parsed = GetUpdateSocketUrlResultSchema.parse({
+      url: "ws://localhost:12345/",
+    })
+    expect(parsed).toEqual({ url: "ws://localhost:12345/" })
   })
 })

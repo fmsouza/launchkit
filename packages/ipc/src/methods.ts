@@ -197,6 +197,19 @@ export const GetTerminalSocketUrlResultSchema = z
   .object({ url: z.string().min(1) })
   .strict()
 
+// ── Update push socket ──────────────────────────────────────────────────────
+/**
+ * The webview asks for the dedicated update WebSocket URL (a loopback ws the bun
+ * side serves for pushed UpdateState frames — see apps/desktop/src/gui/update-socket.ts).
+ * Push-only: the bun side re-checks the release feed on a timer and pushes the fresh
+ * UpdateState so the banner appears the moment a new build is detected while the app
+ * is open. Distinct from the request/response `getUpdateState`/`checkForUpdate`.
+ */
+export const GetUpdateSocketUrlParamsSchema = z.undefined()
+export const GetUpdateSocketUrlResultSchema = z
+  .object({ url: z.string().min(1) })
+  .strict()
+
 /**
  * Resolve the effective working directory the terminal panel should spawn the
  * shell in. The bun side runs the resolver (where the DB row + project path
@@ -401,6 +414,7 @@ export const UpdateStateSchema = z
     showBanner: z.boolean(),
   })
   .strict()
+export type UpdateState = z.infer<typeof UpdateStateSchema>
 
 export const GetUpdateStateParamsSchema = z.undefined()
 export const GetUpdateStateResultSchema = UpdateStateSchema
@@ -517,6 +531,10 @@ export const IpcMethodSchemas = {
   getTerminalSocketUrl: {
     params: GetTerminalSocketUrlParamsSchema,
     result: GetTerminalSocketUrlResultSchema,
+  },
+  getUpdateSocketUrl: {
+    params: GetUpdateSocketUrlParamsSchema,
+    result: GetUpdateSocketUrlResultSchema,
   },
   resolveTerminalCwd: {
     params: ResolveTerminalCwdParamsSchema,

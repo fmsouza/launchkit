@@ -69,6 +69,12 @@ const fakeGuiDeps = (): CreateGuiContextDeps & {
         dispose: () => {},
       }
     },
+    startUpdateSocket: () => ({
+      url: "ws://localhost:0/",
+      push: () => {},
+      stop: () => {},
+    }),
+    pollerTimers: { setInterval: () => 0, clearInterval: () => {} },
     removeDir: (dir) => {
       calls.removeDir = dir
     },

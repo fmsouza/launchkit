@@ -55,10 +55,9 @@ import {
   createTerminalManager,
 } from "@spectrum/pty"
 import type { ProjectId, SessionId } from "@spectrum/types"
-import type { Result } from "@spectrum/utils"
+import { type Result, isOk } from "@spectrum/utils"
 
 import type { AppContext } from "@spectrum/runtime-core"
-
 import { createNotificationService } from "./gui/notification-service"
 import { defaultRelaunch } from "./gui/relaunch"
 import {
@@ -74,7 +73,15 @@ import {
 import { withNotifierTap } from "./gui/runner-sink"
 import { type RunnerSocket, startRunnerSocket } from "./gui/runner-socket"
 import { type TerminalSocket, startTerminalSocket } from "./gui/terminal-socket"
+import { type UpdateSocket, startUpdateSocket } from "./gui/update-socket"
+import { buildUpdateState } from "./gui/updater/build-update-state"
 import { createElectrobunUpdater } from "./gui/updater/electrobun-updater"
+import {
+  type PollerTimers,
+  UPDATE_POLL_INTERVAL_MS,
+  createUpdatePoller,
+  realPollerTimers,
+} from "./gui/updater/update-poller"
 import type { UpdaterAdapter } from "./gui/updater/updater-adapter"
 import { isWindowFocused } from "./gui/window"
 
@@ -101,6 +108,10 @@ export interface GuiContext extends AppContext {
   readonly terminalManager: TerminalManager
   /** `ws://localhost:<port>/` the webview connects to for the terminal byte stream. */
   readonly terminalSocketUrl: string
+  /** `ws://localhost:<port>/` the webview connects to for pushed UpdateState frames. */
+  readonly updateSocketUrl: string
+  /** Re-check the feed + push the fresh UpdateState to the update socket. Used by the poller + IPC handlers. */
+  readonly pushUpdateState: () => Promise<void>
   /**
    * Resolve a session's raw DB row (`cwd`, `projectId`) for the terminal cwd resolver. Returns
    * `undefined` when the session id is unknown. The public `Session` type drops `projectId`,
@@ -122,7 +133,7 @@ export interface GuiContext extends AppContext {
 }
 
 /**
- * The 5 GUI seams `createGuiContext` injects. Defaulted to the real adapters
+ * The 8 GUI seams `createGuiContext` injects. Defaulted to the real adapters
  * in `realGuiDeps`; tests inject fakes to exercise wiring shape without
  * loading native FFI / opening sockets.
  */
@@ -130,11 +141,14 @@ export interface CreateGuiContextDeps {
   readonly createRunManager: typeof createRunManager
   readonly startRunnerSocket: typeof startRunnerSocket
   readonly startTerminalSocket: typeof startTerminalSocket
+  readonly startUpdateSocket: typeof startUpdateSocket
   readonly createRendererWatchdog: typeof createRendererWatchdog
   /** Recursively remove a directory (factory reset). */
   readonly removeDir: (dir: string) => void
   /** Relaunch the app process (Electrobun). Defaulted to a lazy native call. */
   readonly relaunch: () => void
+  /** Poller timers — injected so tests don't start a real 3-min interval. */
+  readonly pollerTimers: PollerTimers
 }
 
 // ---------------------------------------------------------------------------
@@ -151,9 +165,11 @@ export const realGuiDeps: CreateGuiContextDeps = {
   createRunManager,
   startRunnerSocket,
   startTerminalSocket,
+  startUpdateSocket,
   createRendererWatchdog,
   removeDir: defaultRemoveDir,
   relaunch: defaultRelaunch,
+  pollerTimers: realPollerTimers,
 }
 
 // ---------------------------------------------------------------------------
@@ -312,6 +328,34 @@ export const createGuiContext = (
   const updater = createElectrobunUpdater()
 
   // ------------------------------------------------------------------
+  // Update push socket + poller — pushes fresh UpdateState while the app is open
+  // ------------------------------------------------------------------
+  const updateSocket: UpdateSocket = deps.startUpdateSocket()
+  const pushUpdateState = async (): Promise<void> => {
+    try {
+      const loaded = await shared.config.load()
+      const buildChannel = await updater.getBuildChannel()
+      const channel: "stable" | "canary" =
+        buildChannel ??
+        (isOk(loaded) ? loaded.value.settings.updateChannel : "stable")
+      await updater.check(channel) // non-fatal; raw snapshot records errors
+      const state = await buildUpdateState({ updater, config: shared.config })
+      updateSocket.push(state)
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error)
+      log.child("update").error(`update.push.error: ${detail}`)
+    }
+  }
+  const updatePoller = createUpdatePoller({
+    check: pushUpdateState,
+    getPhase: () => updater.getRaw().phase,
+    intervalMs: UPDATE_POLL_INTERVAL_MS,
+    timers: deps.pollerTimers,
+    logger: log.child("update.poll"),
+  })
+  updatePoller.start()
+
+  // ------------------------------------------------------------------
   // Native folder picker — lazy so bun test never loads native FFI
   // ------------------------------------------------------------------
   const pickFolder: GuiContext["pickFolder"] = async (opts) => {
@@ -381,6 +425,8 @@ export const createGuiContext = (
     updater,
     terminalManager,
     terminalSocketUrl: terminalSocket.url,
+    updateSocketUrl: updateSocket.url,
+    pushUpdateState,
     resolveSessionRow,
     resolveProjectPath,
     homeDir: homedir(),

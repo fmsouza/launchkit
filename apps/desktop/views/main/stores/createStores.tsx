@@ -7,6 +7,7 @@ import {
   useState,
 } from "react"
 import type { StoreApi } from "zustand/vanilla"
+import type { UpdateClient } from "../update/updateClient"
 import { type HarnessesStore, createHarnessesStore } from "./harnessesStore"
 import { type ModelsStore, createModelsStore } from "./modelsStore"
 import type { NotificationInput } from "./notifications-model"
@@ -38,12 +39,14 @@ export type Stores = {
 export type CreateStoresOptions = {
   readonly client: IpcClient
   readonly initialView: string
+  readonly updateClient: UpdateClient
 }
 
 /** Build every store once with the injected client. */
 export const createStores = ({
   client,
   initialView,
+  updateClient,
 }: CreateStoresOptions): Stores => {
   const deps: StoreDeps = { client }
   const notifications = createNotificationsStore()
@@ -56,6 +59,8 @@ export const createStores = ({
     for (const p of providers.getState().data ?? []) out[p.id] = p.name
     return out
   }
+  const update = createUpdateStore({ ...deps, notify })
+  updateClient.onUpdateState((state) => update.getState().onUpdateState(state))
   return {
     proxy: createProxyStore(deps),
     providers,
@@ -65,7 +70,7 @@ export const createStores = ({
     projects: createProjectsStore(deps),
     ui: createUiStore(initialView),
     runView: createRunViewStore(deps),
-    update: createUpdateStore({ ...deps, notify }),
+    update,
   }
 }
 
@@ -74,6 +79,7 @@ const StoresContext = createContext<Stores | null>(null)
 export type StoreProviderProps = {
   readonly client: IpcClient
   readonly initialView?: string
+  readonly updateClient: UpdateClient
   readonly children: ReactNode
 }
 
@@ -81,9 +87,12 @@ export type StoreProviderProps = {
 export const StoreProvider = ({
   client,
   initialView = "sessions",
+  updateClient,
   children,
 }: StoreProviderProps): ReactElement => {
-  const [stores] = useState(() => createStores({ client, initialView }))
+  const [stores] = useState(() =>
+    createStores({ client, initialView, updateClient }),
+  )
   return (
     <StoresContext.Provider value={stores}>{children}</StoresContext.Provider>
   )

@@ -3,6 +3,7 @@ import { render, screen, waitFor } from "@testing-library/react"
 import type { ReactElement } from "react"
 import { useStore } from "zustand"
 import { createFakeIpcClient } from "../test/fake-client"
+import { createUpdateClient } from "../update/updateClient"
 import { StoreProvider, useStores } from "./createStores"
 
 const Probe = (): ReactElement => {
@@ -35,7 +36,7 @@ describe("StoreProvider", () => {
       }),
     })
     render(
-      <StoreProvider client={client}>
+      <StoreProvider client={client} updateClient={createUpdateClient()}>
         <Probe />
       </StoreProvider>,
     )
@@ -45,7 +46,10 @@ describe("StoreProvider", () => {
 
   it("provides a runView store of reduced RunState", () => {
     render(
-      <StoreProvider client={createFakeIpcClient({})}>
+      <StoreProvider
+        client={createFakeIpcClient({})}
+        updateClient={createUpdateClient()}
+      >
         <RunViewProbe />
       </StoreProvider>,
     )

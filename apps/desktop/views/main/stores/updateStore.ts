@@ -25,6 +25,8 @@ export interface UpdateStore {
   readonly dismiss: () => Promise<void>
   /** Switch channel and adopt the returned state. */
   readonly setChannel: (channel: Channel) => Promise<void>
+  /** Adopt a server-pushed UpdateState (no network check). */
+  readonly onUpdateState: (state: UpdateState) => void
 }
 
 export const createUpdateStore = (
@@ -106,5 +108,8 @@ export const createUpdateStore = (
           tone: "error",
           message: "Couldn't change the update channel.",
         })
+    },
+    onUpdateState: (state) => {
+      set({ state })
     },
   }))

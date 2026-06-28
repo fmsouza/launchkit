@@ -109,13 +109,24 @@ const config = {
   },
 } satisfies ElectrobunConfig
 
-// `build.watch`/`build.watchIgnore` drive `electrobun dev --watch` but are absent from the v1.18.1
-// `ElectrobunConfig` type (the CLI reads them at runtime). Attach them AFTER the `satisfies` check so
-// the core config is still type-validated while these extra, runtime-only keys pass through.
+// `build.watch`/`build.watchIgnore` drive `electrobun dev --watch`, and `build.views.main.external`
+// passes through to Bun.build — all are honored by the CLI at runtime but absent from the v1.18.1
+// `ElectrobunConfig` type. Attach them AFTER the `satisfies` check so the core config is still
+// type-validated while these extra, runtime-only keys pass through.
+//
+// `external: ["node-pty"]` keeps the native Node addon out of the webview's `target: "browser"`
+// bundle. The webview imports only the PURE terminal protocol (`isTerminalOutbound`, schemas, types)
+// from `@spectrum/pty`, whose barrel also re-exports the node-pty adapters; without this the browser
+// bundler eagerly follows `require("node-pty")` into `child_process` and fails. Marking it external
+// lets Bun tree-shake the unused native code out of the webview bundle entirely.
 export default {
   ...config,
   build: {
     ...config.build,
+    views: {
+      ...config.build.views,
+      main: { ...config.build.views.main, external: ["node-pty"] },
+    },
     watch: ["../../packages"],
     watchIgnore: ["**/*.test.ts", "**/*.test.tsx", "**/*.test.js"],
   },

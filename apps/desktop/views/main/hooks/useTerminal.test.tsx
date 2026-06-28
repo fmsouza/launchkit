@@ -7,6 +7,7 @@ import { StoreProvider, type Stores, useStores } from "../stores/createStores"
 import { useTerminalStore } from "../stores/terminalStore"
 import { createTerminalClient } from "../terminal/terminalClient"
 import { createFakeIpcClient } from "../test/fake-client"
+import { createUpdateClient } from "../update/updateClient"
 import { useTerminal } from "./useTerminal"
 
 const sessionId = SessionIdSchema.parse(
@@ -36,7 +37,7 @@ const renderWithStores = (client: ReturnType<typeof createFakeIpcClient>) => {
     storeRef,
     wrapper: ({ children }: { children: ReactNode }) => (
       <IpcClientProvider client={client}>
-        <StoreProvider client={client}>
+        <StoreProvider client={client} updateClient={createUpdateClient()}>
           <Capture />
           {children}
         </StoreProvider>
