@@ -73,6 +73,100 @@ describe("GeneralPage updates section", () => {
   })
 })
 
+describe("GeneralPage update actions", () => {
+  const available = {
+    ...upToDate,
+    phase: "available" as const,
+    latestVersion: "1.1.0",
+    available: true,
+    showBanner: true,
+  }
+  const downloading = {
+    ...available,
+    phase: "downloading" as const,
+    progress: 0.5,
+  }
+  const downloaded = {
+    ...available,
+    phase: "downloaded" as const,
+    progress: 1,
+  }
+
+  it("downloads the update when the download button is clicked in the available phase", async () => {
+    let downloadStarted = false
+    renderWithProviders(
+      <GeneralPage />,
+      createFakeIpcClient({
+        checkForUpdate: async () => ok(available),
+        getUpdateState: async () => ok(available),
+        getTimeoutSettings: async () => ok(defaultTimeouts),
+        startUpdateDownload: async () => {
+          downloadStarted = true
+          return ok(null)
+        },
+      }),
+    )
+    const button = await screen.findByRole("button", {
+      name: /download update/i,
+    })
+    fireEvent.click(button)
+    await waitFor(() => expect(downloadStarted).toBe(true))
+  })
+
+  it("applies the update when the restart button is clicked in the downloaded phase", async () => {
+    let applied = false
+    renderWithProviders(
+      <GeneralPage />,
+      createFakeIpcClient({
+        checkForUpdate: async () => ok(downloaded),
+        getUpdateState: async () => ok(downloaded),
+        getTimeoutSettings: async () => ok(defaultTimeouts),
+        applyUpdate: async () => {
+          applied = true
+          return ok(null)
+        },
+      }),
+    )
+    const button = await screen.findByRole("button", {
+      name: /restart to apply/i,
+    })
+    fireEvent.click(button)
+    await waitFor(() => expect(applied).toBe(true))
+  })
+
+  it("shows a disabled downloading button in the downloading phase", async () => {
+    renderWithProviders(
+      <GeneralPage />,
+      createFakeIpcClient({
+        checkForUpdate: async () => ok(downloading),
+        getUpdateState: async () => ok(downloading),
+        getTimeoutSettings: async () => ok(defaultTimeouts),
+      }),
+    )
+    const button = await screen.findByRole("button", { name: /downloading/i })
+    expect((button as HTMLButtonElement).disabled).toBe(true)
+  })
+
+  it("shows no update action button when up to date", async () => {
+    renderWithProviders(
+      <GeneralPage />,
+      createFakeIpcClient({
+        checkForUpdate: async () => ok(upToDate),
+        getUpdateState: async () => ok(upToDate),
+        getTimeoutSettings: async () => ok(defaultTimeouts),
+      }),
+    )
+    await waitFor(() => screen.getByText(/up to date/i))
+    expect(
+      screen.queryByRole("button", { name: /download update/i }),
+    ).toBeNull()
+    expect(
+      screen.queryByRole("button", { name: /restart to apply/i }),
+    ).toBeNull()
+    expect(screen.queryByRole("button", { name: /downloading/i })).toBeNull()
+  })
+})
+
 describe("GeneralPage timeout settings section", () => {
   it("renders the two timeout fields populated with values from getTimeoutSettings", async () => {
     renderWithProviders(
