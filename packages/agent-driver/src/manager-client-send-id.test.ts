@@ -1,10 +1,6 @@
 import { expect, it } from "bun:test"
 import type { CanonicalEvent, RunnerId } from "@spectrum/agent-events"
-import {
-  HarnessIdSchema,
-  type Session,
-  SessionIdSchema,
-} from "@spectrum/types"
+import { HarnessIdSchema, type Session, SessionIdSchema } from "@spectrum/types"
 import { createFixedClock, ok } from "@spectrum/utils"
 import type { AgentDriver, AgentSession } from "./driver"
 import { createRunManager } from "./manager"
