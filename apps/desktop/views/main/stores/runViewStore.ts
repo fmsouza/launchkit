@@ -96,10 +96,10 @@ export const createRunViewStore = (_deps: StoreDeps): StoreApi<RunViewStore> =>
           byId: { ...state.byId, [sessionId]: next },
           busyBySession: { ...state.busyBySession, [sessionId]: busy },
         }
-        // Seed the composer mode + model from the driver's reported applied values, but only when
-        // nothing is set yet — so a benign re-emit of runner-started (claude's system/init) or a
-        // later user change is never clobbered. The driver is the source of truth for the *initial*
-        // mode + model.
+        // Seed the composer mode, model, and thinking-effort from the driver's reported applied
+        // values, but only when nothing is set yet — so a benign re-emit of runner-started (claude's
+        // system/init) or a later user change is never clobbered. The driver is the source of truth
+        // for the *initial* mode, model, and thinking-effort.
         if (event.type !== "runner-started") return updated
         if (
           event.permissionMode !== undefined &&

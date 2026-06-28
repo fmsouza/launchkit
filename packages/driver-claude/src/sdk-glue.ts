@@ -290,18 +290,24 @@ export const createClaudeAdapter = (deps: {
       // Per-launch first-message tracking for the "log once" behaviour.
       let firstMsgLogged = false
 
+      // Resolve the extended-thinking budget once. null (the "off" tier, or no
+      // effort set) omits the `thinking` option entirely so thinking stays disabled.
+      const thinkingBudget =
+        currentEffort !== undefined
+          ? toClaudeThinkingBudget(currentEffort)
+          : null
+
       const query = sdk.query({
         prompt: inputStream.stream,
         options: {
           cwd: input.cwd,
           env: { ...(deps.baseEnv?.() ?? {}), ...currentEnv },
           ...(currentModel !== undefined ? { model: currentModel } : {}),
-          ...(currentEffort !== undefined &&
-          toClaudeThinkingBudget(currentEffort) !== null
+          ...(thinkingBudget !== null
             ? {
                 thinking: {
                   type: "enabled" as const,
-                  budgetTokens: toClaudeThinkingBudget(currentEffort) as number,
+                  budgetTokens: thinkingBudget,
                 },
               }
             : {}),
