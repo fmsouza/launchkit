@@ -241,6 +241,21 @@ const LiveRunDetail = ({
 
   const pending = pendingToRender(outboxEntries, presentIds)
 
+  const handleInterrupt = (): void => {
+    runnerClient.interrupt(sessionId)
+    // Drop optimistic sends that never landed so their bubbles don't linger.
+    for (const entry of outboxEntries) {
+      if (entry.status === "sending") {
+        const t = timers.current.get(entry.clientSendId)
+        if (t !== undefined) {
+          clearTimeout(t)
+          timers.current.delete(entry.clientSendId)
+        }
+        removeSend(sessionId, entry.clientSendId)
+      }
+    }
+  }
+
   const handleSend = (text: string): void => {
     const clientSendId = crypto.randomUUID()
     enqueueSend(sessionId, { clientSendId, text, status: "sending" })
@@ -326,7 +341,7 @@ const LiveRunDetail = ({
       onAnswer={(requestId, answer) =>
         runnerClient.answer(sessionId, requestId, answer)
       }
-      onInterrupt={() => runnerClient.interrupt(sessionId)}
+      onInterrupt={handleInterrupt}
       busy={busy}
       {...(elapsedSeconds === undefined ? {} : { elapsedSeconds })}
       mode={mode}
