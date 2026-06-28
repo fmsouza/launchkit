@@ -221,6 +221,51 @@ describe("useTerminal", () => {
     void fakeFit
   })
 
+  it("mountTerminal re-attaches an existing terminal's element into a new container", async () => {
+    // Background survival across pane collapse / tab swaps: when a tab's xterm
+    // already exists and is re-mounted into a DIFFERENT container, its DOM must
+    // be re-parented into the new container — otherwise it stays orphaned in the
+    // old (detached) node and the pane renders blank.
+    useTerminalStore.setState({ sessions: {} })
+    const sent: unknown[] = []
+    const terminalClient = createTerminalClient((m) => sent.push(m))
+    const client = createFakeIpcClient({})
+    const { wrapper } = renderWithStores(client)
+    const { result } = renderHook(
+      () =>
+        useTerminal({
+          sessionId,
+          ipcClient: fakeIpc("/tmp") as never,
+          terminalClient,
+        }),
+      { wrapper },
+    )
+
+    const OriginalRO = globalThis.ResizeObserver
+    class FakeRO {
+      observe(): void {}
+      disconnect(): void {}
+    }
+    ;(globalThis as { ResizeObserver: typeof FakeRO }).ResizeObserver = FakeRO
+
+    const c1 = document.createElement("div")
+    const c2 = document.createElement("div")
+    document.body.appendChild(c1)
+    document.body.appendChild(c2)
+
+    result.current.mountTerminal("tab-x", c1)
+    expect(c1.childElementCount).toBeGreaterThan(0)
+
+    // Re-mount the SAME tab into a fresh container (mimics pane reopen).
+    result.current.mountTerminal("tab-x", c2)
+    expect(c2.childElementCount).toBeGreaterThan(0)
+    expect(c1.childElementCount).toBe(0)
+    ;(globalThis as { ResizeObserver: typeof OriginalRO }).ResizeObserver =
+      OriginalRO
+    document.body.removeChild(c1)
+    document.body.removeChild(c2)
+  })
+
   it("closeTab disconnects the ResizeObserver so no further term-resize fires", async () => {
     useTerminalStore.setState({ sessions: {} })
     const sent: unknown[] = []

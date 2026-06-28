@@ -252,7 +252,17 @@ export const useTerminal = (input: UseTerminalInput): UseTerminalResult => {
     (tabId: string, container: HTMLElement): (() => void) => {
       const existing = terms.current.get(tabId)
       if (existing) {
-        if (!existing.element) existing.open(container)
+        // Re-mount into `container`. If the terminal has never been opened,
+        // open it here. If it WAS opened but its element now lives in a stale
+        // container (the pane was collapsed/reopened, or this tab's node was
+        // recreated), re-parent the existing element into the live container —
+        // xterm can't be re-`open()`ed, so move its DOM. Without this the
+        // terminal stays orphaned in the detached node and the pane is blank.
+        if (!existing.element) {
+          existing.open(container)
+        } else if (existing.element.parentElement !== container) {
+          container.appendChild(existing.element)
+        }
         fits.current.get(tabId)?.fit()
         return () => {
           // Background survival: the terminal stays mounted across tab swaps;
