@@ -176,6 +176,13 @@ describe("Composer", () => {
     cleanup()
   })
 
+  it("renders the thinking-effort selector when effort + onEffortChange are provided", () => {
+    const { getByText } = render(
+      <Composer onSend={() => {}} effort="medium" onEffortChange={() => {}} />,
+    )
+    expect(getByText("Medium")).toBeTruthy()
+  })
+
   it("fills the textarea when prefillKey changes", () => {
     const { rerender } = render(<Composer onSend={() => {}} />)
     rerender(

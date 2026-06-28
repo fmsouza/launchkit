@@ -160,17 +160,18 @@ const LiveRunDetail = ({
 
   const timers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
 
-  const { mode, onModeChange, model, onModelChange } = useComposerModeModel(
-    sessionId,
-    harnessId,
-    undefined, // live: seeding flows through applyEvent, not the hook
-    {
-      setMode: (sid, m) => runnerClient.setMode(sid, m),
-      setModel: (sid, id) =>
-        runnerClient.setModel(sid, id === "" ? null : (id as ModelId)),
-      setThinkingEffort: (sid, e) => runnerClient.setThinkingEffort(sid, e),
-    },
-  )
+  const { mode, onModeChange, model, onModelChange, effort, onEffortChange } =
+    useComposerModeModel(
+      sessionId,
+      harnessId,
+      undefined, // live: seeding flows through applyEvent, not the hook
+      {
+        setMode: (sid, m) => runnerClient.setMode(sid, m),
+        setModel: (sid, id) =>
+          runnerClient.setModel(sid, id === "" ? null : (id as ModelId)),
+        setThinkingEffort: (sid, e) => runnerClient.setThinkingEffort(sid, e),
+      },
+    )
 
   // Wire the terminal controller. The hook needs `useTerminalStore` +
   // `useNotifications` provider scope (renderWithProviders mounts both) and a
@@ -356,6 +357,8 @@ const LiveRunDetail = ({
       {...(models === undefined ? {} : { models })}
       {...(providerNames === undefined ? {} : { providerNames })}
       onModelChange={onModelChange}
+      effort={effort}
+      onEffortChange={onEffortChange}
       onOpenLink={(url) => {
         void client.openExternalUrl({ url })
       }}
@@ -397,12 +400,13 @@ const ReplayRunDetail = ({
     }
   }, [client, sessionId])
 
-  const { mode, onModeChange, model, onModelChange } = useComposerModeModel(
-    sessionId,
-    harnessId,
-    folded?.seed,
-    undefined, // no socket in replay; mode/model forward to the live session on resume-send
-  )
+  const { mode, onModeChange, model, onModelChange, effort, onEffortChange } =
+    useComposerModeModel(
+      sessionId,
+      harnessId,
+      folded?.seed,
+      undefined, // no socket in replay; mode/model forward to the live session on resume-send
+    )
 
   if (folded === undefined) return <Spinner label="Loading conversation" />
   const { state } = folded
@@ -449,6 +453,8 @@ const ReplayRunDetail = ({
       {...(models === undefined ? {} : { models })}
       {...(providerNames === undefined ? {} : { providerNames })}
       onModelChange={onModelChange}
+      effort={effort}
+      onEffortChange={onEffortChange}
       onOpenLink={(url) => {
         void client.openExternalUrl({ url })
       }}

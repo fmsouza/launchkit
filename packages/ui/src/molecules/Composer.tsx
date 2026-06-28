@@ -1,4 +1,4 @@
-import type { PermissionMode } from "@spectrum/agent-events"
+import type { PermissionMode, ThinkingEffort } from "@spectrum/agent-events"
 import type { ModelRoute } from "@spectrum/types"
 import {
   type KeyboardEvent,
@@ -10,6 +10,7 @@ import {
 import { Icon } from "../atoms/Icon"
 import { ModeSelector } from "./ModeSelector"
 import { ModelSelector } from "./ModelSelector"
+import { ThinkingEffortSelector } from "./ThinkingEffortSelector"
 
 /**
  * Measure a textarea's content height and clamp it to a cap.
@@ -55,6 +56,8 @@ export type ComposerProps = {
   readonly models?: readonly ModelRoute[]
   readonly providerNames?: Readonly<Record<string, string>>
   readonly onModelChange?: (modelId: string) => void
+  readonly effort?: ThinkingEffort
+  readonly onEffortChange?: (effort: ThinkingEffort) => void
   /** Text to drop into the input (e.g. a cancelled failed send restored for editing). */
   readonly prefillText?: string
   /** Bump to re-apply `prefillText` even when the text is unchanged. */
@@ -73,6 +76,8 @@ export const Composer = ({
   models,
   providerNames,
   onModelChange,
+  effort,
+  onEffortChange,
   prefillText,
   prefillKey,
 }: ComposerProps): ReactElement => {
@@ -143,6 +148,13 @@ export const Composer = ({
             models={models}
             {...(providerNames === undefined ? {} : { providerNames })}
             onChange={onModelChange}
+            disabled={disabled}
+          />
+        )}
+        {effort === undefined || onEffortChange === undefined ? null : (
+          <ThinkingEffortSelector
+            effort={effort}
+            onChange={onEffortChange}
             disabled={disabled}
           />
         )}
