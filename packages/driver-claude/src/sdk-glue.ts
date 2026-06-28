@@ -136,6 +136,7 @@ const targetFor = (
 const makeInputStream = (): {
   stream: AsyncGenerator<SdkUserInput>
   push: (text: string) => void
+  drain: () => void
   end: () => void
 } => {
   const queue: SdkUserInput[] = []
@@ -165,6 +166,9 @@ const makeInputStream = (): {
       })
       wake?.()
       wake = null
+    },
+    drain: () => {
+      queue.length = 0
     },
     end: () => {
       ended = true
@@ -493,6 +497,9 @@ export const createClaudeAdapter = (deps: {
         restart()
       },
       interrupt: () => {
+        // Drain any buffered-but-unsent turns so a rapid multi-send is fully
+        // stopped, then interrupt the in-flight turn.
+        current.inputStream.drain()
         void current.query.interrupt()
       },
       close: () => {

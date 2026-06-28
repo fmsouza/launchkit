@@ -1277,6 +1277,39 @@ describe("createClaudeAdapter", () => {
     expect(queries).toHaveLength(2)
   })
 
+  // --- Task 6: interrupt drains the input-stream queue -----------------------------------
+
+  it("does not deliver queued turns to the SDK after interrupt", async () => {
+    // Arrange a fake SDK that records each user input it pulls from the prompt stream.
+    // We reuse the existing multi-query fake so we can observe which prompts were pulled.
+    const { sdk, queries } = makeMultiQueryFakeSdk("resolve")
+    const adapter = createClaudeAdapter({ loadSdk: async () => sdk })
+    const handle = await adapter.start(input, makeCtx([], []))
+
+    // Send three turns rapidly, then interrupt immediately.
+    handle.send("turn-1")
+    handle.send("turn-2")
+    handle.send("turn-3")
+    handle.interrupt()
+
+    // Wait for any microtasks / async draining that might happen.
+    await new Promise((r) => setTimeout(r, 20))
+
+    // Collect all text content that the fake query observed from the prompt stream.
+    const pulled = (queries[0]?.pushedPrompts ?? []) as Array<{
+      type: string
+      message: { role: string; content: string }
+      parent_tool_use_id: null
+    }>
+    const pulledTexts = pulled.map((p) => p.message.content)
+
+    // After interrupt the queue must have been drained: turn-3 (and ideally turn-2)
+    // must NOT have been delivered to the SDK.
+    expect(pulledTexts).not.toContain("turn-3")
+
+    handle.close()
+  })
+
   // --- Task 2: refusal_fallback_prompt dialog via onUserDialog ----------------------------
 
   it("declares the refusal_fallback_prompt dialog kind", async () => {
