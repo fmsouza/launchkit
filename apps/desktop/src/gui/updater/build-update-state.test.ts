@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test"
 
-import { ok } from "@spectrum/utils"
+import { err, ok } from "@spectrum/utils"
 
 import type { ConfigStore } from "@spectrum/config"
 import type { Config } from "@spectrum/config"
@@ -88,5 +88,23 @@ describe("buildUpdateState", () => {
     const state = await buildUpdateState({ updater, config })
 
     expect(state.channel).toBe("canary")
+  })
+
+  it("channel falls back to stable when the config fails to load and getBuildChannel returns undefined", async () => {
+    const updater = createFakeUpdater({
+      currentVersion: "1.0.0",
+      latest: "1.1.0",
+      latestHash: "hashC",
+      // No buildChannel — getBuildChannel() returns undefined
+    })
+    await updater.check("canary")
+    const config: ConfigStore = {
+      load: async () => err({ kind: "not-found" }),
+      save: async (cfg) => ok(cfg),
+    }
+
+    const state = await buildUpdateState({ updater, config })
+
+    expect(state.channel).toBe("stable")
   })
 })
