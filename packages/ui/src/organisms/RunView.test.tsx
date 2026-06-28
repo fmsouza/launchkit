@@ -535,4 +535,31 @@ describe("RunView", () => {
     ).toBeNull()
     cleanup()
   })
+
+  it("renders the terminal pane below the composer, not above it", () => {
+    const terminal = {
+      paneOpen: true,
+      tabs: [] as const,
+      activeTabId: null,
+      paneHeightPx: 220,
+      openPane: async () => {},
+      closePane: () => {},
+      newTab: async () => {},
+      closeTab: () => {},
+      resizeHeight: () => {},
+      selectTab: () => {},
+      mountTerminal: () => () => {},
+    }
+    render(<RunView {...base} terminal={terminal} cwd="/tmp" />)
+    const composer = document.querySelector(".lk-composer")
+    const pane = document.querySelector(".lk-terminal-pane")
+    if (composer === null) throw new Error("expected composer")
+    if (pane === null) throw new Error("expected terminal pane")
+    // The terminal pane must follow the composer in document order so it sits
+    // below the input textbox, not above it.
+    const followsComposer =
+      composer.compareDocumentPosition(pane) & Node.DOCUMENT_POSITION_FOLLOWING
+    expect(followsComposer).toBeTruthy()
+    cleanup()
+  })
 })

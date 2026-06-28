@@ -342,4 +342,21 @@ describe("RunSideRail", () => {
     // Expanded: the count IS shown via TaskRail.
     expect(screen.getByText("0/1")).toBeInTheDocument()
   })
+
+  it("pins the collapsed terminal toggle to the rail footer so it sits at the bottom", () => {
+    render(
+      <RunSideRail
+        {...base}
+        runners={new Map()}
+        collapsed
+        cwd="/tmp"
+        onToggleTerminal={() => {}}
+      />,
+    )
+    const toggle = screen.getByRole("button", { name: /terminal pane/ })
+    // The footer wrapper carries `margin-top: auto`, pushing the toggle to the
+    // trailing edge of the collapsed strip rather than directly under Sub-agent.
+    expect(toggle.closest(".lk-side-rail__footer")).not.toBeNull()
+    cleanup()
+  })
 })

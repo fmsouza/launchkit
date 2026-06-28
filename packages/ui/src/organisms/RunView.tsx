@@ -183,21 +183,6 @@ export const RunView = ({
             />
           ) : null}
         </div>
-        {terminal?.paneOpen ? (
-          <TerminalPane
-            tabs={terminal.tabs}
-            activeTabId={terminal.activeTabId}
-            paneHeightPx={terminal.paneHeightPx}
-            onSelectTab={terminal.selectTab}
-            onNewTab={() => {
-              void terminal.newTab()
-            }}
-            onCloseTab={terminal.closeTab}
-            onResizeHeight={terminal.resizeHeight}
-            onClose={terminal.closePane}
-            mountTerminal={terminal.mountTerminal}
-          />
-        ) : null}
         <Composer
           onSend={onSend}
           disabled={composerDisabled ?? inert}
@@ -213,6 +198,21 @@ export const RunView = ({
           {...(providerNames === undefined ? {} : { providerNames })}
           {...(onModelChange === undefined ? {} : { onModelChange })}
         />
+        {terminal?.paneOpen ? (
+          <TerminalPane
+            tabs={terminal.tabs}
+            activeTabId={terminal.activeTabId}
+            paneHeightPx={terminal.paneHeightPx}
+            onSelectTab={terminal.selectTab}
+            onNewTab={() => {
+              void terminal.newTab()
+            }}
+            onCloseTab={terminal.closeTab}
+            onResizeHeight={terminal.resizeHeight}
+            onClose={terminal.closePane}
+            mountTerminal={terminal.mountTerminal}
+          />
+        ) : null}
       </section>
       <RunSideRail
         key={openRunner?.id ?? "root"}

@@ -26,6 +26,10 @@ const PARTIALS = [
   "modal.css",
   "lists.css",
   "page.css",
+  // Vendored xterm base stylesheet — required for the internal terminal pane to
+  // render with correct row/viewport layout. Linked last (it styles independent
+  // `.xterm` elements) and shipped same-origin so CSP `style-src 'self'` allows it.
+  "xterm.css",
 ] as const
 
 describe("views/main stylesheet partials wiring", () => {
