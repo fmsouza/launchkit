@@ -66,6 +66,8 @@ const makeFakeRunner = (): RunnerClient & {
     onAny: () => () => {},
     onSessionRenamed: () => () => {},
     onResumeToken: () => () => {},
+    connectionLost: () => {},
+    onConnectionLost: () => () => {},
   }
 }
 

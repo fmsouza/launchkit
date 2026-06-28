@@ -94,6 +94,8 @@ const fakeRunnerClient: RunnerClient = {
   onAny: () => () => {},
   onSessionRenamed: () => () => {},
   onResumeToken: () => () => {},
+  connectionLost: () => {},
+  onConnectionLost: () => () => {},
 } as unknown as RunnerClient
 
 const fakeUpdateClient = createUpdateClient()
