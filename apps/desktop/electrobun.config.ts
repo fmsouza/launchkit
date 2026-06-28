@@ -85,6 +85,7 @@ const config = {
       "views/main/styles/modal.css": "views/main/styles/modal.css",
       "views/main/styles/lists.css": "views/main/styles/lists.css",
       "views/main/styles/page.css": "views/main/styles/page.css",
+      "views/main/styles/xterm.css": "views/main/styles/xterm.css",
       "views/main/spectrum-favicon.svg": "views/main/spectrum-favicon.svg",
       "views/main/favicon.ico": "views/main/favicon.ico",
       "views/main/spectrum-tray.png": "views/main/spectrum-tray.png",

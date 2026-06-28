@@ -128,16 +128,18 @@ export const RunSideRail = ({
         >
           Sub-agent
         </button>
-        <Tooltip label={terminalLabel} placement="left">
-          <IconButton
-            label={terminalLabel}
-            active={paneOpen}
-            disabled={terminalDisabled}
-            onClick={() => onToggleTerminal()}
-          >
-            ▤
-          </IconButton>
-        </Tooltip>
+        <div className="lk-side-rail__footer">
+          <Tooltip label={terminalLabel} placement="left">
+            <IconButton
+              label={terminalLabel}
+              active={paneOpen}
+              disabled={terminalDisabled}
+              onClick={() => onToggleTerminal()}
+            >
+              ▤
+            </IconButton>
+          </Tooltip>
+        </div>
       </aside>
     )
   }

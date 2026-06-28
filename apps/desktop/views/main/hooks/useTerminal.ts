@@ -3,6 +3,11 @@ import { isOk } from "@spectrum/utils"
 import { useCallback, useEffect, useMemo, useRef } from "react"
 import { useTerminalStore } from "../stores/terminalStore"
 import type { TerminalClient } from "../terminal/terminalClient"
+import {
+  type XtermFitAddon,
+  type XtermTerminal,
+  loadXterm,
+} from "../terminal/xterm"
 import { useNotifications } from "./useNotifications"
 
 export interface UseTerminalInput {
@@ -24,22 +29,6 @@ export interface UseTerminalInput {
   readonly createTerminal?: new (
     opts: object,
   ) => XtermTerminal
-}
-
-// Minimal structural type for Terminal so we can avoid pulling @xterm/xterm
-// at module-load time (heavy DOM dependency, not always installed at test time).
-export interface XtermTerminal {
-  readonly element: HTMLElement | undefined
-  loadAddon(addon: unknown): void
-  open(parent: HTMLElement): void
-  write(data: string): void
-  onData(handler: (data: string) => void): void
-  dispose(): void
-}
-
-export interface XtermFitAddon {
-  fit(): void
-  proposeDimensions?(): { cols: number; rows: number } | undefined
 }
 
 export interface UseTerminalResult {
@@ -68,36 +57,6 @@ export interface UseTerminalResult {
 
 const DEFAULT_COLS = 80
 const DEFAULT_ROWS = 24
-
-interface XtermModule {
-  Terminal: new (opts: object) => XtermTerminal
-}
-interface FitModule {
-  FitAddon: new () => XtermFitAddon
-}
-interface WebglModule {
-  WebglAddon: new () => unknown
-}
-interface ClipboardModule {
-  ClipboardAddon: new () => unknown
-}
-interface SearchModule {
-  SearchAddon: new () => unknown
-}
-
-/**
- * Bun's ESM runtime resolves `require()` for npm packages even when the host
- * package is "type": "module". We use that to load xterm + addons lazily —
- * the brief keeps clipboard + search optional, and the entire xterm graph
- * stays out of the test bundle.
- */
-const tryRequire = <T>(specifier: string): T | undefined => {
-  try {
-    return require(specifier) as T
-  } catch {
-    return undefined
-  }
-}
 
 export const useTerminal = (input: UseTerminalInput): UseTerminalResult => {
   const { notify } = useNotifications()
@@ -302,36 +261,39 @@ export const useTerminal = (input: UseTerminalInput): UseTerminalResult => {
           // term open here preserves scrollback.
         }
       }
-      const xtermMod = tryRequire<XtermModule>("@xterm/xterm")
-      const fitMod = tryRequire<FitModule>("@xterm/addon-fit")
-      const Ctor = input.createTerminal ?? xtermMod?.Terminal
-      if (!Ctor || !fitMod) {
+      // Statically-bundled xterm modules (see ../terminal/xterm). Loading must
+      // not use a dynamic `require` — the webview is a `target: "browser"`
+      // bundle with no runtime `require`, so a dynamic require throws and the
+      // pane reports "Terminal renderer unavailable".
+      const mods = loadXterm()
+      const Ctor = input.createTerminal ?? mods.Terminal
+      let term: XtermTerminal
+      let fit: XtermFitAddon
+      try {
+        term = new Ctor({ convertEol: false })
+        fit = new mods.FitAddon()
+        term.loadAddon(fit)
+      } catch {
         notify({
           tone: "error",
           message: "Terminal renderer unavailable",
         })
         return () => {}
       }
-      const term: XtermTerminal = new Ctor({ convertEol: false })
-      const fit = new fitMod.FitAddon()
-      term.loadAddon(fit)
-      const webgl = tryRequire<WebglModule>("@xterm/addon-webgl")
       try {
-        if (webgl) term.loadAddon(new webgl.WebglAddon())
+        term.loadAddon(new mods.WebglAddon())
       } catch {
         /* canvas/WebGL unavailable — canvas2d fallback */
       }
-      const clipboard = tryRequire<ClipboardModule>("@xterm/addon-clipboard")
       try {
-        if (clipboard) term.loadAddon(new clipboard.ClipboardAddon())
+        term.loadAddon(new mods.ClipboardAddon())
       } catch {
-        /* addon not installed on this build — noop */
+        /* clipboard addon failed to init — noop */
       }
-      const search = tryRequire<SearchModule>("@xterm/addon-search")
       try {
-        if (search) term.loadAddon(new search.SearchAddon())
+        term.loadAddon(new mods.SearchAddon())
       } catch {
-        /* addon not installed on this build — noop */
+        /* search addon failed to init — noop */
       }
       term.onData((data) => sendInput(tabId, data))
       terms.current.set(tabId, term)
