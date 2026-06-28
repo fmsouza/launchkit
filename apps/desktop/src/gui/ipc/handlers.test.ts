@@ -1503,6 +1503,54 @@ describe("createIpcHandlers.launchHarness (persisted mode)", () => {
   })
 })
 
+describe("createIpcHandlers.launchHarness (persisted thinkingEffort)", () => {
+  it("forwards the persisted thinkingEffort pref for the harness to runner.launch", async () => {
+    const { ctx, runnerLaunchInputs } = makeCtx({ providers: [provider()] })
+    const loaded = (await ctx.config.load()).value
+    await ctx.config.save({
+      ...loaded,
+      settings: {
+        ...loaded.settings,
+        lastByHarness: { claude: { thinkingEffort: "high" } },
+      },
+    } as Config)
+    const handlers = createIpcHandlers(ctx)
+
+    await handlers.launchHarness({ id: "claude" as HarnessId, env: {} })
+
+    const input = runnerLaunchInputs[0] as { thinkingEffort?: string }
+    expect(input.thinkingEffort).toBe("high")
+  })
+
+  it("omits thinkingEffort when nothing is stored for the harness", async () => {
+    const { ctx, runnerLaunchInputs } = makeCtx({ providers: [provider()] })
+    const handlers = createIpcHandlers(ctx)
+
+    await handlers.launchHarness({ id: "claude" as HarnessId, env: {} })
+
+    const input = runnerLaunchInputs[0] as Record<string, unknown>
+    expect("thinkingEffort" in input).toBe(false)
+  })
+
+  it("omits thinkingEffort when the stored value is not a valid tier", async () => {
+    const { ctx, runnerLaunchInputs } = makeCtx({ providers: [provider()] })
+    const loaded = (await ctx.config.load()).value
+    await ctx.config.save({
+      ...loaded,
+      settings: {
+        ...loaded.settings,
+        lastByHarness: { claude: { thinkingEffort: "ultra" } },
+      },
+    } as Config)
+    const handlers = createIpcHandlers(ctx)
+
+    await handlers.launchHarness({ id: "claude" as HarnessId, env: {} })
+
+    const input = runnerLaunchInputs[0] as Record<string, unknown>
+    expect("thinkingEffort" in input).toBe(false)
+  })
+})
+
 describe("createIpcHandlers.launchHarness (persisted model)", () => {
   it("uses the persisted per-harness modelId when the launch carries none", async () => {
     const { ctx, runnerLaunchInputs } = makeCtx({ providers: [provider()] })

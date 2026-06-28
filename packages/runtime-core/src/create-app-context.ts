@@ -16,6 +16,7 @@ import type {
   SessionSink,
 } from "@spectrum/agent-driver"
 import { demoScript } from "@spectrum/agent-driver"
+import { ThinkingEffortSchema } from "@spectrum/agent-events"
 import { defaultConfig } from "@spectrum/config"
 import { createClaudeDriver } from "@spectrum/driver-claude"
 import { createOpenclawDriver } from "@spectrum/driver-openclaw"
@@ -532,6 +533,7 @@ export const createAppContext = (
     readonly harnessId: HarnessId
     readonly modelId?: ModelId
     readonly cwd: string
+    readonly thinkingEffort?: import("@spectrum/agent-events").ThinkingEffort
   }): Promise<RunLaunchInput> => {
     const listed = await registry.list()
     const harness = listed.ok
@@ -571,17 +573,34 @@ export const createAppContext = (
       env: resolved.value.env,
       command: resolved.value.command,
       args: resolved.value.args,
+      ...(input.thinkingEffort !== undefined
+        ? { thinkingEffort: input.thinkingEffort }
+        : {}),
     }
   }
 
   const resolveResumeInput: NonNullable<
     RunManagerDeps["resolveResumeInput"]
-  > = async (session) =>
-    resolveLaunchInput({
+  > = async (session) => {
+    // Read the persisted thinking-effort tier for this harness so resumed sessions
+    // start at the same tier the user last selected (mirroring the launchHarness handler).
+    const loaded = await config.load()
+    const cfg = loaded.ok ? loaded.value : defaultConfig()
+    const storedEffort =
+      cfg.settings.lastByHarness?.[String(session.harnessId)]?.thinkingEffort
+    const parsedEffort =
+      storedEffort !== undefined
+        ? ThinkingEffortSchema.safeParse(storedEffort)
+        : undefined
+    const thinkingEffort = parsedEffort?.success ? parsedEffort.data : undefined
+
+    return resolveLaunchInput({
       harnessId: session.harnessId,
       ...(session.modelId !== undefined ? { modelId: session.modelId } : {}),
       cwd: session.cwd,
+      ...(thinkingEffort !== undefined ? { thinkingEffort } : {}),
     })
+  }
 
   // Destructive maintenance + factory reset over the already-wired db/config/secrets. The cascade
   // LOGIC lives in @spectrum/data-admin; here we only construct + inject.

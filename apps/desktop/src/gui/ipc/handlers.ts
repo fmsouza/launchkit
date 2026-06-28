@@ -1,6 +1,9 @@
 import { stat } from "node:fs/promises"
 
-import { PermissionModeSchema } from "@spectrum/agent-events"
+import {
+  PermissionModeSchema,
+  ThinkingEffortSchema,
+} from "@spectrum/agent-events"
 import type { IpcHandlers, ProviderView } from "@spectrum/ipc"
 import { providerCatalog, validateProviderConfig } from "@spectrum/providers"
 import type { ModelId, ModelRoute, Provider, SecretRef } from "@spectrum/types"
@@ -269,6 +272,18 @@ export const createIpcHandlers = (ctx: GuiContext): IpcHandlers => {
           : PermissionModeSchema.safeParse(storedMode)
       const permissionMode = parsedMode?.success ? parsedMode.data : undefined
 
+      // Restore the last-used thinking-effort tier for this harness. Stored as a plain string;
+      // validate against the canonical ThinkingEffortSchema and ignore anything unrecognized.
+      const storedEffort =
+        config.settings.lastByHarness?.[String(harness.id)]?.thinkingEffort
+      const parsedEffort =
+        storedEffort === undefined
+          ? undefined
+          : ThinkingEffortSchema.safeParse(storedEffort)
+      const thinkingEffort = parsedEffort?.success
+        ? parsedEffort.data
+        : undefined
+
       // Resolve the effective model: an explicit launch model wins; else the remembered per-harness
       // one. A remembered "" means the user chose "default" (subscription) — honor it as direct.
       // Otherwise, when models are configured, default to the first so a new session is proxied
@@ -326,6 +341,7 @@ export const createIpcHandlers = (ctx: GuiContext): IpcHandlers => {
           ? {}
           : { modelId: effectiveModelId }),
         ...(permissionMode === undefined ? {} : { permissionMode }),
+        ...(thinkingEffort === undefined ? {} : { thinkingEffort }),
         env: { ...resolved.value.env, ...(env ?? {}) },
         cwd: safeCwd ?? "",
         // The SDK-backed driver spawns this resolved `claude` binary directly — its own
