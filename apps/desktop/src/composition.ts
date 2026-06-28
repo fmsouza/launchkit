@@ -55,11 +55,9 @@ import {
   createTerminalManager,
 } from "@spectrum/pty"
 import type { ProjectId, SessionId } from "@spectrum/types"
-import type { Result } from "@spectrum/utils"
+import { type Result, isOk } from "@spectrum/utils"
 
 import type { AppContext } from "@spectrum/runtime-core"
-
-import { isOk } from "@spectrum/utils"
 import { createNotificationService } from "./gui/notification-service"
 import { defaultRelaunch } from "./gui/relaunch"
 import {
