@@ -91,8 +91,6 @@ export type RunViewProps = {
   readonly onOpenLink?: (url: string) => void
   /** Optional terminal controller (threaded from `RunDetail`'s `useTerminal` call). */
   readonly terminal?: TerminalController
-  /** Session working directory — used to enable the rail's terminal toggle. */
-  readonly cwd?: string
 }
 
 /** A length proxy for the feed's content so streaming text (not just new items) triggers autoscroll. */
@@ -138,7 +136,6 @@ export const RunView = ({
   onModelChange,
   onOpenLink,
   terminal,
-  cwd,
 }: RunViewProps): ReactElement => {
   const scrollRef = useRef<HTMLDivElement>(null)
   // Autoscroll: pin the feed to the latest message as items stream in (and when the dots appear).
@@ -255,7 +252,6 @@ export const RunView = ({
         onToggleCollapsed={() => setRailCollapsed((c) => !c)}
         {...(onOpenLink === undefined ? {} : { onOpenLink })}
         {...(terminal === undefined ? {} : { paneOpen: terminal.paneOpen })}
-        {...(cwd === undefined ? {} : { cwd })}
         onToggleTerminal={() => {
           if (terminal === undefined) return
           if (terminal.paneOpen) terminal.closePane()

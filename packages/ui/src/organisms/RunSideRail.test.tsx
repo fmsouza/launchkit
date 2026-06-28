@@ -343,13 +343,29 @@ describe("RunSideRail", () => {
     expect(screen.getByText("0/1")).toBeInTheDocument()
   })
 
+  it("enables the terminal toggle even when cwd is absent", () => {
+    const { getByLabelText } = render(
+      <RunSideRail
+        runners={new Map()}
+        subBreadcrumb={[]}
+        onOpenSubRunner={() => {}}
+        onCloseSub={() => {}}
+        collapsed={false}
+        onToggleCollapsed={() => {}}
+        paneOpen={false}
+        onToggleTerminal={() => {}}
+      />,
+    )
+    expect(getByLabelText("Show terminal pane")).not.toBeDisabled()
+    cleanup()
+  })
+
   it("pins the collapsed terminal toggle to the rail footer so it sits at the bottom", () => {
     render(
       <RunSideRail
         {...base}
         runners={new Map()}
         collapsed
-        cwd="/tmp"
         onToggleTerminal={() => {}}
       />,
     )
