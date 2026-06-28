@@ -1,4 +1,4 @@
-import { describe, expect, it } from "bun:test"
+import { expect, it } from "bun:test"
 import type { CanonicalEvent } from "@spectrum/agent-events"
 import { createSequentialIdGen } from "@spectrum/utils"
 import type { AdapterCtx, AdapterHandle, DriverAdapter } from "./adapter"
@@ -22,13 +22,15 @@ it("echoes the user text-delta with the clientSendId from send", () => {
     idGen: createSequentialIdGen(),
     scheduler: sync,
   })
-  const started = driver.start({ harnessId: "demo" as never, cwd: "/", env: {} })
+  const started = driver.start({
+    harnessId: "demo" as never,
+    cwd: "/",
+    env: {},
+  })
   if (!started.ok) throw new Error("start failed")
   started.value.onEvent((e) => events.push(e))
   started.value.send({ text: "hello", clientSendId: "c1" })
-  const echo = events.find(
-    (e) => e.type === "text-delta" && e.role === "user",
-  )
+  const echo = events.find((e) => e.type === "text-delta" && e.role === "user")
   expect(echo).toBeDefined()
   if (echo?.type === "text-delta") expect(echo.clientSendId).toBe("c1")
 })
