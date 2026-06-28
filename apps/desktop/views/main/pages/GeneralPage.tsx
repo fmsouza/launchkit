@@ -150,6 +150,19 @@ export const GeneralPage = (): ReactElement => {
           <Button variant="secondary" onClick={update.check}>
             Check for updates
           </Button>
+          {s?.phase === "available" ? (
+            <Button variant="primary" onClick={update.download}>
+              Download update
+            </Button>
+          ) : s?.phase === "downloading" ? (
+            <Button variant="primary" onClick={() => {}} disabled>
+              Downloading…
+            </Button>
+          ) : s?.phase === "downloaded" ? (
+            <Button variant="primary" onClick={update.apply}>
+              Restart to apply
+            </Button>
+          ) : null}
           <span className="settings-updates__status" aria-live="polite">
             {statusText}
           </span>
