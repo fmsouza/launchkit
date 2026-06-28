@@ -131,3 +131,35 @@ describe("MessageBubble", () => {
     cleanup()
   })
 })
+
+describe("MessageBubble failed state", () => {
+  it("renders Resend and Cancel when failed and fires the callbacks", () => {
+    let resent = 0
+    let cancelled = 0
+    render(
+      <MessageBubble
+        text="hi"
+        author="user"
+        status="failed"
+        onResend={() => {
+          resent += 1
+        }}
+        onCancel={() => {
+          cancelled += 1
+        }}
+      />,
+    )
+    fireEvent.click(screen.getByRole("button", { name: "Resend" }))
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }))
+    expect(resent).toBe(1)
+    expect(cancelled).toBe(1)
+  })
+
+  it("shows a sending state without action buttons", () => {
+    const { container } = render(
+      <MessageBubble text="hi" author="user" status="sending" />,
+    )
+    expect(container.querySelector('[data-status="sending"]')).not.toBeNull()
+    expect(screen.queryByRole("button", { name: "Resend" })).toBeNull()
+  })
+})

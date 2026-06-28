@@ -8,51 +8,59 @@ export type MessageBubbleProps = {
   readonly author?: "user" | "assistant"
   /** Set when the message carries a turn error (e.g. a provider failure) — renders the error state. */
   readonly tone?: "error"
-  /** When the turn failed (tone="error"), fires to re-run the prompt. */
-  readonly onRetry?: () => void
   /**
-   * Open a link in the OS default browser. When provided, a left-click on a link calls this with the
-   * link's href; `preventDefault()` always runs so the SPA webview never navigates in-window. When
-   * omitted, links render but do nothing on click (the legacy inert behavior) — callers that don't
-   * need external-link handling can ignore this prop.
+   * Delivery state for an optimistic user send: "sending" = awaiting the backend echo;
+   * "failed" = it never landed (crash/transport/timeout). Failed/errored bubbles render actions.
+   */
+  readonly status?: "sending" | "failed"
+  /** Legacy single retry (provider-error). Superseded by onResend/onCancel; removed in Task 16. */
+  readonly onRetry?: () => void
+  /** Re-dispatch this prompt. Rendered (with Cancel) when the bubble is failed/errored. */
+  readonly onResend?: () => void
+  /** Discard this failed send and restore its text to the composer. */
+  readonly onCancel?: () => void
+  /**
+   * Open a link in the OS default browser. `preventDefault()` always runs so the SPA webview never
+   * navigates in-window. When omitted, links render but do nothing on click.
    */
   readonly onOpenLink?: (url: string) => void
 }
 
 /**
- * A chat message. `author` drives alignment (user → right, assistant → left) via `data-role`. An error
- * `tone` renders the bubble in its error state (red, `role="alert"`). The body is rendered as
- * GitHub-flavored Markdown into React elements (no innerHTML — CSP-safe). Links always prevent
- * default (a same-window navigation would unload this SPA webview); when `onOpenLink` is wired,
- * the click is routed to the OS browser instead of navigating in-window.
+ * A chat message. `author` drives alignment via `data-role`. `status="sending"` dims the bubble;
+ * `status="failed"` or `tone="error"` renders an alert. When failed/errored, prefers Resend/Cancel
+ * (new) and falls back to the legacy Retry. Body is GitHub-flavored Markdown (no innerHTML — CSP-safe).
  */
 export const MessageBubble = ({
   text,
   author = "assistant",
   tone,
+  status,
   onRetry,
+  onResend,
+  onCancel,
   onOpenLink,
 }: MessageBubbleProps): ReactElement => {
   const msgId = useId()
+  const failed = tone === "error" || status === "failed"
+  const hasNewActions = onResend !== undefined || onCancel !== undefined
   return (
     <div
       className="lk-message-bubble"
       data-role={author}
-      {...(tone === "error" ? { "data-tone": "error", role: "alert" } : {})}
+      {...(tone === "error" ? { "data-tone": "error" } : {})}
+      {...(status !== undefined ? { "data-status": status } : {})}
+      {...(failed ? { role: "alert" } : {})}
     >
       <div id={msgId} className="lk-markdown">
         <ReactMarkdown
           remarkPlugins={[remarkGfm]}
           components={{
-            // react-markdown types `href` as `string | undefined`; guard so onOpenLink is never
-            // called with undefined (react-markdown emits `undefined` for `[text]()` with an empty url).
             a: ({ href, children }) => (
               <a
                 href={href}
                 title={href}
                 onClick={(e) => {
-                  // ALWAYS preventDefault: a same-window navigation would unload this SPA webview.
-                  // When onOpenLink is wired, route the click to the OS browser instead.
                   e.preventDefault()
                   if (href !== undefined && onOpenLink !== undefined) {
                     onOpenLink(href)
@@ -67,7 +75,30 @@ export const MessageBubble = ({
           {text}
         </ReactMarkdown>
       </div>
-      {tone === "error" && onRetry !== undefined ? (
+      {failed && hasNewActions ? (
+        <div className="lk-message-bubble__actions">
+          {onResend !== undefined ? (
+            <button
+              type="button"
+              className="lk-message-bubble__resend"
+              aria-describedby={msgId}
+              onClick={() => onResend()}
+            >
+              Resend
+            </button>
+          ) : null}
+          {onCancel !== undefined ? (
+            <button
+              type="button"
+              className="lk-message-bubble__cancel"
+              aria-describedby={msgId}
+              onClick={() => onCancel()}
+            >
+              Cancel
+            </button>
+          ) : null}
+        </div>
+      ) : failed && onRetry !== undefined ? (
         <button
           type="button"
           className="lk-message-bubble__retry"

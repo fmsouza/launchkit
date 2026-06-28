@@ -1015,6 +1015,36 @@
   cursor: pointer;
 }
 
+/* Sending/failed delivery states ──────────────────────────────────────────── */
+.lk-message-bubble[data-status="sending"] {
+  opacity: 0.6;
+}
+
+.lk-message-bubble[data-status="failed"] {
+  background: var(--sp-danger-soft);
+  border-color: var(--sp-danger);
+  color: var(--sp-danger);
+}
+
+/* Action row rendered inside a failed bubble (Resend + Cancel). */
+.lk-message-bubble__actions {
+  display: flex;
+  flex-direction: row;
+  gap: var(--sp-space-2);
+  margin-top: var(--sp-space-2);
+}
+
+.lk-message-bubble__resend,
+.lk-message-bubble__cancel {
+  align-self: flex-start;
+  padding: var(--sp-space-1) var(--sp-space-2);
+  border: 1px solid var(--sp-border);
+  border-radius: var(--sp-radius-sm);
+  background: var(--sp-bg);
+  color: var(--sp-text);
+  cursor: pointer;
+}
+
 .lk-typing__elapsed {
   color: var(--sp-text-secondary);
   font-size: var(--sp-text-xs);
