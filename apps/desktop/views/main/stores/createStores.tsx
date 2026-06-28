@@ -15,6 +15,7 @@ import {
   type NotificationsStore,
   createNotificationsStore,
 } from "./notificationsStore"
+import { type OutboxStore, createOutboxStore } from "./outboxStore"
 import { type ProjectsStore, createProjectsStore } from "./projectsStore"
 import { type ProvidersStore, createProvidersStore } from "./providersStore"
 import { type ProxyStore, createProxyStore } from "./proxyStore"
@@ -34,6 +35,7 @@ export type Stores = {
   readonly ui: StoreApi<UiStore>
   readonly runView: StoreApi<RunViewStore>
   readonly update: StoreApi<UpdateStore>
+  readonly outbox: StoreApi<OutboxStore>
 }
 
 export type CreateStoresOptions = {
@@ -71,6 +73,7 @@ export const createStores = ({
     ui: createUiStore(initialView),
     runView: createRunViewStore(deps),
     update,
+    outbox: createOutboxStore(deps),
   }
 }
 
