@@ -500,6 +500,55 @@ describe("createCodexAdapter.start", () => {
     ])
   })
 
+  it("turn/start carries the mapped effort when input.thinkingEffort is set", async () => {
+    const ft = makeFakeTransport()
+    ft.fake.setResult("thread/start", { thread: { id: "th_1" } })
+    const ctx = makeCtx()
+    const handle = await makeAdapter(ft).start(
+      { ...startInput, thinkingEffort: "high" },
+      ctx.ctx,
+    )
+    ft.fake.outgoing.length = 0
+
+    handle.send("hello")
+    const turnStart = ft.fake.outgoing.find(([, m]) => m === "turn/start")
+    expect((turnStart?.[2] as Record<string, unknown>).effort).toBe("high")
+  })
+
+  it("turn/start omits effort when no thinkingEffort is set", async () => {
+    const ft = makeFakeTransport()
+    ft.fake.setResult("thread/start", { thread: { id: "th_1" } })
+    const ctx = makeCtx()
+    const handle = await makeAdapter(ft).start(startInput, ctx.ctx)
+    ft.fake.outgoing.length = 0
+
+    handle.send("hello")
+    const turnStart = ft.fake.outgoing.find(([, m]) => m === "turn/start")
+    expect((turnStart?.[2] as Record<string, unknown>).effort).toBeUndefined()
+  })
+
+  it("setThinkingEffort applies the mapped effort on the next turn/start", async () => {
+    const ft = makeFakeTransport()
+    ft.fake.setResult("thread/start", { thread: { id: "th_1" } })
+    const ctx = makeCtx()
+    const handle = await makeAdapter(ft).start(startInput, ctx.ctx)
+    ft.fake.outgoing.length = 0
+
+    // Initially no effort.
+    handle.send("first")
+    const firstTurn = ft.fake.outgoing.find(([, m]) => m === "turn/start")
+    expect((firstTurn?.[2] as Record<string, unknown>).effort).toBeUndefined()
+
+    // Set a new effort.
+    handle.setThinkingEffort?.("max")
+    ft.fake.outgoing.length = 0
+
+    // Next turn/start carries the mapped effort ("xhigh").
+    handle.send("second")
+    const secondTurn = ft.fake.outgoing.find(([, m]) => m === "turn/start")
+    expect((secondTurn?.[2] as Record<string, unknown>).effort).toBe("xhigh")
+  })
+
   it("calls thread/resume instead of thread/start when input.resume is set, and reports the threadId", async () => {
     const ft = makeFakeTransport()
     ft.fake.setResult("thread/resume", { thread: { id: "thread-9" } })

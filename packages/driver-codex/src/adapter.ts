@@ -1,5 +1,9 @@
 import type { AgentStartInput } from "@spectrum/agent-driver"
-import type { ApprovalDecision, PermissionMode } from "@spectrum/agent-events"
+import type {
+  ApprovalDecision,
+  PermissionMode,
+  ThinkingEffort,
+} from "@spectrum/agent-events"
 import type {
   AdapterCtx,
   AdapterHandle,
@@ -30,6 +34,7 @@ import {
   textInput,
 } from "./protocol"
 import type { CodexServerNotification } from "./protocol"
+import { toCodexReasoningEffort } from "./thinking-effort"
 import {
   type JsonRpcTransport,
   type NotificationFrame,
@@ -149,6 +154,7 @@ export const createCodexAdapter = (
     let mode: PermissionMode = input.permissionMode ?? "manual"
     let model: string | undefined =
       input.modelId !== undefined ? String(input.modelId) : undefined
+    let currentEffort: ThinkingEffort | undefined = input.thinkingEffort
 
     const handleServerRequest = (r: ServerRequestFrame): void => {
       const dispatcher = transport.dispatcher
@@ -271,6 +277,9 @@ export const createCodexAdapter = (
           input: [textInput(input.initialPrompt)],
           ...(model !== undefined ? { model } : {}),
           ...toCodexTurnPolicy(mode),
+          ...(currentEffort !== undefined
+            ? { effort: toCodexReasoningEffort(currentEffort) }
+            : {}),
         })
         .catch((err: unknown) => {
           ctx.emit({
@@ -297,6 +306,9 @@ export const createCodexAdapter = (
                 input: [textInput(text)],
                 ...(model !== undefined ? { model } : {}),
                 ...toCodexTurnPolicy(mode),
+                ...(currentEffort !== undefined
+                  ? { effort: toCodexReasoningEffort(currentEffort) }
+                  : {}),
               })
         void turn.catch((err: unknown) => {
           ctx.emit({
@@ -312,6 +324,9 @@ export const createCodexAdapter = (
       },
       setModel: (m) => {
         model = String(m) // turn/steer takes no model; applied on the next turn/start
+      },
+      setThinkingEffort: (effort) => {
+        currentEffort = effort // re-asserted on the next turn/start
       },
       interrupt: () => {
         if (activeTurnId !== undefined) {
