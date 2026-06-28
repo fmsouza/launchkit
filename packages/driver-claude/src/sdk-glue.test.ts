@@ -1303,8 +1303,9 @@ describe("createClaudeAdapter", () => {
     }>
     const pulledTexts = pulled.map((p) => p.message.content)
 
-    // After interrupt the queue must have been drained: turn-3 (and ideally turn-2)
-    // must NOT have been delivered to the SDK.
+    // After interrupt the queue must have been drained: turn-2 and turn-3 were still
+    // queued when interrupt fired and must NOT have been delivered to the SDK.
+    expect(pulledTexts).not.toContain("turn-2")
     expect(pulledTexts).not.toContain("turn-3")
 
     handle.close()
