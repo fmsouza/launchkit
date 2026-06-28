@@ -53,6 +53,22 @@ export type RunViewProps = {
   readonly onAnswer: (requestId: string, answer: QuestionAnswer) => void
   /** Re-run the last user prompt after a failed turn (hidden while busy). */
   readonly onRetry?: (prompt: string) => void
+  /** Optimistic / failed sends not yet reconciled (forwarded to the timeline). */
+  readonly pending?: readonly {
+    readonly clientSendId: string
+    readonly text: string
+    readonly status: "sending" | "failed"
+  }[]
+  /** Re-dispatch a prompt (failed pending send, or the last errored turn). Hidden while busy. */
+  readonly onResend?: (entry: { clientSendId?: string; text: string }) => void
+  /** Discard a failed send + restore its text to the composer. Hidden while busy. */
+  readonly onCancel?: (entry: { clientSendId?: string; text: string }) => void
+  /** Suppress the errored-message footer once dismissed via Cancel. */
+  readonly dismissedErrorId?: string
+  /** Text to drop into the composer (Cancel → restore). */
+  readonly prefillText?: string
+  /** Bump to re-apply `prefillText`. */
+  readonly prefillKey?: string
   /** Show the typing indicator + keep the feed pinned to the bottom while a turn is in flight. */
   readonly busy?: boolean
   /** Seconds the in-flight turn has run; shown in the typing indicator. */
@@ -106,6 +122,12 @@ export const RunView = ({
   onDecide,
   onAnswer,
   onRetry,
+  pending,
+  onResend,
+  onCancel,
+  dismissedErrorId,
+  prefillText,
+  prefillKey,
   busy = false,
   elapsedSeconds,
   inert = false,
@@ -174,6 +196,10 @@ export const RunView = ({
             onDecide={onDecide}
             onAnswer={onAnswer}
             {...(onRetry !== undefined && !busy ? { onRetry } : {})}
+            {...(pending === undefined ? {} : { pending })}
+            {...(onResend !== undefined && !busy ? { onResend } : {})}
+            {...(onCancel !== undefined && !busy ? { onCancel } : {})}
+            {...(dismissedErrorId === undefined ? {} : { dismissedErrorId })}
             {...(onOpenLink === undefined ? {} : { onOpenLink })}
             inert={inert}
           />
@@ -187,6 +213,8 @@ export const RunView = ({
           onSend={onSend}
           disabled={composerDisabled ?? inert}
           busy={busy}
+          {...(prefillText === undefined ? {} : { prefillText })}
+          {...(prefillKey === undefined ? {} : { prefillKey })}
           {...(onInterrupt === undefined ? {} : { onInterrupt })}
           {...(root.supportedModes === undefined
             ? {}
