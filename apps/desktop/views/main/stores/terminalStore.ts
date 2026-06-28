@@ -24,6 +24,7 @@ interface TerminalStoreState {
   selectTab: (sessionId: SessionId, tabId: string) => void
   setHeight: (sessionId: SessionId, px: number) => void
   setTabExit: (sessionId: SessionId, tabId: string, exitCode: number) => void
+  clearSession: (sessionId: SessionId) => void
   hydrate: (sessionId: SessionId) => void
 }
 
@@ -199,6 +200,18 @@ export const useTerminalStore = create<TerminalStoreState>()((set) => ({
           [sessionId]: { ...existing, tabs },
         },
       }
+    }),
+
+  clearSession: (sessionId) =>
+    set((state) => {
+      if (!state.sessions[sessionId]) return state
+      const { [sessionId]: _removed, ...rest } = state.sessions
+      try {
+        globalThis.localStorage?.removeItem(storageKey(sessionId))
+      } catch {
+        /* storage unavailable — ignore */
+      }
+      return { sessions: rest }
     }),
 
   hydrate: (sessionId) =>

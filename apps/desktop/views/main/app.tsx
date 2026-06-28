@@ -35,6 +35,7 @@ import { useNotifications } from "./hooks/useNotifications"
 import { useProjects } from "./hooks/useProjects"
 import { useProviders } from "./hooks/useProviders"
 import { useProxyStatus } from "./hooks/useProxyStatus"
+import { disposeTerminalSession } from "./hooks/useTerminal"
 import { useUpdate } from "./hooks/useUpdate"
 import { createWebviewLogger } from "./logger"
 import type { RunnerClient } from "./runner/runnerClient"
@@ -399,6 +400,11 @@ const AppInner = ({
             void (async () => {
               const r = await projectsView.deleteSession(sessionId)
               if (r.ok) {
+                // Kill the session's terminals (one of the three terminal
+                // kill-conditions): close each PTY + dispose the xterm + clear
+                // the tabs. Terminals otherwise persist across session switches.
+                if (terminalClient !== undefined)
+                  disposeTerminalSession(terminalClient, sessionId)
                 notifications.notify({
                   tone: "success",
                   message: "Session deleted",
