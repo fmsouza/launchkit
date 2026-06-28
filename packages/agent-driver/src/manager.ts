@@ -385,6 +385,9 @@ export const createRunManager = (deps: RunManagerDeps): RunManager => {
       case "run-set-mode":
         agent.setMode?.(message.mode)
         return
+      case "run-set-thinking-effort":
+        agent.setThinkingEffort?.(message.effort)
+        return
       case "run-set-model": {
         const harnessId = harnessOf.get(message.id)
         if (deps.resolveModelEnv === undefined || harnessId === undefined) {
