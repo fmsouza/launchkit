@@ -3,7 +3,8 @@ import type { ReactElement, ReactNode } from "react"
 import { createPortal } from "react-dom"
 import { resolveTooltipPosition } from "./tooltip-position"
 
-export type TooltipPlacement = "top" | "bottom" | "left" | "right"
+export type { TooltipPlacement } from "./tooltip-position"
+import type { TooltipPlacement } from "./tooltip-position"
 
 export type TooltipProps = {
   readonly label: string
