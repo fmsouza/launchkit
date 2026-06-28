@@ -29,11 +29,15 @@ export type RunViewStore = {
     sessionId: SessionId,
     effort: ThinkingEffort,
   ) => void
-  /** Seed the composer mode + model once (replay: from the folded root runner-started).
+  /** Seed the composer mode, model, and thinking-effort once (replay: from the folded root runner-started).
    *  Idempotent: writes only when the slot is undefined. No-op if seed is empty. */
   readonly seedModeModel: (
     sessionId: SessionId,
-    seed: { readonly mode?: PermissionMode; readonly model?: string },
+    seed: {
+      readonly mode?: PermissionMode
+      readonly model?: string
+      readonly effort?: ThinkingEffort
+    },
   ) => void
 }
 
@@ -182,7 +186,12 @@ export const createRunViewStore = (_deps: StoreDeps): StoreApi<RunViewStore> =>
     },
 
     seedModeModel: (sessionId, seed) => {
-      if (seed.mode === undefined && seed.model === undefined) return
+      if (
+        seed.mode === undefined &&
+        seed.model === undefined &&
+        seed.effort === undefined
+      )
+        return
       set((state) => {
         const next = { ...state }
         if (
@@ -201,6 +210,15 @@ export const createRunViewStore = (_deps: StoreDeps): StoreApi<RunViewStore> =>
           next.modelBySession = {
             ...state.modelBySession,
             [sessionId]: seed.model,
+          }
+        }
+        if (
+          seed.effort !== undefined &&
+          state.thinkingEffortBySession[sessionId] === undefined
+        ) {
+          next.thinkingEffortBySession = {
+            ...state.thinkingEffortBySession,
+            [sessionId]: seed.effort,
           }
         }
         return next

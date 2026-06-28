@@ -14,6 +14,7 @@ export const HarnessPrefsSchema = z
   .object({
     mode: z.string().optional(),
     modelId: z.string().optional(),
+    thinkingEffort: z.string().optional(),
   })
   .strict()
 export type HarnessPrefs = z.infer<typeof HarnessPrefsSchema>

@@ -153,4 +153,73 @@ describe("useComposerModeModel", () => {
     rerender()
     expect(store.getState().modelBySession[sid]).toBe("mdl_user") // seed did not clobber
   })
+
+  it("returns effort defaulting to medium when unset", () => {
+    const client = createFakeIpcClient({})
+    const { result } = renderWith(client)
+    expect(result.current.effort).toBe("medium")
+  })
+
+  it("onEffortChange writes the store + harness pref, and forwards only when forward is present", () => {
+    const client = createFakeIpcClient({
+      updateHarnessPrefs: async () => ({ ok: true, value: null }),
+    })
+    const setModeForward = mock(() => {})
+    const setModelForward = mock(() => {})
+    const setThinkingEffortForward = mock(() => {})
+    const { store, result } = renderWith(client, {
+      forward: {
+        setMode: setModeForward,
+        setModel: setModelForward,
+        setThinkingEffort: setThinkingEffortForward,
+      },
+    })
+    act(() => result.current.onEffortChange("high"))
+    expect(store.getState().thinkingEffortBySession[sid]).toBe("high")
+    expect(setThinkingEffortForward).toHaveBeenCalledWith(sid, "high")
+    expect(client.calls.updateHarnessPrefs).toEqual([
+      { harnessId: hid, thinkingEffort: "high" },
+    ])
+
+    // Replay path: forward absent → persist + pref, but no forward call.
+    const replayClient = createFakeIpcClient({
+      updateHarnessPrefs: async () => ({ ok: true, value: null }),
+    })
+    const replay = renderHook(
+      () => useComposerModeModel(sid, hid, undefined, undefined),
+      {
+        wrapper: ({ children }) => (
+          <IpcClientProvider client={replayClient}>
+            <StoreProvider
+              client={replayClient}
+              updateClient={createUpdateClient()}
+            >
+              {children}
+            </StoreProvider>
+          </IpcClientProvider>
+        ),
+      },
+    )
+    act(() => replay.result.current.onEffortChange("off"))
+    expect(replay.result.current.effort).toBe("off")
+    expect(setThinkingEffortForward).toHaveBeenCalledTimes(1) // still only the first call
+  })
+
+  it("seeds effort from the seed once (replay path)", () => {
+    const client = createFakeIpcClient({})
+    const { store, result } = renderWith(client, {
+      seed: { mode: "plan", model: "mdl_x", effort: "low" },
+    })
+    expect(store.getState().thinkingEffortBySession[sid]).toBe("low")
+    expect(result.current.effort).toBe("low")
+  })
+
+  it("skips effort harness pref when harnessId is undefined", () => {
+    const client = createFakeIpcClient({
+      updateHarnessPrefs: async () => ({ ok: true, value: null }),
+    })
+    const { result } = renderWith(client, { harnessId: undefined })
+    act(() => result.current.onEffortChange("high"))
+    expect(client.calls.updateHarnessPrefs).toEqual([])
+  })
 })

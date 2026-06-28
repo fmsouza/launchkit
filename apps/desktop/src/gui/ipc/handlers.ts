@@ -510,7 +510,12 @@ export const createIpcHandlers = (ctx: GuiContext): IpcHandlers => {
       return null
     },
 
-    updateHarnessPrefs: async ({ harnessId, mode, modelId }) => {
+    updateHarnessPrefs: async ({
+      harnessId,
+      mode,
+      modelId,
+      thinkingEffort,
+    }) => {
       const config = await loadConfig()
       const prev = config.settings.lastByHarness ?? {}
       const key = String(harnessId)
@@ -518,6 +523,7 @@ export const createIpcHandlers = (ctx: GuiContext): IpcHandlers => {
         ...(prev[key] ?? {}),
         ...(mode === undefined ? {} : { mode }),
         ...(modelId === undefined ? {} : { modelId }),
+        ...(thinkingEffort === undefined ? {} : { thinkingEffort }),
       }
       const saved = await ctx.config.save({
         ...config,

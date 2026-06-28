@@ -44,13 +44,18 @@ const foldRun = (
       seed === undefined &&
       ev.event.type === "runner-started" &&
       ev.event.parentRunnerId === undefined &&
-      (ev.event.permissionMode !== undefined || ev.event.model !== undefined)
+      (ev.event.permissionMode !== undefined ||
+        ev.event.model !== undefined ||
+        ev.event.thinkingEffort !== undefined)
     ) {
       seed = {
         ...(ev.event.permissionMode !== undefined
           ? { mode: ev.event.permissionMode }
           : {}),
         ...(ev.event.model !== undefined ? { model: ev.event.model } : {}),
+        ...(ev.event.thinkingEffort !== undefined
+          ? { effort: ev.event.thinkingEffort }
+          : {}),
       }
     }
   }
@@ -163,6 +168,7 @@ const LiveRunDetail = ({
       setMode: (sid, m) => runnerClient.setMode(sid, m),
       setModel: (sid, id) =>
         runnerClient.setModel(sid, id === "" ? null : (id as ModelId)),
+      setThinkingEffort: (sid, e) => runnerClient.setThinkingEffort(sid, e),
     },
   )
 

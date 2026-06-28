@@ -137,6 +137,15 @@ describe("runViewStore", () => {
     expect(store.getState().modelBySession[sid]).toBeUndefined()
   })
 
+  it("seedModeModel seeds effort when supplied and does not clobber an existing value", () => {
+    const store = createRunViewStore(noDeps)
+    store.getState().seedModeModel(sid, { effort: "high" })
+    expect(store.getState().thinkingEffortBySession[sid]).toBe("high")
+    // idempotent: already set, must not clobber
+    store.getState().seedModeModel(sid, { effort: "low" })
+    expect(store.getState().thinkingEffortBySession[sid]).toBe("high")
+  })
+
   it("seeds thinking-effort from runner-started without clobbering a user change", () => {
     const store = createRunViewStore({} as never)
     store.getState().applyEvent("s1" as SessionId, {
