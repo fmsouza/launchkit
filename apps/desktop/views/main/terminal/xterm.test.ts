@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test"
+import { fileURLToPath } from "node:url"
 
 /**
  * The webview is bundled with Bun's `target: "browser"` bundler, which has no
@@ -15,7 +16,10 @@ import { describe, expect, it } from "bun:test"
 describe("xterm loader browser bundle", () => {
   it("statically bundles xterm for target:browser with no unsupported dynamic require", async () => {
     const result = await Bun.build({
-      entrypoints: [new URL("./xterm.ts", import.meta.url).pathname],
+      // `fileURLToPath` (not `.pathname`) so the entrypoint is a valid OS path
+      // on Windows too — `.pathname` yields a leading-slash drive path
+      // (`/D:/...`) that Bun.build cannot open.
+      entrypoints: [fileURLToPath(new URL("./xterm.ts", import.meta.url))],
       target: "browser",
     })
     expect(result.success).toBe(true)
