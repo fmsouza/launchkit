@@ -80,8 +80,13 @@ describe("useComposerModeModel", () => {
     })
     const setModeForward = mock(() => {})
     const setModelForward = mock(() => {})
+    const setThinkingEffortForward = mock(() => {})
     const { store, result } = renderWith(client, {
-      forward: { setMode: setModeForward, setModel: setModelForward },
+      forward: {
+        setMode: setModeForward,
+        setModel: setModelForward,
+        setThinkingEffort: setThinkingEffortForward,
+      },
     })
     act(() => result.current.onModeChange("bypass"))
     expect(store.getState().modeBySession[sid]).toBe("bypass")
@@ -120,8 +125,13 @@ describe("useComposerModeModel", () => {
     })
     const setModelForward = mock(() => {})
     const setModeForward = mock(() => {})
+    const setThinkingEffortForward = mock(() => {})
     const { store, result } = renderWith(client, {
-      forward: { setMode: setModeForward, setModel: setModelForward },
+      forward: {
+        setMode: setModeForward,
+        setModel: setModelForward,
+        setThinkingEffort: setThinkingEffortForward,
+      },
     })
     act(() => result.current.onModelChange("mdl_new"))
     expect(store.getState().modelBySession[sid]).toBe("mdl_new")
