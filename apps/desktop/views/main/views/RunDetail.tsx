@@ -1,5 +1,6 @@
 import {
   type CanonicalEvent,
+  type MessageItem,
   type RunState,
   initialRunState,
   reduce,
@@ -17,7 +18,11 @@ import { useElapsedSeconds } from "../hooks/useElapsedSeconds"
 import { useTerminal } from "../hooks/useTerminal"
 import type { RunnerClient } from "../runner/runnerClient"
 import { useStores } from "../stores/createStores"
+import { pendingToRender } from "../stores/outbox"
+import type { OutboxEntry } from "../stores/outbox"
 import type { TerminalClient } from "../terminal/terminalClient"
+
+const EMPTY_OUTBOX: readonly OutboxEntry[] = []
 
 /**
  * Fold a recorded backlog into a RunState, and extract the seed for the composer
@@ -142,6 +147,15 @@ const LiveRunDetail = ({
   const openSub = useStore(store, (s) => s.openSub)
   const closeSub = useStore(store, (s) => s.closeSub)
 
+  const outbox = useStores().outbox
+  const outboxEntries = useStore(
+    outbox,
+    (s) => s.bySession[sessionId] ?? EMPTY_OUTBOX,
+  )
+  const enqueueSend = useStore(outbox, (s) => s.enqueue)
+  const reconcileOutbox = useStore(outbox, (s) => s.reconcile)
+  const hydrateOutbox = useStore(outbox, (s) => s.hydrate)
+
   const { mode, onModeChange, model, onModelChange } = useComposerModeModel(
     sessionId,
     harnessId,
@@ -175,11 +189,42 @@ const LiveRunDetail = ({
     if (!skipAttach) runnerClient.attach(sessionId)
   }, [sessionId, runnerClient, applyEvent, skipAttach])
 
+  // Hydrate outbox from localStorage once per session (failSending restores crash-aborted entries).
+  useEffect(() => {
+    hydrateOutbox(sessionId)
+  }, [sessionId, hydrateOutbox])
+
   const state = runState ?? initialRunState
   const root =
     state.rootRunnerId === undefined
       ? undefined
       : state.runners.get(state.rootRunnerId)
+
+  // Compute the set of clientSendIds that have landed in the reduced timeline
+  // (safe before the root guard: empty set when root is not yet present).
+  const presentIds = new Set(
+    (root?.items ?? [])
+      .filter(
+        (i): i is MessageItem =>
+          i.kind === "message" &&
+          i.role === "user" &&
+          i.clientSendId !== undefined,
+      )
+      .map((i) => i.clientSendId as string),
+  )
+  const pendingKey = [...presentIds].sort().join(",")
+  // biome-ignore lint/correctness/useExhaustiveDependencies: pendingKey is the reconcile signal.
+  useEffect(() => {
+    reconcileOutbox(sessionId, presentIds)
+  }, [sessionId, pendingKey, reconcileOutbox])
+  const pending = pendingToRender(outboxEntries, presentIds)
+
+  const handleSend = (text: string): void => {
+    const clientSendId = crypto.randomUUID()
+    enqueueSend(sessionId, { clientSendId, text, status: "sending" })
+    runnerClient.send(sessionId, text, clientSendId)
+  }
+
   if (root === undefined)
     return (
       <EmptyState title="Starting…" hint="Waiting for the agent to begin." />
@@ -197,8 +242,9 @@ const LiveRunDetail = ({
       subBreadcrumb={breadcrumb}
       onOpenSubRunner={(rid) => openSub(sessionId, rid)}
       onCloseSub={() => closeSub(sessionId)}
-      onSend={(text) => runnerClient.send(sessionId, text)}
+      onSend={handleSend}
       onRetry={(prompt) => runnerClient.send(sessionId, prompt)}
+      pending={pending}
       onDecide={(requestId, decision) =>
         runnerClient.approve(sessionId, requestId, decision)
       }
