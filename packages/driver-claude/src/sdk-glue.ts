@@ -1,5 +1,9 @@
 import type { AgentStartInput } from "@spectrum/agent-driver"
-import type { ApprovalDecision, ApprovalTarget } from "@spectrum/agent-events"
+import type {
+  ApprovalDecision,
+  ApprovalTarget,
+  ThinkingEffort,
+} from "@spectrum/agent-events"
 import type {
   AdapterCtx,
   AdapterHandle,
@@ -20,6 +24,7 @@ import {
   mapRefusalFallbackPayload,
 } from "./refusal-fallback"
 import type { SdkMessageLike, SdkResultMessage } from "./sdk-types"
+import { toClaudeThinkingBudget } from "./thinking-effort"
 
 /** Default timer implementation backed by global setTimeout/clearTimeout. */
 const defaultSetTimer = (fn: () => void, ms: number): (() => void) => {
@@ -73,6 +78,10 @@ export interface SdkOptions {
   readonly permissionMode?: string
   readonly pathToClaudeCodeExecutable?: string
   readonly resume?: string
+  readonly thinking?: {
+    readonly type: "enabled"
+    readonly budgetTokens: number
+  }
   readonly canUseTool?: (
     toolName: string,
     input: Record<string, unknown>,
@@ -216,6 +225,8 @@ export const createClaudeAdapter = (deps: {
     // Mutable env: setModel may swap the route (direct↔proxied) by supplying a freshly
     // rendered proxy env. launch()/restart() always read the CURRENT env.
     let currentEnv: Readonly<Record<string, string>> = input.env
+    // Mutable thinking effort: setThinkingEffort mutates and relaunches (options are fixed per query).
+    let currentEffort: ThinkingEffort | undefined = input.thinkingEffort
 
     log?.info("claude adapter starting", {
       cwd: input.cwd,
@@ -285,6 +296,15 @@ export const createClaudeAdapter = (deps: {
           cwd: input.cwd,
           env: { ...(deps.baseEnv?.() ?? {}), ...currentEnv },
           ...(currentModel !== undefined ? { model: currentModel } : {}),
+          ...(currentEffort !== undefined &&
+          toClaudeThinkingBudget(currentEffort) !== null
+            ? {
+                thinking: {
+                  type: "enabled" as const,
+                  budgetTokens: toClaudeThinkingBudget(currentEffort) as number,
+                },
+              }
+            : {}),
           abortController: abort,
           permissionMode: currentMode,
           ...(executable !== undefined
@@ -494,6 +514,12 @@ export const createClaudeAdapter = (deps: {
         // when a real model is picked, or a proxied session goes direct when null + {} is supplied.
         currentModel = modelId === null ? undefined : String(modelId)
         if (env !== undefined) currentEnv = env
+        restart()
+      },
+      setThinkingEffort: (effort) => {
+        // Thinking budget is fixed per SDK query (options are read at query() time).
+        // Relaunch resuming the same claude session so history is preserved.
+        currentEffort = effort
         restart()
       },
       interrupt: () => {

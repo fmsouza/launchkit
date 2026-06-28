@@ -1419,4 +1419,81 @@ describe("createClaudeAdapter", () => {
     )
     expect(result).toEqual({ behavior: "cancelled" })
   })
+
+  // --- Task B6: thinking-effort → SDK thinking option ------------------------------------
+
+  it("passes the thinking option when input.thinkingEffort is set to a non-off tier", async () => {
+    const fake = makeFakeSdk([])
+    const adapter = createClaudeAdapter({ loadSdk: async () => fake.sdk })
+    await adapter.start({ ...input, thinkingEffort: "medium" }, makeCtx([], []))
+    const opts = fake.capturedOptions()
+    expect(opts.thinking).toEqual({ type: "enabled", budgetTokens: 8192 })
+  })
+
+  it("omits the thinking option when input.thinkingEffort is off", async () => {
+    const fake = makeFakeSdk([])
+    const adapter = createClaudeAdapter({ loadSdk: async () => fake.sdk })
+    await adapter.start({ ...input, thinkingEffort: "off" }, makeCtx([], []))
+    const opts = fake.capturedOptions()
+    expect(opts.thinking).toBeUndefined()
+  })
+
+  it("omits the thinking option when input.thinkingEffort is absent", async () => {
+    const fake = makeFakeSdk([])
+    const adapter = createClaudeAdapter({ loadSdk: async () => fake.sdk })
+    await adapter.start(input, makeCtx([], []))
+    const opts = fake.capturedOptions()
+    expect(opts.thinking).toBeUndefined()
+  })
+
+  it("setThinkingEffort relaunches the query with the new thinking budget, resuming the claude session", async () => {
+    const { sdk, queries } = makeMultiQueryFakeSdk("resolve")
+    const adapter = createClaudeAdapter({ loadSdk: async () => sdk })
+    const handle = await adapter.start(input, makeCtx([], []))
+
+    // Push an init message so the glue captures the claude session id.
+    queries[0]?.pushMsg({
+      type: "system",
+      subtype: "init",
+      model: "m",
+      session_id: "sess_think",
+    })
+    await new Promise((r) => setTimeout(r, 10))
+
+    handle.setThinkingEffort?.("high")
+    await new Promise((r) => setTimeout(r, 20))
+
+    // Two query() calls: the original and the relaunched one.
+    expect(queries).toHaveLength(2)
+    // Second call carries the new thinking option and the captured session id (resume).
+    expect(queries[1]?.options?.thinking).toEqual({
+      type: "enabled",
+      budgetTokens: 16384,
+    })
+    expect(queries[1]?.options?.resume).toBe("sess_think")
+  })
+
+  it("setThinkingEffort to off omits the thinking option on the relaunched query", async () => {
+    const { sdk, queries } = makeMultiQueryFakeSdk("resolve")
+    const adapter = createClaudeAdapter({ loadSdk: async () => sdk })
+    const handle = await adapter.start(
+      { ...input, thinkingEffort: "high" },
+      makeCtx([], []),
+    )
+
+    queries[0]?.pushMsg({
+      type: "system",
+      subtype: "init",
+      model: "m",
+      session_id: "sess_think_off",
+    })
+    await new Promise((r) => setTimeout(r, 10))
+
+    handle.setThinkingEffort?.("off")
+    await new Promise((r) => setTimeout(r, 20))
+
+    expect(queries).toHaveLength(2)
+    expect(queries[1]?.options?.thinking).toBeUndefined()
+    expect(queries[1]?.options?.resume).toBe("sess_think_off")
+  })
 })
