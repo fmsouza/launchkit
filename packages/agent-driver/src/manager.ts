@@ -351,10 +351,12 @@ export const createRunManager = (deps: RunManagerDeps): RunManager => {
     }
     const agent = live.get(message.id)
     if (agent === undefined) {
-      // No live session — try to lazily auto-resume for run-send; the other
-      // commands are safe no-ops for an unknown/ended session id.
+      // No live session — for run-send, lazily auto-resume; for run-interrupt,
+      // drop any queued resume sends so a pending resume does not fire afterward.
       if (message.type === "run-send") {
         resumeAndSend(message.id, message.text, message.clientSendId)
+      } else if (message.type === "run-interrupt") {
+        resuming.delete(message.id)
       }
       return
     }
@@ -377,6 +379,7 @@ export const createRunManager = (deps: RunManagerDeps): RunManager => {
         agent.respondQuestion(message.requestId, message.answer)
         return
       case "run-interrupt":
+        resuming.delete(message.id)
         agent.interrupt()
         return
       case "run-set-mode":
