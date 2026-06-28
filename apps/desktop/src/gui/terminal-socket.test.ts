@@ -1,8 +1,10 @@
 import { describe, expect, it } from "bun:test"
-import type {
-  TerminalInbound,
-  TerminalManager,
-  TerminalOutbound,
+import {
+  type TerminalInbound,
+  type TerminalManager,
+  type TerminalOutbound,
+  createFakePtySpawner,
+  createTerminalManager,
 } from "@spectrum/pty"
 import { SessionIdSchema } from "@spectrum/types"
 import { makeTerminalSocketHandlers } from "./terminal-socket"
@@ -82,6 +84,28 @@ describe("makeTerminalSocketHandlers", () => {
     handlers.open({ send: () => {} })
     expect(() => handlers.message(new ArrayBuffer(8))).not.toThrow()
     expect(log.inbound).toHaveLength(0)
+  })
+
+  it("spawns a PTY and emits term-opened over the wire when a term-open frame arrives", () => {
+    // End-to-end guard: a real TerminalManager wired through the socket must
+    // turn an inbound `term-open` frame into a spawned PTY + `term-opened`
+    // outbound. Regression guard for the missing term-open→launch wiring.
+    const sent: TerminalOutbound[] = []
+    const mgr = createTerminalManager({ spawner: createFakePtySpawner() })
+    const handlers = makeTerminalSocketHandlers(mgr)
+    handlers.open({ send: (d: string) => sent.push(JSON.parse(d)) })
+    handlers.message(
+      JSON.stringify({
+        type: "term-open",
+        sessionId,
+        tabId,
+        cwd: "/tmp",
+        cols: 80,
+        rows: 24,
+      }),
+    )
+    expect(sent.some((m) => m.type === "term-opened")).toBe(true)
+    expect(sent.some((m) => m.type === "term-error")).toBe(false)
   })
 
   it("fires onDisconnect on close", () => {

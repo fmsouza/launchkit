@@ -29,6 +29,43 @@ describe("TerminalManager", () => {
     expect(sent.some((m) => m.type === "term-output")).toBe(true)
   })
 
+  it("spawns a PTY and emits term-opened when handleInbound receives term-open for a new tab", () => {
+    const spawner = createFakePtySpawner()
+    const { sent, sink } = capturingSink()
+    const mgr = createTerminalManager({ spawner })
+    mgr.bindSend(sink)
+    mgr.handleInbound({
+      type: "term-open",
+      sessionId,
+      tabId,
+      cwd: "/tmp",
+      cols: 80,
+      rows: 24,
+    })
+    expect(spawner.calls.length).toBe(1)
+    expect(spawner.calls[0]?.cwd).toBe("/tmp")
+    expect(sent.some((m) => m.type === "term-opened")).toBe(true)
+    expect(sent.some((m) => m.type === "term-error")).toBe(false)
+  })
+
+  it("treats term-open for an already-live tab as an idempotent re-attach (no second spawn, no error)", () => {
+    const spawner = createFakePtySpawner()
+    const { sent, sink } = capturingSink()
+    const mgr = createTerminalManager({ spawner })
+    mgr.bindSend(sink)
+    mgr.launch(baseLaunch)
+    mgr.handleInbound({
+      type: "term-open",
+      sessionId,
+      tabId,
+      cwd: "/tmp",
+      cols: 80,
+      rows: 24,
+    })
+    expect(spawner.calls.length).toBe(1)
+    expect(sent.some((m) => m.type === "term-error")).toBe(false)
+  })
+
   it("routes term-resize to session.resize with cols/rows", () => {
     const spawner = createFakePtySpawner()
     const { sink } = capturingSink()
