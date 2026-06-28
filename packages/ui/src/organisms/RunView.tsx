@@ -238,7 +238,6 @@ export const RunView = ({
             }}
             onCloseTab={terminal.closeTab}
             onResizeHeight={terminal.resizeHeight}
-            onClose={terminal.closePane}
             mountTerminal={terminal.mountTerminal}
           />
         ) : null}

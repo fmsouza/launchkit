@@ -1,5 +1,4 @@
 import { type ReactElement, useEffect, useRef } from "react"
-import { IconButton } from "../atoms/IconButton"
 import { type TerminalTabItem, TerminalTabs } from "../molecules/TerminalTabs"
 
 export interface TerminalPaneProps {
@@ -17,7 +16,6 @@ export interface TerminalPaneProps {
   readonly onNewTab: () => void
   readonly onCloseTab: (tabId: string) => void
   readonly onResizeHeight: (px: number) => void
-  readonly onClose: () => void
   /**
    * Host mounts the xterm Terminal for `tabId` into `container` and returns a
    * cleanup. Each tab gets its OWN persistent container (below), so every tab
@@ -75,11 +73,6 @@ export const TerminalPane = (props: TerminalPaneProps): ReactElement => {
         onResizeHeight={props.onResizeHeight}
         currentHeightPx={props.paneHeightPx}
       />
-      <div className="lk-terminal-pane__close">
-        <IconButton label="Close terminal pane" onClick={props.onClose}>
-          ▾
-        </IconButton>
-      </div>
       <div className="lk-terminal-pane__screens">
         {props.tabs.map((t) => (
           <div
