@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test"
 import type { UpdateState } from "@spectrum/ipc"
-import { makeUpdateSocketHandlers } from "./update-socket"
+import { makeUpdateSocketHandlers, startUpdateSocket } from "./update-socket"
 
 const state: UpdateState = {
   phase: "available",
@@ -13,6 +13,20 @@ const state: UpdateState = {
   channel: "stable",
   showBanner: true,
 }
+
+describe("startUpdateSocket", () => {
+  it("startUpdateSocket pushes a frame to a connected websocket client", async () => {
+    const socket = startUpdateSocket()
+    const client = new WebSocket(socket.url)
+    const received = await new Promise<string>((resolve) => {
+      client.addEventListener("open", () => socket.push(state))
+      client.addEventListener("message", (e) => resolve(String(e.data)))
+    })
+    expect(JSON.parse(received)).toEqual(state)
+    client.close()
+    socket.stop()
+  })
+})
 
 describe("makeUpdateSocketHandlers", () => {
   it("push sends the JSON-encoded UpdateState to the connected socket", () => {

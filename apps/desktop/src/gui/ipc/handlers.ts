@@ -6,7 +6,7 @@ import { providerCatalog, validateProviderConfig } from "@spectrum/providers"
 import type { ModelId, ModelRoute, Provider, SecretRef } from "@spectrum/types"
 import { isOk } from "@spectrum/utils"
 import type { GuiContext } from "../../composition"
-import { decideBanner } from "../updater/policy"
+import { buildUpdateState as buildUpdateStateShared } from "../updater/build-update-state"
 import type { Channel } from "../updater/updater-adapter"
 import { resolveTerminalCwd } from "./terminal-cwd"
 
@@ -80,48 +80,13 @@ export const createIpcHandlers = (ctx: GuiContext): IpcHandlers => {
   }
 
   /**
-   * Build the full UpdateState by combining the raw adapter snapshot with the
-   * displayed channel and config-owned dismissal field. Pure-ish helper.
-   *
-   * The displayed channel is the bundle's ACTUAL channel (version.json, what
-   * Electrobun follows), so a canary build reports "canary" even on a fresh
-   * install whose config still holds the "stable" default. The config-stored
-   * preference is only the fallback when the build channel is unknown (dev build
-   * or read-only/missing bundle); a final "stable" fallback covers a config-load
-   * failure so a failure never blanks the whole Updates box. Only the READ path
-   * is resilient; mutating handlers (setUpdateChannel, checkForUpdate) still call
-   * loadConfig() and fail loudly.
+   * Thin wrapper: delegates to the shared `buildUpdateState` helper (extracted
+   * to `../updater/build-update-state.ts`) so there is one source of truth for
+   * how `UpdateState` is assembled from the raw adapter snapshot + config.
    */
   const buildUpdateState = async (): Promise<
     import("@spectrum/ipc").IpcMethods["getUpdateState"]["result"]
-  > => {
-    const loaded = await ctx.config.load()
-    const buildChannel = await ctx.updater.getBuildChannel()
-    const channel: Channel =
-      buildChannel ??
-      (isOk(loaded) ? loaded.value.settings.updateChannel : "stable")
-    const settings = isOk(loaded) ? loaded.value.settings : null
-    const dismissedVersion = settings?.dismissedUpdateVersion ?? null
-    const dismissedHash = settings?.dismissedUpdateHash ?? null
-    const raw = ctx.updater.getRaw()
-    // Key dismissal on the build `hash` (unique per build for BOTH stable and
-    // canary) rather than the version string: canary CI never bumps
-    // package.json `version`, so every canary reports the same `latestVersion`
-    // — a version-keyed dismissal permanently suppresses every canary after the
-    // first. The hash-keyed comparison re-shows the banner for a NEW build even
-    // when the version is frozen. `decideBanner` falls back to the legacy
-    // version comparison when no hash is available (older bundles), so an
-    // existing user with a stale `dismissedUpdateVersion` never regresses.
-    const showBanner =
-      decideBanner({
-        available: raw.available,
-        latestVersion: raw.latestVersion,
-        latestHash: raw.latestHash,
-        dismissedVersion,
-        dismissedHash,
-      }) === "show"
-    return { ...raw, channel, showBanner }
-  }
+  > => buildUpdateStateShared({ updater: ctx.updater, config: ctx.config })
 
   return {
     // ── Providers ──────────────────────────────────────────────────────────────────────

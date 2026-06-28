@@ -4,8 +4,14 @@ import type { UpdatePhase } from "./updater-adapter"
 /** Re-check the release feed while the app is open. Tunable. */
 export const UPDATE_POLL_INTERVAL_MS = 3 * 60 * 1000 // 3 minutes
 
+/** Timer seam — injected so tests don't start a real 3-min interval. */
+export interface PollerTimers {
+  readonly setInterval: (f: () => void, ms: number) => number
+  readonly clearInterval: (id: number) => void
+}
+
 /** Production timers — injected in tests so the scheduling logic runs without real time. */
-export const realPollerTimers = {
+export const realPollerTimers: PollerTimers = {
   setInterval: (f: () => void, ms: number): number =>
     setInterval(f, ms) as unknown as number,
   clearInterval: (id: number): void => clearInterval(id),
@@ -26,10 +32,7 @@ export const createUpdatePoller = (deps: {
   readonly check: () => Promise<void>
   readonly getPhase: () => UpdatePhase
   readonly intervalMs: number
-  readonly timers: {
-    readonly setInterval: (f: () => void, ms: number) => number
-    readonly clearInterval: (id: number) => void
-  }
+  readonly timers: PollerTimers
   readonly logger: Logger
 }): UpdatePoller => {
   let id: number | null = null

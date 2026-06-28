@@ -391,6 +391,7 @@ describe("IpcMethodSchemas", () => {
       "getProxyStatus",
       "getRunnerSocketUrl",
       "getTerminalSocketUrl",
+      "getUpdateSocketUrl",
       "resolveTerminalCwd",
       "getRunEvents",
       "pickFolder",

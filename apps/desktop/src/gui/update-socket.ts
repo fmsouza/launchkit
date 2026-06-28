@@ -3,6 +3,8 @@ import type { UpdateState } from "@spectrum/ipc"
 export interface UpdateSocket {
   /** `ws://localhost:<port>/` — handed to the webview via the `getUpdateSocketUrl` IPC method. */
   readonly url: string
+  /** Push a fresh `UpdateState` snapshot to the connected webview client (no-op when disconnected). */
+  push(state: UpdateState): void
   stop(): void
 }
 
@@ -67,6 +69,7 @@ export const startUpdateSocket = (): UpdateSocket => {
   // Connect via `localhost` (not 127.0.0.1) so the webview CSP `connect-src ws://localhost:*` allows it.
   return {
     url: `ws://localhost:${server.port}/`,
+    push: (state) => handlers.push(state),
     stop: () => server.stop(true),
   }
 }
