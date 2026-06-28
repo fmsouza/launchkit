@@ -23,8 +23,6 @@ export type ConversationTimelineProps = {
   readonly onOpenSubRunner: (id: RunnerId) => void
   readonly onDecide: (requestId: string, decision: ApprovalDecision) => void
   readonly onAnswer: (requestId: string, answer: QuestionAnswer) => void
-  /** Re-run the last user prompt after a turn failed. Wired only on the last error message. */
-  readonly onRetry?: (prompt: string) => void
   readonly inert?: boolean
   /** Open a chat link in the OS browser; threaded to each `MessageBubble`. */
   readonly onOpenLink?: (url: string) => void
@@ -48,7 +46,6 @@ export const ConversationTimeline = ({
   onOpenSubRunner,
   onDecide,
   onAnswer,
-  onRetry,
   inert = false,
   onOpenLink,
   pending,
@@ -84,24 +81,17 @@ export const ConversationTimeline = ({
               item.tone === "error" &&
               item.messageId !== dismissedErrorId &&
               lastUserPrompt !== undefined
-            const useNewActions =
-              isLastError && (onResend !== undefined || onCancel !== undefined)
-            const useLegacyRetry =
-              isLastError && !useNewActions && onRetry !== undefined
             return (
               <MessageBubble
                 key={`m-${item.messageId}`}
                 text={item.text}
                 author={item.role}
                 {...(item.tone !== undefined ? { tone: item.tone } : {})}
-                {...(useNewActions && onResend !== undefined
+                {...(isLastError && onResend !== undefined
                   ? { onResend: () => onResend({ text: lastUserPrompt }) }
                   : {})}
-                {...(useNewActions && onCancel !== undefined
+                {...(isLastError && onCancel !== undefined
                   ? { onCancel: () => onCancel({ text: lastUserPrompt }) }
-                  : {})}
-                {...(useLegacyRetry
-                  ? { onRetry: () => onRetry(lastUserPrompt) }
                   : {})}
                 {...(onOpenLink === undefined ? {} : { onOpenLink })}
               />

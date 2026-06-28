@@ -321,7 +321,6 @@ const LiveRunDetail = ({
       onOpenSubRunner={(rid) => openSub(sessionId, rid)}
       onCloseSub={() => closeSub(sessionId)}
       onSend={handleSend}
-      onRetry={(prompt) => runnerClient.send(sessionId, prompt)}
       onResend={handleResend}
       onCancel={handleCancel}
       {...(dismissedErrorId === undefined ? {} : { dismissedErrorId })}

@@ -13,8 +13,6 @@ export type MessageBubbleProps = {
    * "failed" = it never landed (crash/transport/timeout). Failed/errored bubbles render actions.
    */
   readonly status?: "sending" | "failed"
-  /** Legacy single retry (provider-error). Superseded by onResend/onCancel; removed in Task 16. */
-  readonly onRetry?: () => void
   /** Re-dispatch this prompt. Rendered (with Cancel) when the bubble is failed/errored. */
   readonly onResend?: () => void
   /** Discard this failed send and restore its text to the composer. */
@@ -28,15 +26,14 @@ export type MessageBubbleProps = {
 
 /**
  * A chat message. `author` drives alignment via `data-role`. `status="sending"` dims the bubble;
- * `status="failed"` or `tone="error"` renders an alert. When failed/errored, prefers Resend/Cancel
- * (new) and falls back to the legacy Retry. Body is GitHub-flavored Markdown (no innerHTML — CSP-safe).
+ * `status="failed"` or `tone="error"` renders an alert. When failed/errored, renders Resend/Cancel.
+ * Body is GitHub-flavored Markdown (no innerHTML — CSP-safe).
  */
 export const MessageBubble = ({
   text,
   author = "assistant",
   tone,
   status,
-  onRetry,
   onResend,
   onCancel,
   onOpenLink,
@@ -98,15 +95,6 @@ export const MessageBubble = ({
             </button>
           ) : null}
         </div>
-      ) : failed && onRetry !== undefined ? (
-        <button
-          type="button"
-          className="lk-message-bubble__retry"
-          aria-describedby={msgId}
-          onClick={() => onRetry()}
-        >
-          Retry
-        </button>
       ) : null}
     </div>
   )

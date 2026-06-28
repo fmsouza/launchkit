@@ -51,8 +51,6 @@ export type RunViewProps = {
   readonly onSend: (text: string) => void
   readonly onDecide: (requestId: string, decision: ApprovalDecision) => void
   readonly onAnswer: (requestId: string, answer: QuestionAnswer) => void
-  /** Re-run the last user prompt after a failed turn (hidden while busy). */
-  readonly onRetry?: (prompt: string) => void
   /** Optimistic / failed sends not yet reconciled (forwarded to the timeline). */
   readonly pending?: readonly {
     readonly clientSendId: string
@@ -121,7 +119,6 @@ export const RunView = ({
   onSend,
   onDecide,
   onAnswer,
-  onRetry,
   pending,
   onResend,
   onCancel,
@@ -195,7 +192,6 @@ export const RunView = ({
             onOpenSubRunner={onOpenSubRunner}
             onDecide={onDecide}
             onAnswer={onAnswer}
-            {...(onRetry !== undefined && !busy ? { onRetry } : {})}
             {...(pending === undefined ? {} : { pending })}
             {...(onResend !== undefined && !busy ? { onResend } : {})}
             {...(onCancel !== undefined && !busy ? { onCancel } : {})}
