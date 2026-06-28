@@ -140,6 +140,9 @@ export const createDriver = (deps: {
           messageId: deps.idGen.next("msg"),
           text: turn.text,
           role: "user",
+          ...(turn.clientSendId !== undefined
+            ? { clientSendId: turn.clientSendId }
+            : {}),
         })
         runOrQueue((h) => h.send(turn.text))
         return ok(undefined)
