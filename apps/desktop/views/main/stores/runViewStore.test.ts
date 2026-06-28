@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test"
 import type { CanonicalEvent } from "@spectrum/agent-events"
 import { RunnerIdSchema, SessionIdSchema } from "@spectrum/types"
+import type { RunnerId, SessionId } from "@spectrum/types"
 import { createRunViewStore } from "./runViewStore"
 
 const sid = SessionIdSchema.parse("s_00000000-0000-4000-8000-000000000000")
@@ -134,5 +135,23 @@ describe("runViewStore", () => {
     store.getState().seedModeModel(sid, { mode: "auto-edits" })
     expect(store.getState().modeBySession[sid]).toBe("auto-edits")
     expect(store.getState().modelBySession[sid]).toBeUndefined()
+  })
+
+  it("seeds thinking-effort from runner-started without clobbering a user change", () => {
+    const store = createRunViewStore({} as never)
+    store.getState().applyEvent("s1" as SessionId, {
+      type: "runner-started",
+      runnerId: "r1" as RunnerId,
+      thinkingEffort: "high",
+    })
+    expect(store.getState().thinkingEffortBySession.s1).toBe("high")
+    // A later re-emit must not clobber a user change.
+    store.getState().setThinkingEffort("s1" as SessionId, "off")
+    store.getState().applyEvent("s1" as SessionId, {
+      type: "runner-started",
+      runnerId: "r1" as RunnerId,
+      thinkingEffort: "high",
+    })
+    expect(store.getState().thinkingEffortBySession.s1).toBe("off")
   })
 })

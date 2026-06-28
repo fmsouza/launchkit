@@ -3,6 +3,7 @@ import {
   type PermissionMode,
   type RunState,
   type RunnerId,
+  type ThinkingEffort,
   initialRunState,
   reduce,
 } from "@spectrum/agent-events"
@@ -17,12 +18,17 @@ export type RunViewStore = {
   readonly busyBySession: Readonly<Record<string, boolean>>
   readonly modeBySession: Readonly<Record<string, PermissionMode>>
   readonly modelBySession: Readonly<Record<string, string>>
+  readonly thinkingEffortBySession: Readonly<Record<string, ThinkingEffort>>
   readonly applyEvent: (sessionId: SessionId, event: CanonicalEvent) => void
   readonly reset: (sessionId: SessionId) => void
   readonly openSub: (sessionId: SessionId, runnerId: RunnerId) => void
   readonly closeSub: (sessionId: SessionId) => void
   readonly setMode: (sessionId: SessionId, mode: PermissionMode) => void
   readonly setModel: (sessionId: SessionId, modelId: string) => void
+  readonly setThinkingEffort: (
+    sessionId: SessionId,
+    effort: ThinkingEffort,
+  ) => void
   /** Seed the composer mode + model once (replay: from the folded root runner-started).
    *  Idempotent: writes only when the slot is undefined. No-op if seed is empty. */
   readonly seedModeModel: (
@@ -65,6 +71,7 @@ export const createRunViewStore = (_deps: StoreDeps): StoreApi<RunViewStore> =>
     busyBySession: {},
     modeBySession: {},
     modelBySession: {},
+    thinkingEffortBySession: {},
 
     applyEvent: (sessionId, event) => {
       const prev = get().byId[sessionId] ?? initialRunState
@@ -80,6 +87,7 @@ export const createRunViewStore = (_deps: StoreDeps): StoreApi<RunViewStore> =>
           busyBySession: Readonly<Record<string, boolean>>
           modeBySession?: Readonly<Record<string, PermissionMode>>
           modelBySession?: Readonly<Record<string, string>>
+          thinkingEffortBySession?: Readonly<Record<string, ThinkingEffort>>
         } = {
           byId: { ...state.byId, [sessionId]: next },
           busyBySession: { ...state.busyBySession, [sessionId]: busy },
@@ -107,6 +115,15 @@ export const createRunViewStore = (_deps: StoreDeps): StoreApi<RunViewStore> =>
             [sessionId]: event.model,
           }
         }
+        if (
+          event.thinkingEffort !== undefined &&
+          state.thinkingEffortBySession[sessionId] === undefined
+        ) {
+          updated.thinkingEffortBySession = {
+            ...state.thinkingEffortBySession,
+            [sessionId]: event.thinkingEffort,
+          }
+        }
         return updated
       })
     },
@@ -118,12 +135,14 @@ export const createRunViewStore = (_deps: StoreDeps): StoreApi<RunViewStore> =>
         const { [sessionId]: _busy, ...busyRest } = state.busyBySession
         const { [sessionId]: _mode, ...modeRest } = state.modeBySession
         const { [sessionId]: _model, ...modelRest } = state.modelBySession
+        const { [sessionId]: _eff, ...effRest } = state.thinkingEffortBySession
         return {
           byId: rest,
           openSubBySession: subRest,
           busyBySession: busyRest,
           modeBySession: modeRest,
           modelBySession: modelRest,
+          thinkingEffortBySession: effRest,
         }
       })
     },
@@ -150,6 +169,15 @@ export const createRunViewStore = (_deps: StoreDeps): StoreApi<RunViewStore> =>
     setModel: (sessionId, modelId) => {
       set((state) => ({
         modelBySession: { ...state.modelBySession, [sessionId]: modelId },
+      }))
+    },
+
+    setThinkingEffort: (sessionId, effort) => {
+      set((state) => ({
+        thinkingEffortBySession: {
+          ...state.thinkingEffortBySession,
+          [sessionId]: effort,
+        },
       }))
     },
 
