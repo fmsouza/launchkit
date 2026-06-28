@@ -228,7 +228,7 @@ span[role="status"][aria-busy="true"] {
 .lk-tooltip__bubble {
   position: fixed; /* set inline by Tooltip.tsx; declared here for cascade clarity */
   z-index: 1100; /* above run-view (40) and modal overlay (1000), level with toasts */
-  transform: translate(-50%, calc(-100% - var(--sp-space-2)));
+  /* top/left set by resolveTooltipPosition in Tooltip.tsx; no transform needed */
   padding: var(--sp-space-1) var(--sp-space-2);
   border-radius: var(--sp-radius-sm);
   background: var(--sp-graphite-950, #222);
