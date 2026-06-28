@@ -260,6 +260,13 @@ const LiveRunDetail = ({
     timers.current.set(clientSendId, t)
   }
 
+  const [prefill, setPrefill] = useState<
+    { readonly text: string; readonly key: string } | undefined
+  >(undefined)
+  const [dismissedErrorId, setDismissedErrorId] = useState<string | undefined>(
+    undefined,
+  )
+
   const handleResend = (entry: {
     readonly clientSendId?: string
     readonly text: string
@@ -273,6 +280,27 @@ const LiveRunDetail = ({
       removeSend(sessionId, entry.clientSendId)
     }
     handleSend(entry.text)
+  }
+
+  const handleCancel = (entry: {
+    readonly clientSendId?: string
+    readonly text: string
+  }): void => {
+    if (entry.clientSendId !== undefined) {
+      const t = timers.current.get(entry.clientSendId)
+      if (t !== undefined) {
+        clearTimeout(t)
+        timers.current.delete(entry.clientSendId)
+      }
+      removeSend(sessionId, entry.clientSendId)
+    } else {
+      // Provider-error message: persisted in run_events; dismiss its footer.
+      const lastError = root?.items.findLast(
+        (i): i is MessageItem => i.kind === "message" && i.tone === "error",
+      )
+      if (lastError !== undefined) setDismissedErrorId(lastError.messageId)
+    }
+    setPrefill({ text: entry.text, key: crypto.randomUUID() })
   }
 
   if (root === undefined)
@@ -295,6 +323,11 @@ const LiveRunDetail = ({
       onSend={handleSend}
       onRetry={(prompt) => runnerClient.send(sessionId, prompt)}
       onResend={handleResend}
+      onCancel={handleCancel}
+      {...(dismissedErrorId === undefined ? {} : { dismissedErrorId })}
+      {...(prefill === undefined
+        ? {}
+        : { prefillText: prefill.text, prefillKey: prefill.key })}
       pending={pending}
       onDecide={(requestId, decision) =>
         runnerClient.approve(sessionId, requestId, decision)
