@@ -1004,17 +1004,6 @@
   cursor: default;
 }
 
-.lk-message-bubble__retry {
-  align-self: flex-start;
-  margin-top: var(--sp-space-2);
-  padding: var(--sp-space-1) var(--sp-space-2);
-  border: 1px solid var(--sp-border);
-  border-radius: var(--sp-radius-sm);
-  background: var(--sp-bg);
-  color: var(--sp-text);
-  cursor: pointer;
-}
-
 /* Sending/failed delivery states ──────────────────────────────────────────── */
 .lk-message-bubble[data-status="sending"] {
   opacity: 0.6;
