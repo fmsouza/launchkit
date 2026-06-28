@@ -12,6 +12,8 @@ export interface PollerTimers {
 
 /** Production timers — injected in tests so the scheduling logic runs without real time. */
 export const realPollerTimers: PollerTimers = {
+  // Bun's `setInterval` returns a `Timer`, not a `number`; the seam types ids as
+  // `number` for portability, so coerce the production binding to match.
   setInterval: (f: () => void, ms: number): number =>
     setInterval(f, ms) as unknown as number,
   clearInterval: (id: number): void => clearInterval(id),
