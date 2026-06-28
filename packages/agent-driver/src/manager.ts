@@ -2,6 +2,7 @@ import type {
   CanonicalEvent,
   PermissionMode,
   StoredEvent,
+  ThinkingEffort,
 } from "@spectrum/agent-events"
 import { type Logger, createNoopLogger } from "@spectrum/logger"
 import type { HarnessId, ModelId, RunnerId, SessionId } from "@spectrum/types"
@@ -28,6 +29,8 @@ export interface RunLaunchInput {
   readonly resume?: string
   /** Spectrum `SessionId` for this run; forwarded to `driver.start` for callback binding. */
   readonly sessionId?: SessionId
+  /** The thinking-effort tier the session starts at; absent = the harness default. */
+  readonly thinkingEffort?: ThinkingEffort
 }
 
 export interface RunManagerDeps {
@@ -119,6 +122,9 @@ export const createRunManager = (deps: RunManagerDeps): RunManager => {
       ...(input.command !== undefined ? { command: input.command } : {}),
       ...(input.args !== undefined ? { args: input.args } : {}),
       ...(input.resume !== undefined ? { resume: input.resume } : {}),
+      ...(input.thinkingEffort !== undefined
+        ? { thinkingEffort: input.thinkingEffort }
+        : {}),
       // The manager mints the id via sessions.create above; the driver needs it for callback
       // binding (FakeDriver's resumeToken persistence gate checks input.sessionId !== undefined).
       sessionId: id,
@@ -281,6 +287,9 @@ export const createRunManager = (deps: RunManagerDeps): RunManager => {
       ...(base.command !== undefined ? { command: base.command } : {}),
       ...(base.args !== undefined ? { args: base.args } : {}),
       ...(row.resumeId !== undefined ? { resume: row.resumeId } : {}),
+      ...(base.thinkingEffort !== undefined
+        ? { thinkingEffort: base.thinkingEffort }
+        : {}),
       sessionId: id,
     })
     if (isErr(started)) {

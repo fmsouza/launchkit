@@ -1,10 +1,11 @@
-import { describe, expect, it } from "bun:test"
+import { describe, expect, it, mock } from "bun:test"
 import type {
   CanonicalEvent,
   PermissionMode,
   QuestionAnswer,
   RunnerId,
   StoredEvent,
+  ThinkingEffort,
 } from "@spectrum/agent-events"
 import type { Logger } from "@spectrum/logger"
 import {
@@ -582,6 +583,65 @@ describe("createRunManager.handleInbound run-answer", () => {
     expect(calls[0]?.answer).toEqual({
       selections: [{ questionIndex: 0, labels: ["A"] }],
     })
+  })
+})
+
+/** Build a manager with a live session whose `setThinkingEffort` is a Bun mock spy. */
+const makeManagerWithLiveSession = (
+  _label: string,
+): {
+  manager: ReturnType<typeof createRunManager>
+  session: { setThinkingEffort: ReturnType<typeof mock> }
+} => {
+  const thinkingCalls: ThinkingEffort[] = []
+  const setThinkingEffortSpy = mock((_effort: ThinkingEffort) => {
+    thinkingCalls.push(_effort)
+    return ok(undefined) as import("@spectrum/utils").Result<
+      void,
+      import("./driver").DriverError
+    >
+  })
+  const capturingDriver: AgentDriver = {
+    start: () =>
+      ok({
+        rootRunnerId: root,
+        onEvent: () => undefined,
+        send: () => ok(undefined),
+        respondApproval: () => ok(undefined),
+        respondQuestion: () => ok(undefined),
+        interrupt: () => ok(undefined),
+        close: () => ok(undefined),
+        setThinkingEffort: setThinkingEffortSpy,
+      }),
+  }
+  const { deps } = makeDeps(scriptOf([]))
+  const manager = createRunManager({ ...deps, driver: capturingDriver })
+  manager.launch({ harnessId, cwd: "/tmp", env: {} })
+  return { manager, session: { setThinkingEffort: setThinkingEffortSpy } }
+}
+
+describe("createRunManager.handleInbound run-set-thinking-effort", () => {
+  it("forwards run-set-thinking-effort to the live session", () => {
+    const { manager, session } = makeManagerWithLiveSession("sess-1")
+    manager.handleInbound({
+      type: "run-set-thinking-effort",
+      id: sessionId,
+      effort: "high",
+    })
+    expect(session.setThinkingEffort).toHaveBeenCalledWith("high")
+  })
+
+  it("is a safe no-op for an unknown session id", () => {
+    const { deps } = makeDeps(scriptOf([startEvent]))
+    const manager = createRunManager(deps)
+    manager.launch({ harnessId, cwd: "/tmp", env: {} })
+    expect(() =>
+      manager.handleInbound({
+        type: "run-set-thinking-effort",
+        id: otherId,
+        effort: "low",
+      }),
+    ).not.toThrow()
   })
 })
 
