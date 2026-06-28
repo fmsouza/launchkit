@@ -82,11 +82,6 @@ export type RunDetailProps = {
    */
   readonly skipAttach?: boolean
   /**
-   * Session working directory. Threaded to `RunView` + `RunSideRail`; the rail
-   * disables the terminal toggle when absent (no real shell can mount).
-   */
-  readonly cwd?: string
-  /**
    * Terminal transport (over the dedicated terminal WebSocket). When absent,
    * the terminal pane + rail toggle are not wired up; existing tests that
    * never spawn a PTY keep passing.
@@ -98,8 +93,7 @@ export type RunDetailProps = {
  * A `TerminalClient` whose methods are no-ops. Lets `RunDetail` call the
  * `useTerminal` hook unconditionally (rules-of-hooks safe) even when the
  * page hasn't plumbed a real transport — the hook then yields a controller
- * whose `paneOpen` stays `false`, so the pane never renders and the rail
- * button stays disabled (no cwd).
+ * whose `paneOpen` stays `false`, so the pane never opens.
  */
 const noopTerminalClient: TerminalClient = {
   open: () => {},
@@ -122,7 +116,6 @@ const LiveRunDetail = ({
   models,
   providerNames,
   skipAttach = false,
-  cwd,
   terminalClient,
 }: {
   readonly sessionId: SessionId
@@ -136,7 +129,6 @@ const LiveRunDetail = ({
    * `runnerClient.attach` so the socket doesn't double-replay.
    */
   readonly skipAttach?: boolean
-  readonly cwd?: string
   readonly terminalClient?: TerminalClient
 }): ReactElement => {
   const client = useIpcClient()
@@ -347,7 +339,6 @@ const LiveRunDetail = ({
         void client.openExternalUrl({ url })
       }}
       {...(terminal === undefined ? {} : { terminal })}
-      {...(cwd === undefined ? {} : { cwd })}
     />
   )
 }
@@ -459,7 +450,6 @@ export const RunDetail = ({
   providerNames,
   onResumeSend,
   skipAttach = false,
-  cwd,
   terminalClient,
 }: RunDetailProps): ReactElement =>
   mode === "live" ? (
@@ -470,7 +460,6 @@ export const RunDetail = ({
       {...(models === undefined ? {} : { models })}
       {...(providerNames === undefined ? {} : { providerNames })}
       skipAttach={skipAttach}
-      {...(cwd === undefined ? {} : { cwd })}
       {...(terminalClient === undefined ? {} : { terminalClient })}
     />
   ) : (
