@@ -271,6 +271,7 @@
       "name": "@spectrum/providers",
       "version": "1.7.0",
       "dependencies": {
+        "@spectrum/agent-events": "workspace:*",
         "@spectrum/types": "workspace:*",
         "@spectrum/utils": "workspace:*",
         "zod": "catalog:",

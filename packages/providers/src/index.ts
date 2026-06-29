@@ -20,3 +20,5 @@ export {
   providerCatalog,
 } from "./catalog"
 export { validateProviderConfig } from "./validate"
+export { ALL_TIERS } from "./reasoning-types"
+export type { ReasoningShape, ReasoningSupport } from "./reasoning-types"

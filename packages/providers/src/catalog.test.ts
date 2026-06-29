@@ -67,4 +67,19 @@ describe("provider catalog", () => {
     expect(getDescriptor("ollama").streaming).toBe("buffered")
     expect(getDescriptor("openai").streaming).toBe("incremental")
   })
+
+  it("assigns a reasoning shape to every descriptor", () => {
+    for (const d of listDescriptors()) {
+      expect(typeof d.reasoning.shape).toBe("string")
+      expect(Array.isArray(d.reasoning.supportedTiers)).toBe(true)
+    }
+  })
+
+  it("uses anthropic-thinking for anthropic and openai-effort for openai", () => {
+    expect(getDescriptor("anthropic").reasoning.shape).toBe(
+      "anthropic-thinking",
+    )
+    expect(getDescriptor("openai").reasoning.shape).toBe("openai-effort")
+    expect(getDescriptor("google").reasoning.shape).toBe("google-thinking")
+  })
 })

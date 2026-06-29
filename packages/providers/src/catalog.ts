@@ -1,5 +1,6 @@
 import type { SdkProvider } from "@spectrum/types"
 import { z } from "zod"
+import { ALL_TIERS, type ReasoningSupport } from "./reasoning-types"
 import type {
   ProviderCatalogEntry,
   ProviderDescriptor,
@@ -20,11 +21,27 @@ const API_KEY_REQUIRED: SecretFieldSpec = {
 /** Reusable empty/strict config schema for providers whose SDK needs no extra config. */
 const emptyConfig = z.object({}).strict()
 
+const NO_REASONING: ReasoningSupport = { shape: "none", supportedTiers: [] }
+const OPENAI_EFFORT: ReasoningSupport = {
+  shape: "openai-effort",
+  // OpenAI reasoning models expose minimal|low|medium|high (no xhigh/max).
+  supportedTiers: ["off", "minimal", "low", "medium", "high"],
+}
+const ANTHROPIC_THINKING: ReasoningSupport = {
+  shape: "anthropic-thinking",
+  supportedTiers: ALL_TIERS,
+}
+const GOOGLE_THINKING: ReasoningSupport = {
+  shape: "google-thinking",
+  supportedTiers: ALL_TIERS,
+}
+
 /** A dedicated AI-SDK provider that takes only an apiKey (option) and lists via /v1/models. */
 const openAiCompatible = (
   key: SdkProvider,
   label: string,
   discoveryBaseUrl: string,
+  reasoning: ReasoningSupport = NO_REASONING,
 ): ProviderDescriptor => ({
   key,
   label,
@@ -38,6 +55,7 @@ const openAiCompatible = (
     apiKey: { kind: "option", name: "apiKey" },
   },
   discovery: { strategy: "openai-models", defaultBaseUrl: discoveryBaseUrl },
+  reasoning,
 })
 
 /** A provider whose model list we cannot discover (the UI falls back to free-text). */
@@ -46,6 +64,7 @@ const noDiscovery = (
   label: string,
   configSchema = emptyConfig,
   configFields: ProviderDescriptor["configFields"] = [],
+  reasoning: ReasoningSupport = NO_REASONING,
 ): ProviderDescriptor => ({
   key,
   label,
@@ -59,10 +78,16 @@ const noDiscovery = (
     apiKey: { kind: "option", name: "apiKey" },
   },
   discovery: { strategy: "none" },
+  reasoning,
 })
 
 const descriptors: Record<SdkProvider, ProviderDescriptor> = {
-  openai: openAiCompatible("openai", "OpenAI", "https://api.openai.com/v1"),
+  openai: openAiCompatible(
+    "openai",
+    "OpenAI",
+    "https://api.openai.com/v1",
+    OPENAI_EFFORT,
+  ),
   groq: openAiCompatible("groq", "Groq", "https://api.groq.com/openai/v1"),
   xai: openAiCompatible("xai", "xAI", "https://api.x.ai/v1"),
   fireworks: openAiCompatible(
@@ -87,14 +112,27 @@ const descriptors: Record<SdkProvider, ProviderDescriptor> = {
     "https://api.cohere.ai/compatibility/v1",
   ),
 
-  anthropic: noDiscovery("anthropic", "Anthropic"),
-  google: noDiscovery("google", "Google"),
-  vertex: noDiscovery("vertex", "Google Vertex"),
+  anthropic: noDiscovery(
+    "anthropic",
+    "Anthropic",
+    emptyConfig,
+    [],
+    ANTHROPIC_THINKING,
+  ),
+  google: noDiscovery("google", "Google", emptyConfig, [], GOOGLE_THINKING),
+  vertex: noDiscovery(
+    "vertex",
+    "Google Vertex",
+    emptyConfig,
+    [],
+    GOOGLE_THINKING,
+  ),
   bedrock: noDiscovery(
     "bedrock",
     "Amazon Bedrock",
     z.object({ region: z.string().min(1) }).strict(),
     [{ name: "region", label: "AWS region", kind: "text", required: true }],
+    ANTHROPIC_THINKING,
   ),
   azure: noDiscovery(
     "azure",
@@ -119,6 +157,7 @@ const descriptors: Record<SdkProvider, ProviderDescriptor> = {
         required: true,
       },
     ],
+    OPENAI_EFFORT,
   ),
 
   // ── Custom: generic OpenAI-compatible endpoint ──────────────────────────────
@@ -172,6 +211,7 @@ const descriptors: Record<SdkProvider, ProviderDescriptor> = {
       placeholderApiKey: "not-needed",
     },
     discovery: { strategy: "openai-models" },
+    reasoning: NO_REASONING,
   },
 
   // ── Ollama Cloud ────────────────────────────────────────────────────────────
@@ -202,6 +242,7 @@ const descriptors: Record<SdkProvider, ProviderDescriptor> = {
       sendAuthHeader: true,
       defaultBaseUrl: "https://ollama.com/api",
     },
+    reasoning: NO_REASONING,
   },
 
   // ── OpenRouter ──────────────────────────────────────────────────────────────
@@ -242,6 +283,7 @@ const descriptors: Record<SdkProvider, ProviderDescriptor> = {
       strategy: "openai-models",
       defaultBaseUrl: "https://openrouter.ai/api/v1",
     },
+    reasoning: NO_REASONING,
   },
 }
 
