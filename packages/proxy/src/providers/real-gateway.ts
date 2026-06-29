@@ -1,3 +1,8 @@
+import {
+  buildProviderOptions,
+  reasoningDisablesTemperature,
+  resolveReasoning,
+} from "@spectrum/providers"
 import { jsonSchema, streamText } from "ai"
 import type {
   LanguageModelGateway,
@@ -12,6 +17,26 @@ import type {
   StreamEvent,
 } from "../types"
 import type { ModelHandle } from "./factory"
+
+/** Reasoning providerOptions for a request, or undefined when none apply. */
+export const reasoningOptionsFor = (
+  ctx: StreamContext,
+  tier: NormalizedRequest["thinkingEffort"],
+): Record<string, unknown> | undefined => {
+  if (tier === undefined) return undefined
+  const support = resolveReasoning(ctx.sdkProvider, ctx.providerModel)
+  return buildProviderOptions(support, tier)
+}
+
+/** Heuristic: does this AI SDK error look like a rejected reasoning/thinking parameter? */
+export const isUnsupportedReasoningError = (err: unknown): boolean => {
+  if (!(err instanceof Error)) return false
+  const m = `${err.message}`.toLowerCase()
+  return (
+    /reasoning|thinking|budget_tokens|budgettokens|reasoning_effort/.test(m) &&
+    /unsupported|not supported|invalid|unknown|unexpected|400/.test(m)
+  )
+}
 
 /** The AI SDK `streamText` input `messages` array element type. */
 type ModelMessage = NonNullable<
@@ -227,57 +252,88 @@ export const createRealGateway = (opts?: {
     const { firstTokenTimeoutMs, interTokenTimeoutMs } =
       opts?.getTimeouts?.(ctx) ?? DEFAULT_TIMEOUTS
 
-    const controller = new AbortController()
-
-    const result = streamText({
-      model: model as Parameters<typeof streamText>[0]["model"],
-      ...(req.system !== undefined ? { system: req.system } : {}),
-      messages: toModelMessages(req),
-      ...(req.tools !== undefined && req.tools.length > 0
-        ? { tools: toModelTools(req.tools) }
-        : {}),
-      ...(req.maxTokens !== undefined
-        ? { maxOutputTokens: req.maxTokens }
-        : {}),
-      ...(req.temperature !== undefined
-        ? { temperature: req.temperature }
-        : {}),
-      // The proxy is a RELAY: the harness owns retry policy. The AI SDK's default
-      // (2 retries with exponential backoff) compounds with the harness's own
-      // retries into minutes of stall on a rate-limited provider.
-      maxRetries: 0,
-      abortSignal: controller.signal,
-    })
-
-    const iterator = result.fullStream[Symbol.asyncIterator]()
-
-    // Deterministic provider-error signal. In ai@6 a provider rejection surfaces
-    // as a rejected `result.text` (and as an `error` part on fullStream). We attach
-    // a rejection handler — which ALSO absorbs the AI SDK's stray recordSpan
-    // unhandled rejection — and resolve a sentinel so the chunk race can surface the
-    // error immediately, without a process-global unhandledRejection listener.
-    // This whole design is coupled to AI SDK behavior verified against ai@6.0.194
-    // (error part on rejection + `result.text` rejects + `.then` absorbs recordSpan);
-    // re-probe these three on any `ai` major/minor bump.
-    let capturedError: Error | undefined
-    const errorSignal = new Promise<void>((resolve) => {
-      void (result.text as Promise<unknown>).then(
-        () => {}, // success: leave pending; the iterator drives completion
-        (e: unknown) => {
-          capturedError = e instanceof Error ? e : new Error(String(e))
-          resolve()
-        },
+    // Compute reasoning options once (pure; undefined when no thinkingEffort or no ctx).
+    const reasoning =
+      ctx !== undefined
+        ? reasoningOptionsFor(ctx, req.thinkingEffort)
+        : undefined
+    const dropTemp =
+      reasoning !== undefined &&
+      ctx !== undefined &&
+      reasoningDisablesTemperature(
+        resolveReasoning(ctx.sdkProvider, ctx.providerModel),
       )
-    })
 
+    // firstChunkSeen is shared across both run() invocations so the fallback
+    // retry is only attempted in the pre-first-chunk window.
     let firstChunkSeen = false
-    // In ai@6 a provider rejection surfaces BOTH as an `error` part on fullStream
-    // (carrying the rich upstream error — e.g. the 429 + provider body) AND as a
-    // rejected `result.text` (a generic AI_NoOutputGeneratedError). The fullStream
-    // part is authoritative, so once it has been yielded we suppress the redundant
-    // `result.text` signal to surface exactly one error event.
-    let errorYielded = false
-    try {
+
+    // Build streamText args (without abortSignal, which is per-attempt).
+    // Cast: buildProviderOptions returns Record<string, unknown> (JSON-safe values);
+    // streamText providerOptions expects Record<string, JSONObject>. Values are
+    // identical — the cast bridges the structural gap introduced by exactOptionalPropertyTypes.
+    type StreamTextArgs = Parameters<typeof streamText>[0]
+    const buildArgs = (
+      withReasoning: boolean,
+      signal: AbortSignal,
+    ): StreamTextArgs =>
+      ({
+        model: model as StreamTextArgs["model"],
+        ...(req.system !== undefined ? { system: req.system } : {}),
+        messages: toModelMessages(req),
+        ...(req.tools !== undefined && req.tools.length > 0
+          ? { tools: toModelTools(req.tools) }
+          : {}),
+        ...(req.maxTokens !== undefined
+          ? { maxOutputTokens: req.maxTokens }
+          : {}),
+        // Drop temperature when reasoning forces it (Anthropic extended thinking).
+        ...(req.temperature !== undefined && !(withReasoning && dropTemp)
+          ? { temperature: req.temperature }
+          : {}),
+        // Attach reasoning providerOptions when requested for this attempt.
+        ...(withReasoning && reasoning !== undefined
+          ? { providerOptions: reasoning }
+          : {}),
+        // The proxy is a RELAY: the harness owns retry policy.
+        maxRetries: 0,
+        abortSignal: signal,
+      }) as StreamTextArgs
+
+    // Inner generator: creates one streamText call (with or without reasoning)
+    // and drives its fullStream iterator with timeout + error-signal racing.
+    async function* run(withReasoning: boolean): AsyncGenerator<StreamEvent> {
+      const controller = new AbortController()
+
+      const result = streamText(buildArgs(withReasoning, controller.signal))
+
+      const iterator = result.fullStream[Symbol.asyncIterator]()
+
+      // Deterministic provider-error signal. In ai@6 a provider rejection surfaces
+      // as a rejected `result.text` (and as an `error` part on fullStream). We attach
+      // a rejection handler — which ALSO absorbs the AI SDK's stray recordSpan
+      // unhandled rejection — and resolve a sentinel so the chunk race can surface the
+      // error immediately, without a process-global unhandledRejection listener.
+      // This whole design is coupled to AI SDK behavior verified against ai@6.0.194
+      // (error part on rejection + `result.text` rejects + `.then` absorbs recordSpan);
+      // re-probe these three on any `ai` major/minor bump.
+      let capturedError: Error | undefined
+      const errorSignal = new Promise<void>((resolve) => {
+        void (result.text as Promise<unknown>).then(
+          () => {}, // success: leave pending; the iterator drives completion
+          (e: unknown) => {
+            capturedError = e instanceof Error ? e : new Error(String(e))
+            resolve()
+          },
+        )
+      })
+
+      // In ai@6 a provider rejection surfaces BOTH as an `error` part on fullStream
+      // (carrying the rich upstream error — e.g. the 429 + provider body) AND as a
+      // rejected `result.text` (a generic AI_NoOutputGeneratedError). The fullStream
+      // part is authoritative, so once it has been yielded we suppress the redundant
+      // `result.text` signal to surface exactly one error event.
+      let errorYielded = false
       while (true) {
         type Next = Awaited<ReturnType<typeof iterator.next>>
         if (capturedError !== undefined && !errorYielded) throw capturedError
@@ -326,8 +382,28 @@ export const createRealGateway = (opts?: {
           yield event
         }
       }
+    }
+
+    // Top-level: attempt with reasoning; on a pre-first-chunk unsupported-reasoning
+    // error, retry transparently without reasoning. Any other error is surfaced as-is.
+    try {
+      yield* run(true)
     } catch (e: unknown) {
-      yield { type: "error", ...describeStreamError(capturedError ?? e) }
+      if (
+        reasoning !== undefined &&
+        isUnsupportedReasoningError(e) &&
+        !firstChunkSeen
+      ) {
+        // Safe fallback: the provider rejected the reasoning parameter before
+        // any output was streamed — retry without it.
+        try {
+          yield* run(false)
+        } catch (e2: unknown) {
+          yield { type: "error", ...describeStreamError(e2) }
+        }
+      } else {
+        yield { type: "error", ...describeStreamError(e) }
+      }
     }
   },
 })

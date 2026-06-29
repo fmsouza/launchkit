@@ -3,7 +3,9 @@ import { APICallError, RetryError } from "ai"
 import type { NormalizedRequest } from "../types"
 import {
   describeStreamError,
+  isUnsupportedReasoningError,
   mapFullStreamPart,
+  reasoningOptionsFor,
   toModelMessages,
 } from "./real-gateway"
 
@@ -244,5 +246,47 @@ describe("toModelMessages", () => {
         ],
       },
     ])
+  })
+})
+
+describe("reasoningOptionsFor", () => {
+  it("returns undefined when the request has no thinkingEffort", () => {
+    expect(
+      reasoningOptionsFor(
+        { sdkProvider: "openai", providerModel: "gpt-5" },
+        undefined,
+      ),
+    ).toBeUndefined()
+  })
+
+  it("builds openai reasoning options for a tier", () => {
+    expect(
+      reasoningOptionsFor(
+        { sdkProvider: "openai", providerModel: "gpt-5" },
+        "low",
+      ),
+    ).toEqual({ openai: { reasoningEffort: "low" } })
+  })
+
+  it("returns undefined for a non-reasoning model (override → none)", () => {
+    expect(
+      reasoningOptionsFor(
+        { sdkProvider: "openai", providerModel: "gpt-4o" },
+        "high",
+      ),
+    ).toBeUndefined()
+  })
+})
+
+describe("isUnsupportedReasoningError", () => {
+  it("flags an API error mentioning the reasoning/thinking parameter", () => {
+    const e = Object.assign(new Error("budget_tokens: unsupported parameter"), {
+      name: "AI_APICallError",
+    })
+    expect(isUnsupportedReasoningError(e)).toBe(true)
+  })
+
+  it("does not flag an unrelated error", () => {
+    expect(isUnsupportedReasoningError(new Error("rate limited"))).toBe(false)
   })
 })
