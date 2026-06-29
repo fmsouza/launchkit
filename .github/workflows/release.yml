@@ -404,10 +404,15 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           CURRENT="${{ github.ref_name }}"
-          # Stable tags only (exclude canary/prerelease tags, which contain '-').
+          # Stable tags only (exclude canary/prerelease tags, which contain '-'). Filtering
+          # to ONE channel before `sort -V` is required: `sort -V` orders a stable tag below
+          # its own prerelease (opposite of semver), harmless only when one channel is sorted.
           STABLE=$(gh release list --limit 200 --json tagName --jq \
             '[.[].tagName | select(test("^v[0-9]+\\.[0-9]+\\.[0-9]+$"))] | .[]')
           # Add current, semver-sort, take the tag immediately preceding current.
+          # No `set -o pipefail` (GHA runs `bash -e`): for a first-ever final, `grep -B1`
+          # self-matches CURRENT and `head -n1` (pipeline tail, exits 0) returns it, so the
+          # step does not abort; the guard below blanks it. Keep `head`/`tail` last on refactor.
           START_TAG=$(printf '%s\n%s\n' "$STABLE" "$CURRENT" | grep -v '^$' \
             | sort -V -u | grep -B1 -x "$CURRENT" | head -n1)
           # If current is the lowest (first-ever final), there is no predecessor.

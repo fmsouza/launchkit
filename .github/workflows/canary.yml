@@ -52,6 +52,12 @@ jobs:
           #   1. previous canary of THIS base version (v${VERSION}-canary.${LATEST}), else
           #   2. most recent canary tag overall (any base version, semver-ordered), else
           #   3. empty -> downstream omits the flag and GitHub auto-picks.
+          # The select() filters to CANARY tags only before `sort -V`: never mix channels
+          # here. `sort -V` orders a stable tag BELOW its own prerelease (opposite of
+          # semver), which is harmless only because we sort one channel at a time.
+          # No `set -o pipefail` (GHA runs `bash -e`): when no canary exists the jq stream
+          # is empty, `tail -n1` is the pipeline tail and exits 0, so START_TAG is "" and
+          # the step does not abort. Keep `tail`/`head` last if you ever refactor this pipe.
           if [ "${LATEST}" -ge 1 ]; then
             START_TAG="v${VERSION}-canary.${LATEST}"
           else
