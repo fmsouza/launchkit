@@ -1,3 +1,4 @@
+import type { ThinkingEffort } from "@spectrum/agent-events"
 import { type Result, err, ok } from "@spectrum/utils"
 import { z } from "zod"
 import type {
@@ -7,6 +8,7 @@ import type {
   NormalizedTool,
   ProxyError,
 } from "../types"
+import { effortStringToTier } from "./reasoning-effort"
 
 // A message content text block. Responses uses input_text (user/developer) and
 // output_text (assistant); both carry a `text` string. Other parts (e.g.
@@ -69,6 +71,7 @@ const ResponsesBody = z.object({
   max_output_tokens: z.number().int().positive().optional(),
   temperature: z.number().optional(),
   stream: z.boolean().optional(),
+  reasoning: z.object({ effort: z.string().optional() }).optional(),
   tools: z.array(ToolDef).optional(),
   input: z.array(InputItem),
 })
@@ -214,6 +217,10 @@ export const parseResponsesRequest = (
       : {}),
     ...(b.temperature !== undefined ? { temperature: b.temperature } : {}),
     ...(tools.length > 0 ? { tools } : {}),
+    ...((): { thinkingEffort?: ThinkingEffort } => {
+      const t = effortStringToTier(b.reasoning?.effort)
+      return t !== undefined ? { thinkingEffort: t } : {}
+    })(),
     stream: b.stream ?? false,
     messages,
   })

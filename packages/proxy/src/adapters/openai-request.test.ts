@@ -242,6 +242,15 @@ describe("parseOpenAIRequest", () => {
       },
     ])
   })
+  it("maps reasoning_effort to a canonical tier", () => {
+    const r = parseOpenAIRequest({
+      model: "gpt-5",
+      messages: [{ role: "user", content: "hi" }],
+      reasoning_effort: "low",
+    })
+    expect(r.ok).toBe(true)
+    if (r.ok) expect(r.value.thinkingEffort).toBe("low")
+  })
   it("extracts text from a tool message whose content is an array of text blocks", () => {
     const body = {
       model: "fast",

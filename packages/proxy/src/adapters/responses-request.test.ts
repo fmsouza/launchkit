@@ -135,4 +135,13 @@ describe("parseResponsesRequest", () => {
     expect(r.ok).toBe(true)
     expect(r.ok && r.value.messages).toEqual([{ role: "user", content: "hi" }])
   })
+  it("maps reasoning.effort to a canonical tier", () => {
+    const r = parseResponsesRequest({
+      model: "gpt-5",
+      input: [{ type: "message", role: "user", content: "hi" }],
+      reasoning: { effort: "high" },
+    })
+    expect(r.ok).toBe(true)
+    if (r.ok) expect(r.value.thinkingEffort).toBe("high")
+  })
 })
