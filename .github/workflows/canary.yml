@@ -33,6 +33,7 @@ jobs:
     outputs:
       canary-build: ${{ steps.version.outputs.canary-build }}
       canary-tag: ${{ steps.version.outputs.tag }}
+      start-tag: ${{ steps.version.outputs.start-tag }}
     steps:
       - uses: actions/checkout@v5
       - name: Compute canary build number
@@ -41,11 +42,30 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           VERSION=$(jq -r .version package.json)
-          LATEST=$(gh release list --json tagName --jq \
+          LATEST=$(gh release list --limit 200 --json tagName --jq \
             "[.[] | select(.tagName | startswith(\"v${VERSION}-canary.\")) | .tagName | ltrimstr(\"v${VERSION}-canary.\") | tonumber] | max // 0")
           NEXT=$((LATEST + 1))
           echo "canary-build=${NEXT}" >> "$GITHUB_OUTPUT"
           echo "tag=v${VERSION}-canary.${NEXT}" >> "$GITHUB_OUTPUT"
+
+          # Changelog lower boundary (--notes-start-tag), same channel:
+          #   1. previous canary of THIS base version (v${VERSION}-canary.${LATEST}), else
+          #   2. most recent canary tag overall (any base version, semver-ordered), else
+          #   3. empty -> downstream omits the flag and GitHub auto-picks.
+          # The select() filters to CANARY tags only before `sort -V`: never mix channels
+          # here. `sort -V` orders a stable tag BELOW its own prerelease (opposite of
+          # semver), which is harmless only because we sort one channel at a time.
+          # No `set -o pipefail` (GHA runs `bash -e`): when no canary exists the jq stream
+          # is empty, `tail -n1` is the pipeline tail and exits 0, so START_TAG is "" and
+          # the step does not abort. Keep `tail`/`head` last if you ever refactor this pipe.
+          if [ "${LATEST}" -ge 1 ]; then
+            START_TAG="v${VERSION}-canary.${LATEST}"
+          else
+            START_TAG=$(gh release list --limit 200 --json tagName --jq \
+              '[.[].tagName | select(test("^v[0-9]+\\.[0-9]+\\.[0-9]+-canary\\.[0-9]+$"))] | .[]' \
+              | sort -V | tail -n1)
+          fi
+          echo "start-tag=${START_TAG}" >> "$GITHUB_OUTPUT"
 
   build-cli:
     name: Build CLI (${{ matrix.name }})
@@ -449,10 +469,18 @@ jobs:
       - name: Create canary release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          START_TAG: ${{ needs.version.outputs.start-tag }}
         run: |
+          # Keep the existing context line as a preamble; --generate-notes appends the
+          # changelog (PR titles + contributors) from START_TAG to the release commit.
+          NOTES_START=()
+          if [ -n "${START_TAG}" ]; then
+            NOTES_START=(--notes-start-tag "${START_TAG}")
+          fi
           gh release create ${{ needs.version.outputs.canary-tag }} \
             --title "${{ needs.version.outputs.canary-tag }}" \
             --notes "Automated canary build from \`main\` (${{ github.sha }}). Unstable pre-release." \
+            --generate-notes "${NOTES_START[@]}" \
             --prerelease --target ${{ github.sha }} \
             release-assets/*
 
