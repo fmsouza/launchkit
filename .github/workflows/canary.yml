@@ -33,6 +33,7 @@ jobs:
     outputs:
       canary-build: ${{ steps.version.outputs.canary-build }}
       canary-tag: ${{ steps.version.outputs.tag }}
+      start-tag: ${{ steps.version.outputs.start-tag }}
     steps:
       - uses: actions/checkout@v5
       - name: Compute canary build number
@@ -41,11 +42,24 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           VERSION=$(jq -r .version package.json)
-          LATEST=$(gh release list --json tagName --jq \
+          LATEST=$(gh release list --limit 200 --json tagName --jq \
             "[.[] | select(.tagName | startswith(\"v${VERSION}-canary.\")) | .tagName | ltrimstr(\"v${VERSION}-canary.\") | tonumber] | max // 0")
           NEXT=$((LATEST + 1))
           echo "canary-build=${NEXT}" >> "$GITHUB_OUTPUT"
           echo "tag=v${VERSION}-canary.${NEXT}" >> "$GITHUB_OUTPUT"
+
+          # Changelog lower boundary (--notes-start-tag), same channel:
+          #   1. previous canary of THIS base version (v${VERSION}-canary.${LATEST}), else
+          #   2. most recent canary tag overall (any base version, semver-ordered), else
+          #   3. empty -> downstream omits the flag and GitHub auto-picks.
+          if [ "${LATEST}" -ge 1 ]; then
+            START_TAG="v${VERSION}-canary.${LATEST}"
+          else
+            START_TAG=$(gh release list --limit 200 --json tagName --jq \
+              '[.[].tagName | select(test("^v[0-9]+\\.[0-9]+\\.[0-9]+-canary\\.[0-9]+$"))] | .[]' \
+              | sort -V | tail -n1)
+          fi
+          echo "start-tag=${START_TAG}" >> "$GITHUB_OUTPUT"
 
   build-cli:
     name: Build CLI (${{ matrix.name }})
