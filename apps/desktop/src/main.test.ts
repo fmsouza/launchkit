@@ -1,6 +1,7 @@
-import { describe, expect, it, mock } from "bun:test"
+import { beforeEach, describe, expect, it, mock } from "bun:test"
 import { createNoopLogger } from "@spectrum/logger"
 import type { createAppContext } from "./composition"
+import { __resetGuiPathAsyncForTest } from "./gui/resolve-path"
 import type { RunGuiDeps } from "./main"
 import { buildRealDeps, main } from "./main"
 
@@ -213,6 +214,39 @@ describe("buildRealDeps", () => {
   })
 })
 
+describe("buildRealDeps startProxy PATH enrichment", () => {
+  beforeEach(() => __resetGuiPathAsyncForTest())
+
+  it("does NOT run a synchronous spawn during startProxy (enrichment is async, fire-and-forget)", () => {
+    // startProxy must return synchronously without having awaited any shell probe.
+    let syncSpawnObserved = false
+    // Patch Bun.spawnSync to detect any synchronous spawn on the startProxy path.
+    const origSpawnSync = Bun.spawnSync
+    Bun.spawnSync = (() => {
+      syncSpawnObserved = true
+      return {
+        success: false,
+        stdout: Buffer.alloc(0),
+        stderr: Buffer.alloc(0),
+      } as never
+    }) as never
+    try {
+      const deps = buildRealDeps(fakeFactory)
+      deps.startProxy()
+      expect(syncSpawnObserved).toBe(false)
+    } finally {
+      Bun.spawnSync = origSpawnSync
+    }
+  })
+
+  it("exposes ensureGuiPathResolved which resolves after the async enrichment settles", async () => {
+    const deps = buildRealDeps(fakeFactory)
+    expect(typeof deps.ensureGuiPathResolved).toBe("function")
+    // No throw; resolves (the real async probe runs, but the memo means it runs once).
+    await expect(deps.ensureGuiPathResolved()).resolves.toBeUndefined()
+  })
+})
+
 describe("main (entry wiring)", () => {
   /** A RunGuiDeps that records whether/how each path ran, no real effects. */
   const recordingDeps = (record: { guiOpened?: boolean }): RunGuiDeps => ({
@@ -223,6 +257,7 @@ describe("main (entry wiring)", () => {
     openWindow: () => {
       record.guiOpened = true
     },
+    ensureGuiPathResolved: async () => {},
   })
 
   it("calls startProxy then openWindow regardless of argv (no mode detection)", async () => {
@@ -235,6 +270,7 @@ describe("main (entry wiring)", () => {
       openWindow: () => {
         order.push("openWindow")
       },
+      ensureGuiPathResolved: async () => {},
     }
     // Even with CLI-shaped argv, the GUI always runs.
     await main(["bun", "/path/main.ts", "list", "harnesses"], deps)
