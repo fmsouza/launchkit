@@ -1,5 +1,4 @@
 import { afterAll, beforeEach, describe, expect, it } from "bun:test"
-import { homedir } from "node:os"
 import { PATH_SENTINEL_END, PATH_SENTINEL_START } from "@spectrum/platform"
 import {
   type ShellPathProbeAsync,
@@ -88,13 +87,21 @@ describe("resolveGuiPath", () => {
 
 describe("enrichGuiPathAsync", () => {
   const originalPath = process.env.PATH
+  const originalShell = process.env.SHELL
 
   beforeEach(() => {
     __resetGuiPathAsyncForTest()
     process.env.PATH = originalPath
+    // Force the function to exercise the probe branch on every host. The probe
+    // is a mock so the value doesn't matter — any non-empty string works. On
+    // Windows CI `process.env.SHELL` is undefined, which would otherwise skip
+    // the probe and break the `expect(calls).toBe(1)` assertions in the tests
+    // below.
+    process.env.SHELL = "/bin/zsh"
   })
   afterAll(() => {
     process.env.PATH = originalPath
+    process.env.SHELL = originalShell
   })
 
   it("resolves the PATH via the async probe and mutates process.env.PATH once settled", async () => {
@@ -137,16 +144,20 @@ describe("enrichGuiPathAsync", () => {
     expect(a).toBe(b)
   })
 
-  it("falls back to common bin dirs (never rejects) when the probe throws", async () => {
+  it("falls back to the inherited PATH (never rejects) when the probe throws", async () => {
     process.env.PATH = "/usr/bin"
     const probe: ShellPathProbeAsync = async () => {
       throw new Error("spawn failed")
     }
     const result = await enrichGuiPathAsync(probe)
-    expect(result).toContain(
-      "/Users/fred/.local/bin".replace("/Users/fred", homedir()),
-    )
-    expect(result).toContain("/opt/homebrew/bin")
-    expect(result).toContain("/usr/bin")
+    // Platform-neutral contract: the async enricher must never reject, and the
+    // inherited basePath must survive the fallback path. The OS-specific
+    // "common bin dirs" branch is exercised by the pure `resolveGuiPath` unit
+    // tests above (which pass `platform: "macos"` explicitly) — it is NOT a
+    // property of the async enricher on its own.
+    expect(typeof result).toBe("string")
+    expect(result.length).toBeGreaterThan(0)
+    const delimiter = process.platform === "win32" ? ";" : ":"
+    expect(result.split(delimiter)).toContain("/usr/bin")
   })
 })
