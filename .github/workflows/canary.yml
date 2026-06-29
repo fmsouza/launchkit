@@ -463,10 +463,18 @@ jobs:
       - name: Create canary release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          START_TAG: ${{ needs.version.outputs.start-tag }}
         run: |
+          # Keep the existing context line as a preamble; --generate-notes appends the
+          # changelog (PR titles + contributors) from START_TAG to the release commit.
+          NOTES_START=()
+          if [ -n "${START_TAG}" ]; then
+            NOTES_START=(--notes-start-tag "${START_TAG}")
+          fi
           gh release create ${{ needs.version.outputs.canary-tag }} \
             --title "${{ needs.version.outputs.canary-tag }}" \
             --notes "Automated canary build from \`main\` (${{ github.sha }}). Unstable pre-release." \
+            --generate-notes "${NOTES_START[@]}" \
             --prerelease --target ${{ github.sha }} \
             release-assets/*
 
