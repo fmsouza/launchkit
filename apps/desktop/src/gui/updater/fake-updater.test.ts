@@ -81,4 +81,19 @@ describe("createFakeUpdater", () => {
     await u.setChannel("canary")
     expect(await u.getBuildChannel()).toBe("canary")
   })
+
+  it("relaunch records the call and resolves ok", async () => {
+    const u = createFakeUpdater({ currentVersion: "1.0.0" })
+    expect(u.relaunchCalls).toBe(0)
+    const r = await u.relaunch()
+    expect(r.ok).toBe(true)
+    expect(u.relaunchCalls).toBe(1)
+  })
+
+  it("check records the call count for handler relaunch-vs-check assertions", async () => {
+    const u = createFakeUpdater({ currentVersion: "1.0.0", latest: "1.1.0" })
+    expect(u.checkCalls).toBe(0)
+    await u.check("stable")
+    expect(u.checkCalls).toBe(1)
+  })
 })

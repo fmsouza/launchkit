@@ -142,7 +142,7 @@ export const GeneralPage = (): ReactElement => {
             </label>
           </div>
           <p className="settings-updates__hint">
-            Channel changes take effect after you restart Spectrum.
+            Switching channel restarts Spectrum to apply the change.
           </p>
         </div>
 

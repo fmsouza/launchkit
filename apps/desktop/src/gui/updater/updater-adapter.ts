@@ -57,7 +57,17 @@ export interface UpdaterAdapter {
   startDownload(): void
   /** Apply the staged update and relaunch. May not return (process exits). */
   apply(): Promise<Result<void, UpdaterError>>
-  /** Switch the followed channel (rewrites the bundle's version.json — see spike). */
+  /**
+   * Switch the followed channel. A CROSS-CHANNEL switch (stable↔canary) rewrites
+   * BOTH `channel` AND `name` in the bundle's version.json: the canary bundle is
+   * named "Spectrum-canary" (stable is "Spectrum"), and Electrobun builds the
+   * full-bundle download URL from `name`, so flipping `channel` alone would make
+   * the running app request a canary tarball that doesn't exist (404). A
+   * SAME-CHANNEL switch only persists the preference (name is already correct).
+   * Best-effort: a read-only bundle swallows the write error and resolves ok
+   * (the config preference is still persisted by the handler); the engine then
+   * picks up the change after a writable reinstall. See electrobun-updater.ts.
+   */
   setChannel(channel: Channel): Promise<Result<void, UpdaterError>>
   /**
    * The channel this installed bundle actually IS, read live from the bundle's
@@ -68,4 +78,14 @@ export interface UpdaterAdapter {
    * bundle, or a non-Channel value), in which case callers fall back to config.
    */
   getBuildChannel(): Promise<Channel | undefined>
+  /**
+   * Relaunch the running app bundle (detached spawn of the app/launcher, then quit)
+   * so a rewritten version.json takes effect. Electrobun caches `localInfo` for the
+   * process lifetime (no public cache-clear), so a channel switch is only observed
+   * after a restart. Mirrors `Updater.applyUpdate`'s per-OS relaunch tail. Fire-and-
+   * forget like `apply`: the process exits mid-call, so callers must not depend on
+   * a returned state. Resolves `ok` before quitting; `channel-switch-failed` on a
+   * spawn error (the app stays running so the user can retry / restart manually).
+   */
+  relaunch(): Promise<Result<void, UpdaterError>>
 }
