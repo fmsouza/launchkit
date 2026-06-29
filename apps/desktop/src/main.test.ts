@@ -284,9 +284,13 @@ describe("main (entry wiring)", () => {
   })
 })
 
-// MUST be the last test in the file: it calls main() with the real openWindow,
-// which kicks off async tray/Updater work that must not contaminate any test
-// running after it.
+// MUST be the last test in the file: it calls main() which internally invokes
+// deps.startProxy() and deps.openWindow(). We use a recording openWindow stub
+// (not the real one from buildRealDeps) to avoid kicking off the real
+// Electrobun tray/menu/updater work, which races with test teardown and would
+// surface as unhandled-rejection noise. The regression guard's job is to
+// verify the SYNC portion of main() does not call Bun.spawnSync; the real
+// openWindow's callability is covered separately in the buildRealDeps block.
 describe("main startup regression guard", () => {
   it("main() startup path performs no synchronous subprocess spawn (regression: Worker brk-1 crash)", () => {
     // Covers startProxy + openWindow — the full sync portion of main().
@@ -302,7 +306,12 @@ describe("main startup regression guard", () => {
       } as never
     }) as never
     try {
-      const deps = buildRealDeps(fakeFactory)
+      const realDeps = buildRealDeps(fakeFactory)
+      const deps = {
+        startProxy: realDeps.startProxy,
+        openWindow: () => {},
+        ensureGuiPathResolved: realDeps.ensureGuiPathResolved,
+      }
       void main([], deps)
       expect(syncSpawnObserved).toBe(false)
     } finally {
