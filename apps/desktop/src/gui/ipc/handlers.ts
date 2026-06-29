@@ -256,6 +256,11 @@ export const createIpcHandlers = (ctx: GuiContext): IpcHandlers => {
     },
 
     launchHarness: async ({ id, modelId, name, cwd, env }) => {
+      // Guarantee the deferred GUI PATH enrichment has settled before `Bun.which(command, { PATH })`
+      // runs in `ctx.runner.launch(...)`. Without this await, a launch arriving before the
+      // memoized login-shell probe settles races the probe and may fail with
+      // "failed to resolve harness launch: command not found on PATH".
+      await ctx.ensureGuiPathResolved()
       const config = await loadConfig()
       const listed = await ctx.registry.list()
       if (!isOk(listed)) return fail("could not list harnesses")

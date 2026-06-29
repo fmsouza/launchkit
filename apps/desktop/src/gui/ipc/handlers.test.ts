@@ -115,6 +115,12 @@ const makeCtx = (
     mintSessionProxyKey?: (modelId: string) => Promise<string>
     updateSocketUrl?: string
     pushUpdateState?: () => Promise<void>
+    /**
+     * Async hook the handler awaits before `ctx.runner.launch(...)`. When provided,
+     * tests use `order.push(...)` to assert this resolves before the launch fires.
+     * Defaults to a no-op so existing tests keep their original behavior.
+     */
+    ensureGuiPathResolved?: () => Promise<void>
   } = {},
 ): {
   ctx: AppContext
@@ -328,6 +334,9 @@ const makeCtx = (
       resetState.count += 1
       return over.resetAppResult ?? ok(undefined)
     },
+    // Default to a no-op so existing tests keep their original behavior; the
+    // PATH-resolved order test overrides this with an order-recording stub.
+    ensureGuiPathResolved: over.ensureGuiPathResolved ?? (async () => {}),
   } as unknown as AppContext
 
   return {
@@ -1684,6 +1693,35 @@ describe("createIpcHandlers.launchHarness selection", () => {
       handlers.launchHarness({ id: "claude" as never }),
     ).rejects.toThrow()
     expect(runnerLaunchInputs).toHaveLength(0)
+  })
+})
+
+describe("createIpcHandlers.launchHarness awaits ctx.ensureGuiPathResolved before launching", () => {
+  it("resolves the async PATH enrichment before invoking ctx.runner.launch", async () => {
+    // The handler must await ctx.ensureGuiPathResolved BEFORE reaching ctx.runner.launch so the
+    // deferred GUI PATH probe has settled by the time `Bun.which(command, { PATH })` runs.
+    // A launch that races the probe would surface as "command not found on PATH" in the
+    // packaged GUI (the deferred spawn is the only path that knows the user's real PATH).
+    const order: string[] = []
+    const { ctx } = makeCtx({
+      providers: [provider()],
+      ensureGuiPathResolved: async () => {
+        order.push("path-resolved")
+      },
+      runnerOk: true,
+    })
+    // Wrap the runner to record its invocation in the same ordered array.
+    ;(ctx.runner as unknown as { launch: (input: unknown) => unknown }).launch =
+      (input: unknown) => {
+        order.push("launched")
+        void input
+        return ok({ sessionId: sampleSession.id })
+      }
+    const handlers = createIpcHandlers(ctx)
+
+    await handlers.launchHarness({ id: "claude" as HarnessId, env: {} })
+
+    expect(order).toEqual(["path-resolved", "launched"])
   })
 })
 

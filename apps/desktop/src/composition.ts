@@ -66,6 +66,7 @@ import {
   realWatchdogTimers,
 } from "./gui/renderer-watchdog"
 import { type ResetError, createResetApp } from "./gui/reset-app"
+import { enrichGuiPathAsync } from "./gui/resolve-path"
 import {
   type SessionInfoResolver,
   mapRunFinished,
@@ -130,6 +131,13 @@ export interface GuiContext extends AppContext {
   ) => Promise<string | undefined>
   /** Cached at construction: `os.homedir()`. */
   readonly homeDir: string
+  /**
+   * Await the deferred GUI PATH enrichment (memoized; resolves immediately if already settled).
+   * The harness-launch path MUST await this before `ctx.runner.launch(...)` so the deferred
+   * login-shell PATH probe has settled by the time `Bun.which(command, { PATH })` runs.
+   * Threaded from `RunGuiDeps.ensureGuiPathResolved` via `buildRealDeps` in `main.ts`.
+   */
+  readonly ensureGuiPathResolved: () => Promise<void>
 }
 
 /**
@@ -149,6 +157,13 @@ export interface CreateGuiContextDeps {
   readonly relaunch: () => void
   /** Poller timers — injected so tests don't start a real 3-min interval. */
   readonly pollerTimers: PollerTimers
+  /**
+   * Await the deferred GUI PATH enrichment. The harness-launch path (IPC `launchHarness` +
+   * tray Launch) reads this through `ctx.ensureGuiPathResolved()` BEFORE `ctx.runner.launch(...)`
+   * to guarantee the deferred PATH probe has settled by the time a harness command is resolved.
+   * Defaulted to the real `enrichGuiPathAsync()` in `realGuiDeps`; tests inject a recording stub.
+   */
+  readonly ensureGuiPathResolved: () => Promise<void>
 }
 
 // ---------------------------------------------------------------------------
@@ -170,6 +185,12 @@ export const realGuiDeps: CreateGuiContextDeps = {
   removeDir: defaultRemoveDir,
   relaunch: defaultRelaunch,
   pollerTimers: realPollerTimers,
+  // The real seam awaits the deferred (memoized) GUI PATH enrichment. The probe is already
+  // fired in `main.ts`'s `startProxy`; awaiting here is what guarantees the probe has settled
+  // by the time a harness command is resolved on the IPC `launchHarness` / tray Launch paths.
+  ensureGuiPathResolved: async () => {
+    await enrichGuiPathAsync()
+  },
 }
 
 // ---------------------------------------------------------------------------
@@ -444,6 +465,7 @@ export const createGuiContext = (
     resolveSessionRow,
     resolveProjectPath,
     homeDir: homedir(),
+    ensureGuiPathResolved: deps.ensureGuiPathResolved,
   }
 }
 
