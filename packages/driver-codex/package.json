@@ -15,6 +15,7 @@
     "@spectrum/agent-events": "workspace:*",
     "@spectrum/driver-runtime": "workspace:*",
     "@spectrum/platform": "workspace:*",
+    "@spectrum/providers": "workspace:*",
     "@spectrum/types": "workspace:*",
     "@spectrum/utils": "workspace:*"
   }
