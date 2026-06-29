@@ -1,6 +1,6 @@
 import type { GuiContext } from "./composition"
 import { mountAppMenu } from "./gui/app-menu"
-import { enrichGuiPath } from "./gui/resolve-path"
+import { enrichGuiPathAsync } from "./gui/resolve-path"
 import { mountTray } from "./gui/tray"
 import { openWindow } from "./gui/window"
 
@@ -17,6 +17,10 @@ export interface ProxyHandle {
 export interface RunGuiDeps {
   readonly startProxy: () => ProxyHandle
   readonly openWindow: () => void
+  /** Await the async GUI PATH enrichment (memoized; resolves immediately if already settled).
+   * The harness-launch path MUST await this before resolving a harness command, so a launch
+   * never races the still-pending login-shell PATH probe. */
+  readonly ensureGuiPathResolved: () => Promise<void>
 }
 
 /**
@@ -40,12 +44,25 @@ export const buildRealDeps = (
         // the user's CLI install dirs (~/.local/bin, /opt/homebrew/bin, nvm/asdf shims), so
         // `Bun.which("claude")` returns null and every launch fails with "failed to resolve
         // harness launch". Reconstruct the real PATH (login-shell probe + static fallback) BEFORE
-        // anything resolves a harness command. Synchronous so it is in place before the window
-        // opens; CLI runs already inherit the full terminal PATH so this never runs there.
-        const resolvedPath = enrichGuiPath()
-        ctx.log.child("startup").info("resolved gui PATH", {
-          entries: resolvedPath.split(":").length,
-        })
+        // anything resolves a harness command.
+        //
+        // The probe is kicked asynchronously so it NEVER blocks the Worker's JS thread during
+        // the packaged-GUI startup / first-IPC window. The synchronous `Bun.spawnSync` here was
+        // the single heavyweight native effect on the Worker's hot path right before the
+        // nondeterministic `EXC_BREAKPOINT`/`brk 1` crash on the Worker thread (which survives
+        // the #94/#98 dlopen-retention fixes and the #99 bundled-bun bump). The probe is
+        // memoized and awaited on-demand via `RunGuiDeps.ensureGuiPathResolved` before any
+        // harness is launched, so PATH is always ready by the time a command is resolved — but
+        // never synchronously at startup.
+        void enrichGuiPathAsync()
+          .then((resolvedPath) =>
+            ctx.log.child("startup").info("resolved gui PATH", {
+              entries: resolvedPath.split(":").length,
+            }),
+          )
+          .catch(() => {
+            /* enrichment never rejects, but never let a log write reject the chain */
+          })
 
         // Mark any sessions that were still "running" when the app was previously killed as ended.
         // The CLI must NOT call this: a live GUI proxy's sessions are genuinely running, and a CLI
@@ -99,6 +116,11 @@ export const buildRealDeps = (
           openWindow: () => openWindow(ctx),
           quit: () => process.exit(0),
         })
+      }),
+    ensureGuiPathResolved:
+      overrides.ensureGuiPathResolved ??
+      (async () => {
+        await enrichGuiPathAsync()
       }),
   }
 }

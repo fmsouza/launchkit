@@ -49,6 +49,9 @@ const makeCtx = (
     proxyRunning?: boolean
     runnerOk?: boolean
     nativeHarnessId?: string
+    /** Async hook the tray awaits before `ctx.runner.launch(...)`. When provided, tests use
+     *  `order.push(...)` to assert this resolves before the launch fires. Defaults to a no-op. */
+    ensureGuiPathResolved?: () => Promise<void>
   } = {},
 ): {
   ctx: AppContext
@@ -108,6 +111,9 @@ const makeCtx = (
         }),
       save: async () => ok(undefined),
     },
+    // Default to a no-op so existing tests keep their original behavior; the
+    // PATH-resolved order test overrides this with an order-recording stub.
+    ensureGuiPathResolved: over.ensureGuiPathResolved ?? (async () => {}),
   } as unknown as AppContext
   return { ctx, runnerInputs, sessionInputs }
 }
@@ -242,5 +248,32 @@ describe("mountTray", () => {
     await flushMicrotasks()
 
     expect(runnerInputs).toEqual([])
+  })
+
+  it("awaits ctx.ensureGuiPathResolved before invoking ctx.runner.launch", async () => {
+    // The tray quick-launch path must await the deferred PATH probe before the resolver reads
+    // process.env.PATH — otherwise the probe can race the launch and a fresh GUI app misses
+    // the user's login-shell PATH.
+    const order: string[] = []
+    const { ctx } = makeCtx({
+      harnesses: [harness],
+      ensureGuiPathResolved: async () => {
+        order.push("path-resolved")
+      },
+    })
+    // Wrap runner.launch so it appends to the same ordered array.
+    ;(ctx.runner as unknown as { launch: (input: unknown) => unknown }).launch =
+      (input: unknown) => {
+        order.push("launched")
+        void input
+        return ok({ sessionId: sampleSession.id })
+      }
+    const { deps, click } = captureTray()
+
+    await mountTray(ctx, { openWindow: () => {}, quit: () => {} }, deps)
+    click("launch:claude")
+    await flushMicrotasks()
+
+    expect(order).toEqual(["path-resolved", "launched"])
   })
 })

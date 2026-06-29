@@ -81,6 +81,9 @@ const fakeGuiDeps = (): CreateGuiContextDeps & {
     relaunch: () => {
       calls.relaunched = true
     },
+    ensureGuiPathResolved: async () => {
+      calls.ensureGuiPathResolved = true
+    },
     calls,
   }
 }
@@ -226,5 +229,19 @@ describe("createGuiContext", () => {
     // GUI extension produced a context — the notifier wiring is internal.
     const gui = createGuiContext(shared(), fakeGuiDeps()) as GuiContext
     expect(gui.resetApp).toBeDefined()
+  })
+
+  it("threads ensureGuiPathResolved from the GUI deps onto the returned GuiContext", async () => {
+    // The harness-launch path (IPC `launchHarness` + tray Launch) reads
+    // `ctx.ensureGuiPathResolved()` BEFORE `ctx.runner.launch(...)` to guarantee the deferred
+    // GUI PATH probe has settled by the time `Bun.which(command, { PATH })` runs.
+    // The GuiContext type must carry this hook through to handlers/tray.
+    const deps = fakeGuiDeps()
+    const gui = createGuiContext(shared(), deps) as GuiContext
+
+    expect(typeof gui.ensureGuiPathResolved).toBe("function")
+    // And calling the ctx hook delegates to the injected seam.
+    await gui.ensureGuiPathResolved()
+    expect(deps.calls.ensureGuiPathResolved).toBe(true)
   })
 })

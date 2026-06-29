@@ -55,6 +55,12 @@ export const mountTray = async (
    * registered native driver is skipped (there is no other way to run it).
    */
   const launchById = async (harnessId: string): Promise<void> => {
+    // Guarantee the deferred GUI PATH enrichment has settled BEFORE `ctx.runner.launch(...)`
+    // resolves the harness command. Without this await, a tray quick-launch arriving before
+    // the memoized login-shell probe settles races the probe and may fail with
+    // "failed to resolve harness launch: command not found on PATH".
+    await ctx.ensureGuiPathResolved()
+
     const list = await ctx.registry.list()
     if (!isOk(list)) return
     const harness = list.value.find((h) => String(h.id) === harnessId)
