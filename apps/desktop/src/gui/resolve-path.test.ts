@@ -1,5 +1,10 @@
 import { afterAll, beforeEach, describe, expect, it } from "bun:test"
-import { PATH_SENTINEL_END, PATH_SENTINEL_START } from "@spectrum/platform"
+import {
+  PATH_SENTINEL_END,
+  PATH_SENTINEL_START,
+  detectPlatform,
+  pathDelimiter,
+} from "@spectrum/platform"
 import {
   type ShellPathProbeAsync,
   __resetGuiPathAsyncForTest,
@@ -113,7 +118,11 @@ describe("enrichGuiPathAsync", () => {
     }
     const result = await enrichGuiPathAsync(probe)
     expect(calls).toBe(1)
-    expect(result.split(":")[0]).toBe("/Users/me/.nvm/versions/node/v24/bin")
+    // The enricher uses the host platform's PATH delimiter (`:` on POSIX, `;` on
+    // Windows). Hard-coding `:` here broke Windows CI where the result is `;`-joined.
+    expect(result.split(pathDelimiter(detectPlatform()))[0]).toBe(
+      "/Users/me/.nvm/versions/node/v24/bin",
+    )
     expect(process.env.PATH).toBe(result)
   })
 
