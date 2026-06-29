@@ -302,7 +302,10 @@ describe("createRealGateway", () => {
       stream: true,
     }
     const events: StreamEvent[] = []
-    for await (const e of gw.stream(model, req, { sdkProvider: "ollama" }))
+    for await (const e of gw.stream(model, req, {
+      sdkProvider: "ollama",
+      providerModel: "llama3",
+    }))
       events.push(e)
     expect(seen).toContain("ollama")
   })
