@@ -1,6 +1,6 @@
 {
   "name": "@spectrum/pty",
-  "version": "1.8.0",
+  "version": "1.8.1",
   "dependencies": {
     "@spectrum/logger": "workspace:*",
     "@spectrum/types": "workspace:*",
