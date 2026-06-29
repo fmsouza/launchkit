@@ -398,6 +398,21 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+      - name: Compute previous stable tag
+        id: prev
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          CURRENT="${{ github.ref_name }}"
+          # Stable tags only (exclude canary/prerelease tags, which contain '-').
+          STABLE=$(gh release list --limit 200 --json tagName --jq \
+            '[.[].tagName | select(test("^v[0-9]+\\.[0-9]+\\.[0-9]+$"))] | .[]')
+          # Add current, semver-sort, take the tag immediately preceding current.
+          START_TAG=$(printf '%s\n%s\n' "$STABLE" "$CURRENT" | grep -v '^$' \
+            | sort -V -u | grep -B1 -x "$CURRENT" | head -n1)
+          # If current is the lowest (first-ever final), there is no predecessor.
+          if [ "$START_TAG" = "$CURRENT" ]; then START_TAG=""; fi
+          echo "start-tag=${START_TAG}" >> "$GITHUB_OUTPUT"
       - name: Download CLI artifacts
         uses: actions/download-artifact@v8
         with:
@@ -421,10 +436,18 @@ jobs:
       - name: Create release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          START_TAG: ${{ steps.prev.outputs.start-tag }}
         run: |
+          # Keep the existing context line as a preamble; --generate-notes appends the
+          # changelog from the previous stable tag to this release.
+          NOTES_START=()
+          if [ -n "${START_TAG}" ]; then
+            NOTES_START=(--notes-start-tag "${START_TAG}")
+          fi
           gh release create ${{ github.ref_name }} \
             --title "${{ github.ref_name }}" \
             --notes "Spectrum ${{ github.ref_name }} (${{ github.sha }})." \
+            --generate-notes "${NOTES_START[@]}" \
             --target ${{ github.sha }} \
             release-assets/*
 
