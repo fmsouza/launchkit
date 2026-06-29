@@ -172,6 +172,7 @@
         "@spectrum/agent-events": "workspace:*",
         "@spectrum/driver-runtime": "workspace:*",
         "@spectrum/logger": "workspace:*",
+        "@spectrum/providers": "workspace:*",
         "@spectrum/types": "workspace:*",
         "@spectrum/utils": "workspace:*",
         "zod": "catalog:",

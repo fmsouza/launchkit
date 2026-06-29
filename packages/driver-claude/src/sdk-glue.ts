@@ -24,7 +24,7 @@ import {
   mapRefusalFallbackPayload,
 } from "./refusal-fallback"
 import type { SdkMessageLike, SdkResultMessage } from "./sdk-types"
-import { toClaudeThinkingBudget } from "./thinking-effort"
+import { toClaudeThinking } from "./thinking-effort"
 
 /** Default timer implementation backed by global setTimeout/clearTimeout. */
 const defaultSetTimer = (fn: () => void, ms: number): (() => void) => {
@@ -79,9 +79,9 @@ export interface SdkOptions {
   readonly pathToClaudeCodeExecutable?: string
   readonly resume?: string
   readonly thinking?: {
-    readonly type: "enabled"
-    readonly budgetTokens: number
+    readonly type: "adaptive"
   }
+  readonly effort?: "low" | "medium" | "high" | "max"
   readonly canUseTool?: (
     toolName: string,
     input: Record<string, unknown>,
@@ -290,11 +290,11 @@ export const createClaudeAdapter = (deps: {
       // Per-launch first-message tracking for the "log once" behaviour.
       let firstMsgLogged = false
 
-      // Resolve the extended-thinking budget once. null (the "off" tier, or no
-      // effort set) omits the `thinking` option entirely so thinking stays disabled.
-      const thinkingBudget =
+      // Resolve the thinking + effort options once, gated by the active model's capability.
+      // null omits both entirely (off tier, or a model with no extended thinking).
+      const thinkingOpts =
         currentEffort !== undefined
-          ? toClaudeThinkingBudget(currentEffort)
+          ? toClaudeThinking(currentEffort, currentModel)
           : null
 
       const query = sdk.query({
@@ -303,13 +303,8 @@ export const createClaudeAdapter = (deps: {
           cwd: input.cwd,
           env: { ...(deps.baseEnv?.() ?? {}), ...currentEnv },
           ...(currentModel !== undefined ? { model: currentModel } : {}),
-          ...(thinkingBudget !== null
-            ? {
-                thinking: {
-                  type: "enabled" as const,
-                  budgetTokens: thinkingBudget,
-                },
-              }
+          ...(thinkingOpts !== null
+            ? { thinking: thinkingOpts.thinking, effort: thinkingOpts.effort }
             : {}),
           abortController: abort,
           permissionMode: currentMode,
