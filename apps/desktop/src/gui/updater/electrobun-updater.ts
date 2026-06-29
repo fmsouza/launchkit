@@ -1,3 +1,6 @@
+import { homedir } from "node:os"
+import { dirname, join, resolve } from "node:path"
+import { detectPlatform } from "@spectrum/platform"
 import { type Result, err, ok } from "@spectrum/utils"
 import type {
   Channel,
@@ -28,6 +31,34 @@ export interface UpdaterEngine {
   localInfo: { version(): Promise<string> }
 }
 
+/** Options passed to the injected `spawn` seam (mirrors the `Bun.spawn` subset we use). */
+export interface RelaunchSpawnOptions {
+  readonly detached?: boolean
+  readonly stdio?: readonly ("ignore" | "pipe")[]
+}
+
+/** OS the relaunch runs on (selects the per-OS spawn command). */
+export type RelaunchPlatform = "macos" | "linux" | "windows"
+
+/**
+ * Injected relaunch primitives. Production wires `Bun.spawn`, the running app
+ * bundle path (mirroring `Updater.applyUpdate`'s path computation), `quit` from
+ * `electrobun/bun`, and the live OS/pid. Tests inject fakes so the per-OS spawn
+ * command + quit ordering is unit-testable without native FFI.
+ */
+export interface RelaunchDeps {
+  /** Detached spawn of a command (the relaunch script / launcher). */
+  readonly spawn: (args: string[], opts?: RelaunchSpawnOptions) => void
+  /** The running app bundle path to relaunch (e.g. `/Apps/Spectrum.app`). */
+  readonly appBundlePath: () => string
+  /** Graceful quit (closes windows + native cleanup + exit). */
+  readonly quit: () => void
+  /** The OS we're relaunching on. */
+  readonly platform: RelaunchPlatform
+  /** The current process pid (macOS waits for it to exit before `open`). */
+  readonly pid: number
+}
+
 export interface ElectrobunUpdaterDeps {
   /** Resolve the engine. Production lazily imports Electrobun; tests inject a fake. */
   readonly loadEngine: () => Promise<UpdaterEngine>
@@ -36,7 +67,20 @@ export interface ElectrobunUpdaterDeps {
     read: () => Promise<string>
     write: (contents: string) => Promise<void>
   }
+  /** Relaunch primitives. Injected for tests; production wires Bun.spawn + quit. */
+  readonly relaunchDeps?: RelaunchDeps
 }
+
+/**
+ * The on-disk bundle `name` for a channel — the value baked into version.json and
+ * the base of the full-bundle tarball filename Electrobun requests. Stable is the
+ * plain app name; non-stable channels suffix it (`Spectrum-canary`). Mirrors
+ * Electrobun's `getAppFileName` (`dist/api/shared/naming.ts`) so the URL the
+ * running app builds (`${baseUrl}/${prefix}-${tarballName}`) matches a published
+ * asset. Pure + unit-tested so the mapping is explicit, not a magic string inline.
+ */
+export const channelBundleName = (channel: Channel): string =>
+  channel === "stable" ? "Spectrum" : `Spectrum-${channel}`
 
 /** Production loader: lazy-import so `bun test` never loads native FFI. */
 const realLoadEngine = async (): Promise<UpdaterEngine> => {
@@ -51,6 +95,54 @@ const realVersionFile = {
   read: (): Promise<string> => Bun.file("../Resources/version.json").text(),
   write: (contents: string): Promise<void> =>
     Bun.write("../Resources/version.json", contents).then(() => undefined),
+}
+
+/**
+ * Production relaunch primitives. The running app bundle path mirrors
+ * `Updater.applyUpdate`'s computation (Updater.ts): macOS resolves the .app from
+ * the executable's bundle-relative path; Linux/Windows run from the app-data `app`
+ * dir's launcher binary. `quit` is Electrobun's graceful quit (Utils.quit, native
+ * cleanup + exit). `platform` maps `@spectrum/platform`'s detectPlatform; `pid` is
+ * the live pid.
+ */
+const realRelaunchDeps: RelaunchDeps = {
+  spawn: (args, opts): void => {
+    // Detached spawn so the child survives our quit. `stdio` silenced.
+    const spawnOpts: Parameters<typeof Bun.spawn>[1] = {
+      detached: opts?.detached ?? false,
+      stdio: ["ignore", "ignore", "ignore"],
+    }
+    void Bun.spawn(args, spawnOpts)
+  },
+  appBundlePath: (): string => {
+    const platform = detectPlatform()
+    if (platform === "macos") {
+      // Contents/MacOS/<bun> → Contents → <Bundle>.app
+      return resolve(dirname(process.execPath), "..", "..")
+    }
+    // Linux/Windows: the app lives in {appData}/app and launches via bin/launcher.
+    return join(
+      homedir(),
+      platform === "linux" ? ".local/share" : "AppData/Local",
+      "Spectrum",
+      "app",
+      "bin",
+      platform === "linux" ? "launcher" : "launcher.exe",
+    )
+  },
+  quit: (): void => {
+    // Lazy import so `bun test` never loads native FFI.
+    void import("electrobun/bun")
+      .then(({ Utils }) => Utils.quit())
+      .catch(() => {
+        /* best-effort: a quit failure leaves the process running — the user can restart manually */
+      })
+  },
+  platform: ((): RelaunchPlatform => {
+    const p = detectPlatform()
+    return p === "macos" || p === "linux" || p === "windows" ? p : "macos"
+  })(),
+  pid: process.pid,
 }
 
 export const createElectrobunUpdater = (
@@ -174,17 +266,39 @@ export const createElectrobunUpdater = (
     setChannel: async (
       channel: Channel,
     ): Promise<Result<void, UpdaterError>> => {
-      // Electrobun derives the active channel from the bundle's Resources/version.json,
+      // Electrobun derives the active channel AND the full-bundle download URL from
+      // the bundle's Resources/version.json (`localInfo.channel` + `localInfo.name`),
       // which Updater caches for the process lifetime (no public cache-clear). So a
       // channel switch is written to that file and takes effect on the NEXT app
-      // restart. Best-effort: a read-only bundle simply keeps the prior channel until
-      // a writable reinstall — the user's preference is still persisted in config by
-      // the handler, so we never fail the toggle here.
+      // restart. The catch: a stable bundle is named "Spectrum" and a canary bundle
+      // "Spectrum-canary"; Electrobun builds the tarball URL as
+      // `${baseUrl}/${channel-prefix}-${name}.app.tar.zst`, so flipping `channel` alone
+      // leaves `name="Spectrum"` and the running app requests a canary tarball that was
+      // never published under that name (404) — the download silently fails. A
+      // CROSS-CHANNEL switch therefore rewrites BOTH `channel` and `name` to the
+      // target channel's bundle name, so after restart the app requests the real asset.
+      // A SAME-CHANNEL switch (canary→canary) leaves `name` untouched — it's already
+      // correct; only the config preference changes. Best-effort: a read-only bundle
+      // swallows the write error (preference still persists in config via the handler).
       const vf = deps.versionFile ?? realVersionFile
       try {
         const raw = await vf.read()
         const parsed = JSON.parse(raw) as Record<string, unknown>
+        // The current channel, read before we overwrite it. Only a valid Channel
+        // counts as a real "from" — a dev build (or missing field) has no bundle
+        // name to migrate, so leave name untouched and just persist the preference.
+        const fromChannel =
+          parsed.channel === "stable" || parsed.channel === "canary"
+            ? (parsed.channel as Channel)
+            : undefined
         parsed.channel = channel
+        // Rewrite name only on a real cross-channel switch (stable↔canary). A
+        // same-channel switch keeps the existing (already-correct) name; a dev
+        // build (fromChannel undefined) keeps "Spectrum-dev" — channel is a
+        // preference there, not a migration (dev is update-disabled).
+        if (fromChannel !== undefined && fromChannel !== channel) {
+          parsed.name = channelBundleName(channel)
+        }
         await vf.write(JSON.stringify(parsed, null, 2))
       } catch {
         // swallow — preference persists in config; engine picks it up after a writable reinstall
@@ -204,6 +318,41 @@ export const createElectrobunUpdater = (
           : undefined
       } catch {
         return undefined
+      }
+    },
+
+    relaunch: async (): Promise<Result<void, UpdaterError>> => {
+      // Spawn the running app detached, then quit. The fresh process reloads
+      // version.json (with the rewritten channel+name) so Electrobun's cached
+      // localInfo is reset and the new channel's feed/URLs take effect. Mirrors
+      // Updater.applyUpdate's per-OS relaunch tail (Updater.ts:1067-1097).
+      const rd = deps.relaunchDeps ?? realRelaunchDeps
+      try {
+        const appPath = rd.appBundlePath()
+        if (rd.platform === "macos") {
+          // macOS `open` on a running app just activates it, so wait for this pid
+          // to exit before reopening (the detached shell survives our quit).
+          rd.spawn(
+            [
+              "sh",
+              "-c",
+              `while kill -0 ${rd.pid} 2>/dev/null; do sleep 0.5; done; sleep 1; open "${appPath}"`,
+            ],
+            { detached: true, stdio: ["ignore", "ignore", "ignore"] },
+          )
+        } else if (rd.platform === "linux") {
+          // Linux: launch the launcher binary inside the app directory.
+          rd.spawn(["sh", "-c", `"${appPath}" &`], { detached: true })
+        } else {
+          // Windows: spawn the launcher then quit (no file replacement here, so
+          // the scheduled-task .bat applyUpdate uses isn't needed for a relaunch).
+          rd.spawn([appPath], { detached: true })
+        }
+        // Resolve ok before quitting so the IPC RPC returns a success result.
+        rd.quit()
+        return ok(undefined)
+      } catch (e) {
+        return err({ kind: "channel-switch-failed", detail: errorText(e) })
       }
     },
   }

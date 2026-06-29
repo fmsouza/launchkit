@@ -1849,6 +1849,71 @@ describe("createIpcHandlers update handlers", () => {
     expect(result.channel).toBe("canary")
   })
 
+  it("setUpdateChannel relaunches (and skips the post-switch check) on a cross-channel switch from a packaged build", async () => {
+    // The fix: a stable→canary switch rewrites version.json (channel+name) and
+    // relaunches so Electrobun's cached localInfo resets. The post-switch check
+    // would run against the stale cached channel, so it is skipped on relaunch.
+    const fakeUpdater = createFakeUpdater({
+      currentVersion: "1.8.0",
+      latest: "1.8.0-canary.2",
+      latestHash: "canaryHash",
+      buildChannel: "stable",
+    })
+    const { ctx, saves } = makeCtx({
+      updater: fakeUpdater,
+      updateChannel: "stable",
+    })
+    const handlers = createIpcHandlers(ctx)
+
+    await handlers.setUpdateChannel({ channel: "canary" })
+
+    expect(fakeUpdater.lastChannel).toBe("canary")
+    expect(saves.at(-1)?.settings.updateChannel).toBe("canary")
+    // Cross-channel (stable→canary) ⇒ relaunch fired, post-switch check NOT fired.
+    expect(fakeUpdater.relaunchCalls).toBe(1)
+    expect(fakeUpdater.checkCalls).toBe(0)
+  })
+
+  it("setUpdateChannel does NOT relaunch on a same-channel switch (canary→canary)", async () => {
+    const fakeUpdater = createFakeUpdater({
+      currentVersion: "1.8.0-canary.2",
+      latest: undefined,
+      buildChannel: "canary",
+    })
+    const { ctx } = makeCtx({
+      updater: fakeUpdater,
+      updateChannel: "canary",
+    })
+    const handlers = createIpcHandlers(ctx)
+
+    await handlers.setUpdateChannel({ channel: "canary" })
+
+    // Same channel ⇒ no relaunch; the post-switch re-check still runs so the
+    // returned state is fresh.
+    expect(fakeUpdater.relaunchCalls).toBe(0)
+    expect(fakeUpdater.checkCalls).toBe(1)
+  })
+
+  it("setUpdateChannel does NOT relaunch when the build channel is unknown (dev build)", async () => {
+    // A dev build has no bundle name to migrate (channel: "dev") — the switch is
+    // treated as a preference persist, not a migration. Dev is update-disabled.
+    const fakeUpdater = createFakeUpdater({
+      currentVersion: "1.8.0",
+      buildChannel: undefined,
+    })
+    const { ctx, saves } = makeCtx({
+      updater: fakeUpdater,
+      updateChannel: "stable",
+    })
+    const handlers = createIpcHandlers(ctx)
+
+    await handlers.setUpdateChannel({ channel: "canary" })
+
+    expect(saves.at(-1)?.settings.updateChannel).toBe("canary")
+    expect(fakeUpdater.relaunchCalls).toBe(0)
+    expect(fakeUpdater.checkCalls).toBe(1)
+  })
+
   it("applyUpdate returns null and drives the fake updater to phase applying", async () => {
     const updater = createFakeUpdater({
       currentVersion: "1.0.0",

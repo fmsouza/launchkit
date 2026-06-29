@@ -602,6 +602,16 @@ export const createIpcHandlers = (ctx: GuiContext): IpcHandlers => {
 
     setUpdateChannel: async ({ channel }: { channel: Channel }) => {
       const config = await loadConfig()
+      // Capture the build's CURRENT channel BEFORE setChannel rewrites version.json
+      // (setChannel also rewrites `name` on a cross-channel switch — see the adapter).
+      // A cross-channel switch from a PACKAGED build (stable↔canary) is a migration:
+      // Electrobun caches localInfo for the process lifetime, so the rewritten
+      // version.json only takes effect after a restart. Relaunch the app instead of
+      // re-checking (the post-switch check would query the STALE cached channel and
+      // report a stable update against the canary UI — the "download fails, button
+      // reappears" bug). The relaunch is fire-and-forget like applyUpdate; the
+      // returned state is the pre-switch snapshot (the connection dies on quit).
+      const fromChannel = await ctx.updater.getBuildChannel()
       const saved = await ctx.config.save({
         ...config,
         settings: { ...config.settings, updateChannel: channel },
@@ -609,9 +619,18 @@ export const createIpcHandlers = (ctx: GuiContext): IpcHandlers => {
       if (!isOk(saved)) return fail("could not persist update channel")
       const switched = await ctx.updater.setChannel(channel)
       if (!isOk(switched)) return fail("could not switch update channel")
-      // Re-check so the returned state reflects the latest status. NOTE: the engine
-      // still follows the pre-restart channel (version.json is cached for the process),
-      // so this queries the current channel until Spectrum restarts — see setChannel.
+      // Cross-channel migration: relaunch so the fresh process loads the rewritten
+      // version.json. Skip the re-check (it would hit the stale cached feed). A
+      // same-channel switch, or an unknown build channel (dev), is a preference
+      // persist — re-check and return fresh state, no relaunch.
+      if (fromChannel !== undefined && fromChannel !== channel) {
+        const relaunched = await ctx.updater.relaunch()
+        if (!isOk(relaunched))
+          return fail("could not restart to switch channel")
+        // The app is quitting; return the pre-switch state (the webview won't
+        // observe it — the process exits mid-RPC like applyUpdate).
+        return buildUpdateState()
+      }
       await ctx.updater.check(channel)
       const state = await buildUpdateState()
       void ctx.pushUpdateState()

@@ -24,6 +24,10 @@ export interface FakeUpdaterOptions {
 /** A test double exposing the recorded channel for assertions. */
 export interface FakeUpdater extends UpdaterAdapter {
   lastChannel: Channel | null
+  /** Number of times `relaunch()` was called. */
+  relaunchCalls: number
+  /** Number of times `check()` was called. */
+  checkCalls: number
 }
 
 export const createFakeUpdater = (opts: FakeUpdaterOptions): FakeUpdater => {
@@ -43,8 +47,11 @@ export const createFakeUpdater = (opts: FakeUpdaterOptions): FakeUpdater => {
 
   const updater: FakeUpdater = {
     lastChannel: null,
+    relaunchCalls: 0,
+    checkCalls: 0,
     getRaw: () => raw,
     check: async (): Promise<Result<void, UpdaterError>> => {
+      updater.checkCalls++
       if (opts.failCheck !== undefined) {
         raw = { ...raw, phase: "error", error: opts.failCheck }
         return err(fail(opts.failCheck))
@@ -81,6 +88,10 @@ export const createFakeUpdater = (opts: FakeUpdaterOptions): FakeUpdater => {
     // channel, matching how setChannel rewrites version.json.
     getBuildChannel: async (): Promise<Channel | undefined> =>
       updater.lastChannel ?? opts.buildChannel,
+    relaunch: async (): Promise<Result<void, UpdaterError>> => {
+      updater.relaunchCalls++
+      return ok(undefined)
+    },
   }
   return updater
 }

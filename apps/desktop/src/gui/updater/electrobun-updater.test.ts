@@ -259,4 +259,143 @@ describe("createElectrobunUpdater", () => {
     const r = await u.setChannel("canary")
     expect(r.ok).toBe(true)
   })
+
+  // ── Cross-channel migration: rewrite BOTH channel + name ───────────────────
+  // The bug: setChannel rewrote only `channel`, leaving the stable bundle's
+  // name "Spectrum". After restart, Electrobun builds the full-bundle URL from
+  // localInfo.name → `canary-<os>-<arch>-Spectrum.app.tar.zst`, which 404s (the
+  // canary asset is `Spectrum-canary.app.tar.zst`). Rewriting `name` to the
+  // target channel's bundle name makes the running app request the real asset.
+
+  it("setChannel rewrites name alongside channel on a cross-channel switch (stable→canary)", async () => {
+    const initialJson = JSON.stringify({
+      identifier: "dev.spectrum.app",
+      channel: "stable",
+      version: "1.8.0",
+      hash: "stableHash",
+      baseUrl: "u",
+      name: "Spectrum",
+    })
+    let written: string | null = null
+    const u = createElectrobunUpdater({
+      loadEngine: async () => baseEngine(),
+      versionFile: {
+        read: async () => initialJson,
+        write: async (contents) => {
+          written = contents
+        },
+      },
+    })
+    const r = await u.setChannel("canary")
+    expect(r.ok).toBe(true)
+    const parsed = JSON.parse(written ?? "") as Record<string, unknown>
+    expect(parsed.channel).toBe("canary")
+    // The canary bundle is named "Spectrum-canary" (getAppFileName), so the
+    // post-restart app requests `...-Spectrum-canary.app.tar.zst` (HTTP 200),
+    // not the 404 `...-Spectrum.app.tar.zst`.
+    expect(parsed.name).toBe("Spectrum-canary")
+  })
+
+  it("setChannel rewrites name back to Spectrum on a canary→stable switch", async () => {
+    const initialJson = JSON.stringify({
+      identifier: "dev.spectrum.app",
+      channel: "canary",
+      version: "1.8.0-canary.2",
+      hash: "canaryHash",
+      baseUrl: "u",
+      name: "Spectrum-canary",
+    })
+    let written: string | null = null
+    const u = createElectrobunUpdater({
+      loadEngine: async () => baseEngine(),
+      versionFile: {
+        read: async () => initialJson,
+        write: async (contents) => {
+          written = contents
+        },
+      },
+    })
+    await u.setChannel("stable")
+    const parsed = JSON.parse(written ?? "") as Record<string, unknown>
+    expect(parsed.channel).toBe("stable")
+    expect(parsed.name).toBe("Spectrum")
+  })
+
+  it("setChannel does not touch name on a same-channel switch (canary→canary)", async () => {
+    // Idempotent: a canary build reaffirming canary must not rewrite name
+    // (it's already correct) — only the config preference changes.
+    const initialJson = JSON.stringify({
+      identifier: "dev.spectrum.app",
+      channel: "canary",
+      version: "1.8.0-canary.2",
+      hash: "canaryHash",
+      baseUrl: "u",
+      name: "Spectrum-canary",
+    })
+    let written: string | null = null
+    const u = createElectrobunUpdater({
+      loadEngine: async () => baseEngine(),
+      versionFile: {
+        read: async () => initialJson,
+        write: async (contents) => {
+          written = contents
+        },
+      },
+    })
+    await u.setChannel("canary")
+    const parsed = JSON.parse(written ?? "") as Record<string, unknown>
+    expect(parsed.channel).toBe("canary")
+    expect(parsed.name).toBe("Spectrum-canary")
+  })
+
+  // ── relaunch: detached per-OS restart so a channel switch takes effect ──────
+  // Electrobun caches localInfo for the process lifetime (no public cache-clear),
+  // so the rewritten version.json only takes effect after a restart. relaunch()
+  // spawns the running app bundle detached, then quits — mirroring Updater.applyUpdate.
+
+  it("relaunch spawns the app bundle path detached and quits, resolving ok", async () => {
+    const spawns: { args: string[]; detached: boolean }[] = []
+    let quitCalled = false
+    const u = createElectrobunUpdater({
+      loadEngine: async () => baseEngine(),
+      relaunchDeps: {
+        spawn: (args, opts) => {
+          spawns.push({ args, detached: opts?.detached === true })
+        },
+        appBundlePath: () => "/Apps/Spectrum.app",
+        quit: () => {
+          quitCalled = true
+        },
+        platform: "macos",
+        pid: 4321,
+      },
+    })
+    const r = await u.relaunch()
+    expect(r.ok).toBe(true)
+    expect(spawns.length).toBe(1)
+    expect(spawns[0]?.detached).toBe(true)
+    // macOS relaunch waits for the pid to exit then `open`s the app bundle.
+    expect(spawns[0]?.args[0]).toBe("sh")
+    expect(JSON.stringify(spawns[0]?.args)).toContain("/Apps/Spectrum.app")
+    expect(quitCalled).toBe(true)
+  })
+
+  it("relaunch returns a channel-switch-failed error when spawn throws", async () => {
+    const u = createElectrobunUpdater({
+      loadEngine: async () => baseEngine(),
+      relaunchDeps: {
+        spawn: () => {
+          throw new Error("spawn failed")
+        },
+        appBundlePath: () => "/Apps/Spectrum.app",
+        quit: () => {},
+        platform: "macos",
+        pid: 4321,
+      },
+    })
+    const r = await u.relaunch()
+    expect(r.ok).toBe(false)
+    if (r.ok) return
+    expect(r.error.kind).toBe("channel-switch-failed")
+  })
 })
