@@ -24,3 +24,7 @@ export { ALL_TIERS } from "./reasoning-types"
 export type { ReasoningShape, ReasoningSupport } from "./reasoning-types"
 export { resolveReasoning } from "./resolve-reasoning"
 export { clampTier } from "./clamp-tier"
+export {
+  buildProviderOptions,
+  reasoningDisablesTemperature,
+} from "./build-provider-options"
