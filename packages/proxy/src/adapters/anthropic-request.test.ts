@@ -387,4 +387,25 @@ describe("parseAnthropicRequest", () => {
       output: "captured",
     })
   })
+
+  it("maps an inbound enabled-thinking budget to a canonical tier", () => {
+    const r = parseAnthropicRequest({
+      model: "claude-sonnet-4-6",
+      max_tokens: 32000,
+      messages: [{ role: "user", content: "hi" }],
+      thinking: { type: "enabled", budget_tokens: 8192 },
+    })
+    expect(r.ok).toBe(true)
+    if (r.ok) expect(r.value.thinkingEffort).toBe("medium")
+  })
+
+  it("leaves thinkingEffort undefined when no thinking block is present", () => {
+    const r = parseAnthropicRequest({
+      model: "claude-sonnet-4-6",
+      max_tokens: 1000,
+      messages: [{ role: "user", content: "hi" }],
+    })
+    expect(r.ok).toBe(true)
+    if (r.ok) expect(r.value.thinkingEffort).toBeUndefined()
+  })
 })
