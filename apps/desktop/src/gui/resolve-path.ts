@@ -51,41 +51,6 @@ export const resolveGuiPath = (deps: ResolveGuiPathDeps): string => {
   return mergePathEntries(deps.basePath, additions, deps.platform)
 }
 
-/** Real probe: a synchronous `Bun.spawnSync` so PATH is ready before any launch. */
-const realProbeShellPath: ShellPathProbe = (command, args) => {
-  try {
-    const r = Bun.spawnSync([command, ...args], {
-      stdout: "pipe",
-      stderr: "pipe",
-    })
-    if (!r.success) return null
-    return r.stdout.toString()
-  } catch {
-    return null
-  }
-}
-
-/**
- * GUI startup effect: resolve the user's real PATH and write it to `process.env.PATH`
- * so the harness command resolver (`Bun.which`) and spawned child processes can find
- * CLIs the Finder/Dock-inherited PATH omits. Returns the resolved PATH. GUI-only — the
- * CLI already inherits the user's full terminal PATH, and this would add shell-spawn
- * latency to its cold start. The probe is injectable for tests.
- */
-export const enrichGuiPath = (
-  probeShellPath: ShellPathProbe = realProbeShellPath,
-): string => {
-  const next = resolveGuiPath({
-    platform: detectPlatform(),
-    homeDir: homedir(),
-    basePath: process.env.PATH,
-    shell: process.env.SHELL,
-    probeShellPath,
-  })
-  process.env.PATH = next
-  return next
-}
-
 /** Async variant of {@link ShellPathProbe}: resolves to stdout text or null. The async enricher
  * wraps every call in try/catch so a rejected probe never propagates as a rejection. */
 export type ShellPathProbeAsync = (
