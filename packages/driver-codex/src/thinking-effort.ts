@@ -1,20 +1,28 @@
 import type { ThinkingEffort } from "@spectrum/agent-events"
+import { clampTier } from "@spectrum/providers"
+import type { ReasoningSupport } from "@spectrum/providers"
 import type { ReasoningEffort } from "./bindings/ReasoningEffort"
 
-/** Map the canonical thinking-effort tier onto Codex's native reasoning effort. PURE. */
-export const toCodexReasoningEffort = (e: ThinkingEffort): ReasoningEffort => {
-  switch (e) {
-    case "off":
-      return "none"
-    case "minimal":
-      return "minimal"
-    case "low":
-      return "low"
-    case "medium":
-      return "medium"
-    case "high":
-      return "high"
-    case "max":
-      return "xhigh"
-  }
+// Codex models accept the full effort range; clamp guards against future model-specific limits.
+const CODEX_SUPPORT: ReasoningSupport = {
+  shape: "codex-effort",
+  supportedTiers: ["off", "minimal", "low", "medium", "high", "max"],
+}
+
+const MAP: Record<Exclude<ThinkingEffort, "off">, ReasoningEffort> = {
+  minimal: "minimal",
+  low: "low",
+  medium: "medium",
+  high: "high",
+  max: "xhigh",
+}
+
+/** Map the canonical tier onto Codex reasoning effort, clamped to supported tiers. undefined = omit. */
+export const toCodexReasoningEffort = (
+  effort: ThinkingEffort,
+  _modelId: string | undefined,
+): ReasoningEffort | undefined => {
+  const tier = clampTier(CODEX_SUPPORT, effort)
+  if (tier === undefined || tier === "off") return undefined
+  return MAP[tier]
 }

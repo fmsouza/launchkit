@@ -1,6 +1,7 @@
 import type { SdkProvider } from "@spectrum/types"
 import { SdkProviderSchema } from "@spectrum/types"
 import { type ZodTypeAny, z } from "zod"
+import type { ReasoningSupport } from "./reasoning-types"
 
 /** A non-secret, declarative form field for a provider's config. */
 export const ConfigFieldSpecSchema = z
@@ -97,6 +98,8 @@ export type ProviderDescriptor = {
   readonly configSchema: ZodTypeAny
   readonly sdkMapping: SdkMapping
   readonly discovery: DiscoverySpec
+  /** Default reasoning capability for the provider (refined per-model by resolveReasoning). */
+  readonly reasoning: ReasoningSupport
 }
 
 /** Error returned by `validateProviderConfig`. A structural subset of proxy's `ProxyError`. */

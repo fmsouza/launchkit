@@ -11,6 +11,7 @@
     "test": "bun test"
   },
   "dependencies": {
+    "@spectrum/agent-events": "workspace:*",
     "@spectrum/types": "workspace:*",
     "@spectrum/utils": "workspace:*",
     "zod": "catalog:"

@@ -1,3 +1,4 @@
+import type { ThinkingEffort } from "@spectrum/agent-events"
 import { type Result, err, ok } from "@spectrum/utils"
 import { z } from "zod"
 import type {
@@ -7,6 +8,7 @@ import type {
   NormalizedTool,
   ProxyError,
 } from "../types"
+import { effortStringToTier } from "./reasoning-effort"
 
 // content may be a string or an array of blocks; extract text from text
 // blocks and ignore the rest (mirrors the Anthropic inbound adapter).
@@ -72,6 +74,7 @@ const OpenAIBody = z.object({
   stream: z.boolean().optional(),
   max_tokens: z.number().int().positive().optional(),
   temperature: z.number().optional(),
+  reasoning_effort: z.string().optional(),
   tools: z.array(ToolDef).optional(),
   messages: z.array(Message).min(1),
 })
@@ -191,6 +194,10 @@ export const parseOpenAIRequest = (
     ...(b.max_tokens !== undefined ? { maxTokens: b.max_tokens } : {}),
     ...(b.temperature !== undefined ? { temperature: b.temperature } : {}),
     ...(tools.length > 0 ? { tools } : {}),
+    ...((): { thinkingEffort?: ThinkingEffort } => {
+      const t = effortStringToTier(b.reasoning_effort)
+      return t !== undefined ? { thinkingEffort: t } : {}
+    })(),
     stream: b.stream ?? false,
     messages,
   })

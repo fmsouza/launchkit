@@ -5,6 +5,7 @@ import type { NormalizedRequest, StreamEvent } from "./types"
 /** Per-request context the gateway uses to pick provider-aware behavior. */
 export interface StreamContext {
   readonly sdkProvider: SdkProvider
+  readonly providerModel: string
 }
 
 export interface LanguageModelGateway {

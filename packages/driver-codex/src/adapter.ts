@@ -127,6 +127,18 @@ const mergedEnv = (
   return out
 }
 
+/** Return `{ effort: <value> }` when the effort is defined and maps to a supported tier; `{}` otherwise. */
+const effortField = (
+  effort: ThinkingEffort | undefined,
+  modelId: string | undefined,
+):
+  | { effort: ReturnType<typeof toCodexReasoningEffort> }
+  | Record<never, never> => {
+  if (effort === undefined) return {}
+  const e = toCodexReasoningEffort(effort, modelId)
+  return e !== undefined ? { effort: e } : {}
+}
+
 /**
  * Build the Codex `DriverAdapter`. `start` spawns `codex app-server` (behind the injected transport),
  * runs the `initialize`→`initialized`→`thread/start` handshake, pumps notifications through
@@ -277,9 +289,7 @@ export const createCodexAdapter = (
           input: [textInput(input.initialPrompt)],
           ...(model !== undefined ? { model } : {}),
           ...toCodexTurnPolicy(mode),
-          ...(currentEffort !== undefined
-            ? { effort: toCodexReasoningEffort(currentEffort) }
-            : {}),
+          ...effortField(currentEffort, model),
         })
         .catch((err: unknown) => {
           ctx.emit({
@@ -306,9 +316,7 @@ export const createCodexAdapter = (
                 input: [textInput(text)],
                 ...(model !== undefined ? { model } : {}),
                 ...toCodexTurnPolicy(mode),
-                ...(currentEffort !== undefined
-                  ? { effort: toCodexReasoningEffort(currentEffort) }
-                  : {}),
+                ...effortField(currentEffort, model),
               })
         void turn.catch((err: unknown) => {
           ctx.emit({

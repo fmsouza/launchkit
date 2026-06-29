@@ -1427,7 +1427,8 @@ describe("createClaudeAdapter", () => {
     const adapter = createClaudeAdapter({ loadSdk: async () => fake.sdk })
     await adapter.start({ ...input, thinkingEffort: "medium" }, makeCtx([], []))
     const opts = fake.capturedOptions()
-    expect(opts.thinking).toEqual({ type: "enabled", budgetTokens: 8192 })
+    expect(opts.thinking).toEqual({ type: "adaptive" })
+    expect(opts.effort).toBe("medium")
   })
 
   it("omits the thinking option when input.thinkingEffort is off", async () => {
@@ -1466,10 +1467,8 @@ describe("createClaudeAdapter", () => {
     // Two query() calls: the original and the relaunched one.
     expect(queries).toHaveLength(2)
     // Second call carries the new thinking option and the captured session id (resume).
-    expect(queries[1]?.options?.thinking).toEqual({
-      type: "enabled",
-      budgetTokens: 16384,
-    })
+    expect(queries[1]?.options?.thinking).toEqual({ type: "adaptive" })
+    expect(queries[1]?.options?.effort).toBe("high")
     expect(queries[1]?.options?.resume).toBe("sess_think")
   })
 

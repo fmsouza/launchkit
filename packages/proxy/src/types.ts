@@ -1,3 +1,4 @@
+import { ThinkingEffortSchema } from "@spectrum/agent-events"
 import { z } from "zod"
 
 /**
@@ -57,6 +58,7 @@ export const NormalizedRequestSchema = z
     tools: z.array(NormalizedToolSchema).optional(),
     maxTokens: z.number().int().positive().optional(),
     temperature: z.number().min(0).max(2).optional(),
+    thinkingEffort: ThinkingEffortSchema.optional(),
     stream: z.boolean(),
   })
   .strict()

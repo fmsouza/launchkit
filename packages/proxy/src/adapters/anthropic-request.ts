@@ -1,3 +1,4 @@
+import type { ThinkingEffort } from "@spectrum/agent-events"
 import { type Result, err, ok } from "@spectrum/utils"
 import { z } from "zod"
 import type {
@@ -62,6 +63,12 @@ const AnthropicBody = z.object({
   temperature: z.number().optional(),
   stream: z.boolean().optional(),
   tools: z.array(ToolDef).optional(),
+  thinking: z
+    .object({
+      type: z.string(),
+      budget_tokens: z.number().int().positive().optional(),
+    })
+    .optional(),
   messages: z
     .array(
       z.object({
@@ -121,6 +128,22 @@ const mapTools = (
     })
   }
   return mapped
+}
+
+// Map an inbound Anthropic thinking block back to a canonical tier. budget_tokens buckets
+// mirror the driver's tier→budget mapping; an adaptive block with no budget defaults to medium.
+const thinkingToTier = (
+  t: { type: string; budget_tokens?: number | undefined } | undefined,
+): ThinkingEffort | undefined => {
+  if (t === undefined) return undefined
+  if (t.type !== "enabled" && t.type !== "adaptive") return undefined
+  const b = t.budget_tokens
+  if (b === undefined) return "medium"
+  if (b <= 1024) return "minimal"
+  if (b <= 4096) return "low"
+  if (b <= 8192) return "medium"
+  if (b <= 16384) return "high"
+  return "max"
 }
 
 export const parseAnthropicRequest = (
@@ -219,6 +242,10 @@ export const parseAnthropicRequest = (
     ...(system !== undefined ? { system } : {}),
     ...(b.max_tokens !== undefined ? { maxTokens: b.max_tokens } : {}),
     ...(b.temperature !== undefined ? { temperature: b.temperature } : {}),
+    ...((): { thinkingEffort?: ThinkingEffort } => {
+      const tier = thinkingToTier(b.thinking)
+      return tier !== undefined ? { thinkingEffort: tier } : {}
+    })(),
     ...(tools.length > 0 ? { tools } : {}),
     stream: b.stream ?? false,
     messages,
