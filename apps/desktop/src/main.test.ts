@@ -283,3 +283,30 @@ describe("main (entry wiring)", () => {
     expect(record.guiOpened).toBe(true)
   })
 })
+
+// MUST be the last test in the file: it calls main() with the real openWindow,
+// which kicks off async tray/Updater work that must not contaminate any test
+// running after it.
+describe("main startup regression guard", () => {
+  it("main() startup path performs no synchronous subprocess spawn (regression: Worker brk-1 crash)", () => {
+    // Covers startProxy + openWindow — the full sync portion of main().
+    // main() returns Promise<void>; the sync spawn check must happen before any await.
+    let syncSpawnObserved = false
+    const origSpawnSync = Bun.spawnSync
+    Bun.spawnSync = (() => {
+      syncSpawnObserved = true
+      return {
+        success: false,
+        stdout: Buffer.alloc(0),
+        stderr: Buffer.alloc(0),
+      } as never
+    }) as never
+    try {
+      const deps = buildRealDeps(fakeFactory)
+      void main([], deps)
+      expect(syncSpawnObserved).toBe(false)
+    } finally {
+      Bun.spawnSync = origSpawnSync
+    }
+  })
+})
