@@ -1,4 +1,4 @@
-import type { PermissionMode } from "@spectrum/agent-events"
+import type { PermissionMode, ThinkingEffort } from "@spectrum/agent-events"
 import type { HarnessId, ModelId, SessionId } from "@spectrum/types"
 import { useEffect } from "react"
 import { useStore } from "zustand"
@@ -9,12 +9,17 @@ import { useStores } from "../stores/createStores"
 export type ComposerForward = {
   readonly setMode: (sessionId: SessionId, mode: PermissionMode) => void
   readonly setModel: (sessionId: SessionId, modelId: ModelId | null) => void
+  readonly setThinkingEffort: (
+    sessionId: SessionId,
+    effort: ThinkingEffort,
+  ) => void
 }
 
 /** The replay seed from the folded root runner-started event. Absent in live. */
 export type ComposerSeed = {
   readonly mode?: PermissionMode
   readonly model?: string
+  readonly effort?: ThinkingEffort
 }
 
 export type UseComposerModeModelResult = {
@@ -22,6 +27,8 @@ export type UseComposerModeModelResult = {
   readonly onModeChange: (mode: PermissionMode) => void
   readonly model: string
   readonly onModelChange: (modelId: string) => void
+  readonly effort: ThinkingEffort
+  readonly onEffortChange: (effort: ThinkingEffort) => void
 }
 
 /**
@@ -45,8 +52,13 @@ export const useComposerModeModel = (
   const store = useStores().runView
   const mode = useStore(store, (s) => s.modeBySession[sessionId] ?? "manual")
   const model = useStore(store, (s) => s.modelBySession[sessionId] ?? "")
+  const effort = useStore(
+    store,
+    (s) => s.thinkingEffortBySession[sessionId] ?? "medium",
+  )
   const setMode = useStore(store, (s) => s.setMode)
   const setModel = useStore(store, (s) => s.setModel)
+  const setThinkingEffort = useStore(store, (s) => s.setThinkingEffort)
   const seedModeModel = useStore(store, (s) => s.seedModeModel)
 
   // Seed once per (sessionId, seed). The store guard makes it idempotent.
@@ -72,5 +84,12 @@ export const useComposerModeModel = (
       void client.updateHarnessPrefs({ harnessId, modelId })
   }
 
-  return { mode, onModeChange, model, onModelChange }
+  const onEffortChange = (e: ThinkingEffort): void => {
+    setThinkingEffort(sessionId, e)
+    forward?.setThinkingEffort(sessionId, e)
+    if (harnessId !== undefined)
+      void client.updateHarnessPrefs({ harnessId, thinkingEffort: e })
+  }
+
+  return { mode, onModeChange, model, onModelChange, effort, onEffortChange }
 }

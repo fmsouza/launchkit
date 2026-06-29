@@ -1148,10 +1148,6 @@
   cursor: pointer;
   color: var(--sp-text-muted);
 }
-.lk-terminal-pane__close {
-  position: absolute;
-  right: var(--sp-space-2);
-}
 /* Wrapper holding one persistent screen node per tab; only the active tab's
    node is shown (the others are display:none, set inline by TerminalPane). */
 .lk-terminal-pane__screens {

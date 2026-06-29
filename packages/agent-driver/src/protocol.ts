@@ -2,12 +2,14 @@ import {
   ApprovalDecisionSchema,
   PermissionModeSchema,
   QuestionAnswerSchema,
+  ThinkingEffortSchema,
 } from "@spectrum/agent-events"
 import type {
   ApprovalDecision,
   PermissionMode,
   QuestionAnswer,
   StoredEvent,
+  ThinkingEffort,
 } from "@spectrum/agent-events"
 import {
   type ModelId,
@@ -67,6 +69,11 @@ export type RunnerInbound =
       readonly id: SessionId
       readonly modelId: ModelId | null
     }
+  | {
+      readonly type: "run-set-thinking-effort"
+      readonly id: SessionId
+      readonly effort: ThinkingEffort
+    }
 
 const InboundSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("run-attach"), id: SessionIdSchema }),
@@ -98,6 +105,11 @@ const InboundSchema = z.discriminatedUnion("type", [
     type: z.literal("run-set-model"),
     id: SessionIdSchema,
     modelId: ModelIdSchema.nullable(),
+  }),
+  z.object({
+    type: z.literal("run-set-thinking-effort"),
+    id: SessionIdSchema,
+    effort: ThinkingEffortSchema,
   }),
 ])
 

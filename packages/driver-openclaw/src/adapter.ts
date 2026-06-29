@@ -98,6 +98,9 @@ export const createOpenclawAdapter = (
         run.close()
         transport.disconnect()
       },
+      // OpenClaw exposes no reasoning-effort knob today; accept the tier so the seam is uniform
+      // and the UI selector is harmless. No-op by design.
+      setThinkingEffort: () => {},
     }
   },
 })

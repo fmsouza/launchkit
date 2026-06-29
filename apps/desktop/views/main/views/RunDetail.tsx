@@ -44,13 +44,18 @@ const foldRun = (
       seed === undefined &&
       ev.event.type === "runner-started" &&
       ev.event.parentRunnerId === undefined &&
-      (ev.event.permissionMode !== undefined || ev.event.model !== undefined)
+      (ev.event.permissionMode !== undefined ||
+        ev.event.model !== undefined ||
+        ev.event.thinkingEffort !== undefined)
     ) {
       seed = {
         ...(ev.event.permissionMode !== undefined
           ? { mode: ev.event.permissionMode }
           : {}),
         ...(ev.event.model !== undefined ? { model: ev.event.model } : {}),
+        ...(ev.event.thinkingEffort !== undefined
+          ? { effort: ev.event.thinkingEffort }
+          : {}),
       }
     }
   }
@@ -82,11 +87,6 @@ export type RunDetailProps = {
    */
   readonly skipAttach?: boolean
   /**
-   * Session working directory. Threaded to `RunView` + `RunSideRail`; the rail
-   * disables the terminal toggle when absent (no real shell can mount).
-   */
-  readonly cwd?: string
-  /**
    * Terminal transport (over the dedicated terminal WebSocket). When absent,
    * the terminal pane + rail toggle are not wired up; existing tests that
    * never spawn a PTY keep passing.
@@ -98,8 +98,7 @@ export type RunDetailProps = {
  * A `TerminalClient` whose methods are no-ops. Lets `RunDetail` call the
  * `useTerminal` hook unconditionally (rules-of-hooks safe) even when the
  * page hasn't plumbed a real transport — the hook then yields a controller
- * whose `paneOpen` stays `false`, so the pane never renders and the rail
- * button stays disabled (no cwd).
+ * whose `paneOpen` stays `false`, so the pane never opens.
  */
 const noopTerminalClient: TerminalClient = {
   open: () => {},
@@ -122,7 +121,6 @@ const LiveRunDetail = ({
   models,
   providerNames,
   skipAttach = false,
-  cwd,
   terminalClient,
 }: {
   readonly sessionId: SessionId
@@ -136,7 +134,6 @@ const LiveRunDetail = ({
    * `runnerClient.attach` so the socket doesn't double-replay.
    */
   readonly skipAttach?: boolean
-  readonly cwd?: string
   readonly terminalClient?: TerminalClient
 }): ReactElement => {
   const client = useIpcClient()
@@ -163,16 +160,18 @@ const LiveRunDetail = ({
 
   const timers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
 
-  const { mode, onModeChange, model, onModelChange } = useComposerModeModel(
-    sessionId,
-    harnessId,
-    undefined, // live: seeding flows through applyEvent, not the hook
-    {
-      setMode: (sid, m) => runnerClient.setMode(sid, m),
-      setModel: (sid, id) =>
-        runnerClient.setModel(sid, id === "" ? null : (id as ModelId)),
-    },
-  )
+  const { mode, onModeChange, model, onModelChange, effort, onEffortChange } =
+    useComposerModeModel(
+      sessionId,
+      harnessId,
+      undefined, // live: seeding flows through applyEvent, not the hook
+      {
+        setMode: (sid, m) => runnerClient.setMode(sid, m),
+        setModel: (sid, id) =>
+          runnerClient.setModel(sid, id === "" ? null : (id as ModelId)),
+        setThinkingEffort: (sid, e) => runnerClient.setThinkingEffort(sid, e),
+      },
+    )
 
   // Wire the terminal controller. The hook needs `useTerminalStore` +
   // `useNotifications` provider scope (renderWithProviders mounts both) and a
@@ -248,6 +247,21 @@ const LiveRunDetail = ({
   }, [])
 
   const pending = pendingToRender(outboxEntries, presentIds)
+
+  const handleInterrupt = (): void => {
+    runnerClient.interrupt(sessionId)
+    // Drop optimistic sends that never landed so their bubbles don't linger.
+    for (const entry of outboxEntries) {
+      if (entry.status === "sending") {
+        const t = timers.current.get(entry.clientSendId)
+        if (t !== undefined) {
+          clearTimeout(t)
+          timers.current.delete(entry.clientSendId)
+        }
+        removeSend(sessionId, entry.clientSendId)
+      }
+    }
+  }
 
   const handleSend = (text: string): void => {
     const clientSendId = crypto.randomUUID()
@@ -334,7 +348,7 @@ const LiveRunDetail = ({
       onAnswer={(requestId, answer) =>
         runnerClient.answer(sessionId, requestId, answer)
       }
-      onInterrupt={() => runnerClient.interrupt(sessionId)}
+      onInterrupt={handleInterrupt}
       busy={busy}
       {...(elapsedSeconds === undefined ? {} : { elapsedSeconds })}
       mode={mode}
@@ -343,11 +357,12 @@ const LiveRunDetail = ({
       {...(models === undefined ? {} : { models })}
       {...(providerNames === undefined ? {} : { providerNames })}
       onModelChange={onModelChange}
+      effort={effort}
+      onEffortChange={onEffortChange}
       onOpenLink={(url) => {
         void client.openExternalUrl({ url })
       }}
       {...(terminal === undefined ? {} : { terminal })}
-      {...(cwd === undefined ? {} : { cwd })}
     />
   )
 }
@@ -385,12 +400,13 @@ const ReplayRunDetail = ({
     }
   }, [client, sessionId])
 
-  const { mode, onModeChange, model, onModelChange } = useComposerModeModel(
-    sessionId,
-    harnessId,
-    folded?.seed,
-    undefined, // no socket in replay; mode/model forward to the live session on resume-send
-  )
+  const { mode, onModeChange, model, onModelChange, effort, onEffortChange } =
+    useComposerModeModel(
+      sessionId,
+      harnessId,
+      folded?.seed,
+      undefined, // no socket in replay; mode/model forward to the live session on resume-send
+    )
 
   if (folded === undefined) return <Spinner label="Loading conversation" />
   const { state } = folded
@@ -437,6 +453,8 @@ const ReplayRunDetail = ({
       {...(models === undefined ? {} : { models })}
       {...(providerNames === undefined ? {} : { providerNames })}
       onModelChange={onModelChange}
+      effort={effort}
+      onEffortChange={onEffortChange}
       onOpenLink={(url) => {
         void client.openExternalUrl({ url })
       }}
@@ -459,7 +477,6 @@ export const RunDetail = ({
   providerNames,
   onResumeSend,
   skipAttach = false,
-  cwd,
   terminalClient,
 }: RunDetailProps): ReactElement =>
   mode === "live" ? (
@@ -470,7 +487,6 @@ export const RunDetail = ({
       {...(models === undefined ? {} : { models })}
       {...(providerNames === undefined ? {} : { providerNames })}
       skipAttach={skipAttach}
-      {...(cwd === undefined ? {} : { cwd })}
       {...(terminalClient === undefined ? {} : { terminalClient })}
     />
   ) : (

@@ -1,5 +1,6 @@
 import { RunnerIdSchema, SessionIdSchema } from "@spectrum/types"
 import { z } from "zod"
+import { ThinkingEffortSchema } from "./thinking-effort"
 
 export type Json = unknown
 
@@ -81,6 +82,7 @@ export const CanonicalEventSchema = z.discriminatedUnion("type", [
       agentType: z.string().optional(),
       title: z.string().optional(),
       model: z.string().optional(),
+      thinkingEffort: ThinkingEffortSchema.optional(),
       supportedModes: z.array(PermissionModeSchema).optional(),
       permissionMode: PermissionModeSchema.optional(),
     })

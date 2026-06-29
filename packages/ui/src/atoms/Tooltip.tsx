@@ -1,8 +1,10 @@
 import { useId, useLayoutEffect, useRef, useState } from "react"
 import type { ReactElement, ReactNode } from "react"
 import { createPortal } from "react-dom"
+import { resolveTooltipPosition } from "./tooltip-position"
 
-export type TooltipPlacement = "top" | "bottom" | "left" | "right"
+export type { TooltipPlacement } from "./tooltip-position"
+import type { TooltipPlacement } from "./tooltip-position"
 
 export type TooltipProps = {
   readonly label: string
@@ -40,12 +42,18 @@ export const Tooltip = ({
     const bubble = document.getElementById(id)
     const trigger = triggerRef.current
     if (bubble === null || trigger === null) return
-    const rect = trigger.getBoundingClientRect()
-    // `top` placement (the only one the CSS styles today): bubble sits above
-    // the trigger, horizontally centered on it.
-    bubble.style.top = `${rect.top}px`
-    bubble.style.left = `${rect.left + rect.width / 2}px`
-  }, [id, open])
+    const t = trigger.getBoundingClientRect()
+    const b = bubble.getBoundingClientRect()
+    const pos = resolveTooltipPosition(
+      { top: t.top, left: t.left, width: t.width, height: t.height },
+      { top: 0, left: 0, width: b.width, height: b.height },
+      { width: window.innerWidth, height: window.innerHeight },
+      placement,
+    )
+    bubble.style.top = `${pos.top}px`
+    bubble.style.left = `${pos.left}px`
+    bubble.dataset.placement = pos.placement
+  }, [id, open, placement])
 
   return (
     <span
@@ -69,7 +77,7 @@ export const Tooltip = ({
               role="tooltip"
               id={id}
               className="lk-tooltip__bubble"
-              style={{ position: "fixed" }}
+              style={{ position: "fixed", transform: "none" }}
             >
               {label}
             </span>,

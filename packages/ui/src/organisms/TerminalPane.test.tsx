@@ -19,7 +19,6 @@ const baseProps = (
   onNewTab: () => {},
   onCloseTab: () => {},
   onResizeHeight: () => {},
-  onClose: () => {},
   mountTerminal: () => () => {},
   ...over,
 })
@@ -72,5 +71,21 @@ describe("TerminalPane", () => {
       1,
     )
     cleanup()
+  })
+
+  it("does not render an in-pane close button when shown", () => {
+    const { queryByLabelText } = render(
+      <TerminalPane
+        tabs={[{ id: "t1", title: "bash", exitCode: null, closed: false }]}
+        activeTabId="t1"
+        paneHeightPx={220}
+        onSelectTab={() => {}}
+        onNewTab={() => {}}
+        onCloseTab={() => {}}
+        onResizeHeight={() => {}}
+        mountTerminal={() => () => {}}
+      />,
+    )
+    expect(queryByLabelText("Close terminal pane")).toBeNull()
   })
 })

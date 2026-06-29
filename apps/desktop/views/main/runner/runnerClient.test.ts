@@ -199,4 +199,13 @@ describe("createRunnerClient", () => {
     client.connectionLost()
     expect(lost).toBe(1)
   })
+
+  it("encodes setThinkingEffort to a run-set-thinking-effort message", () => {
+    const sent: unknown[] = []
+    const client = createRunnerClient((m) => sent.push(m))
+    client.setThinkingEffort("sess-1" as SessionId, "high")
+    expect(sent).toEqual([
+      { type: "run-set-thinking-effort", id: "sess-1", effort: "high" },
+    ])
+  })
 })

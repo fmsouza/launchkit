@@ -4,6 +4,7 @@ import type {
   QuestionAnswer,
   RunnerId,
   RunnerState,
+  ThinkingEffort,
 } from "@spectrum/agent-events"
 import { selectTaskList } from "@spectrum/agent-events"
 import type { ModelRoute } from "@spectrum/types"
@@ -87,12 +88,12 @@ export type RunViewProps = {
   readonly models?: readonly ModelRoute[]
   readonly providerNames?: Readonly<Record<string, string>>
   readonly onModelChange?: (modelId: string) => void
+  readonly effort?: ThinkingEffort
+  readonly onEffortChange?: (effort: ThinkingEffort) => void
   /** Open a chat link in the OS browser; threaded to both timelines. */
   readonly onOpenLink?: (url: string) => void
   /** Optional terminal controller (threaded from `RunDetail`'s `useTerminal` call). */
   readonly terminal?: TerminalController
-  /** Session working directory — used to enable the rail's terminal toggle. */
-  readonly cwd?: string
 }
 
 /** A length proxy for the feed's content so streaming text (not just new items) triggers autoscroll. */
@@ -136,9 +137,10 @@ export const RunView = ({
   models,
   providerNames,
   onModelChange,
+  effort,
+  onEffortChange,
   onOpenLink,
   terminal,
-  cwd,
 }: RunViewProps): ReactElement => {
   const scrollRef = useRef<HTMLDivElement>(null)
   // Autoscroll: pin the feed to the latest message as items stream in (and when the dots appear).
@@ -221,6 +223,8 @@ export const RunView = ({
           {...(models === undefined ? {} : { models })}
           {...(providerNames === undefined ? {} : { providerNames })}
           {...(onModelChange === undefined ? {} : { onModelChange })}
+          {...(effort === undefined ? {} : { effort })}
+          {...(onEffortChange === undefined ? {} : { onEffortChange })}
         />
         {terminal && (terminal.paneOpen || terminal.tabs.length > 0) ? (
           // Keep the pane MOUNTED whenever the pane is open OR has live tabs, and
@@ -238,7 +242,6 @@ export const RunView = ({
             }}
             onCloseTab={terminal.closeTab}
             onResizeHeight={terminal.resizeHeight}
-            onClose={terminal.closePane}
             mountTerminal={terminal.mountTerminal}
           />
         ) : null}
@@ -256,7 +259,6 @@ export const RunView = ({
         onToggleCollapsed={() => setRailCollapsed((c) => !c)}
         {...(onOpenLink === undefined ? {} : { onOpenLink })}
         {...(terminal === undefined ? {} : { paneOpen: terminal.paneOpen })}
-        {...(cwd === undefined ? {} : { cwd })}
         onToggleTerminal={() => {
           if (terminal === undefined) return
           if (terminal.paneOpen) terminal.closePane()

@@ -1,10 +1,11 @@
-import { describe, expect, it } from "bun:test"
+import { describe, expect, it, mock } from "bun:test"
 import type {
   CanonicalEvent,
   PermissionMode,
   QuestionAnswer,
   RunnerId,
   StoredEvent,
+  ThinkingEffort,
 } from "@spectrum/agent-events"
 import type { Logger } from "@spectrum/logger"
 import {
@@ -19,6 +20,7 @@ import type { AgentDriver, AgentStartInput } from "./driver"
 import { createFakeDriver } from "./fake-driver"
 import type { FakeScript } from "./fake-driver"
 import { createRunManager } from "./manager"
+import type { RunLaunchInput } from "./manager"
 import type { RunEventSink, SessionSink } from "./ports"
 import type { RunnerOutbound } from "./protocol"
 
@@ -581,6 +583,65 @@ describe("createRunManager.handleInbound run-answer", () => {
     expect(calls[0]?.answer).toEqual({
       selections: [{ questionIndex: 0, labels: ["A"] }],
     })
+  })
+})
+
+/** Build a manager with a live session whose `setThinkingEffort` is a Bun mock spy. */
+const makeManagerWithLiveSession = (
+  _label: string,
+): {
+  manager: ReturnType<typeof createRunManager>
+  session: { setThinkingEffort: ReturnType<typeof mock> }
+} => {
+  const thinkingCalls: ThinkingEffort[] = []
+  const setThinkingEffortSpy = mock((_effort: ThinkingEffort) => {
+    thinkingCalls.push(_effort)
+    return ok(undefined) as import("@spectrum/utils").Result<
+      void,
+      import("./driver").DriverError
+    >
+  })
+  const capturingDriver: AgentDriver = {
+    start: () =>
+      ok({
+        rootRunnerId: root,
+        onEvent: () => undefined,
+        send: () => ok(undefined),
+        respondApproval: () => ok(undefined),
+        respondQuestion: () => ok(undefined),
+        interrupt: () => ok(undefined),
+        close: () => ok(undefined),
+        setThinkingEffort: setThinkingEffortSpy,
+      }),
+  }
+  const { deps } = makeDeps(scriptOf([]))
+  const manager = createRunManager({ ...deps, driver: capturingDriver })
+  manager.launch({ harnessId, cwd: "/tmp", env: {} })
+  return { manager, session: { setThinkingEffort: setThinkingEffortSpy } }
+}
+
+describe("createRunManager.handleInbound run-set-thinking-effort", () => {
+  it("forwards run-set-thinking-effort to the live session", () => {
+    const { manager, session } = makeManagerWithLiveSession("sess-1")
+    manager.handleInbound({
+      type: "run-set-thinking-effort",
+      id: sessionId,
+      effort: "high",
+    })
+    expect(session.setThinkingEffort).toHaveBeenCalledWith("high")
+  })
+
+  it("is a safe no-op for an unknown session id", () => {
+    const { deps } = makeDeps(scriptOf([startEvent]))
+    const manager = createRunManager(deps)
+    manager.launch({ harnessId, cwd: "/tmp", env: {} })
+    expect(() =>
+      manager.handleInbound({
+        type: "run-set-thinking-effort",
+        id: otherId,
+        effort: "low",
+      }),
+    ).not.toThrow()
   })
 })
 
@@ -1333,6 +1394,72 @@ describe("createRunManager resume (lazy auto-resume on run-send)", () => {
       id: sessionId,
       resumeToken: "",
     })
+  })
+
+  it("drops queued resume sends when interrupted before the resume completes", async () => {
+    // Arrange: a session that immediately finishes so the live handle is dropped.
+    const script: FakeScript = {
+      rootRunnerId: root,
+      reactions: [
+        { on: "start", emit: [startEvent, finishEvent] },
+        { on: "send", emit: [textEvent] },
+      ],
+    }
+    // A deferred resolveResumeInput so we can pause doResume mid-flight and
+    // inject the interrupt before the resume flushes its queued sends.
+    let resolveResumeInput!: (input: RunLaunchInput) => void
+    const resolveResumeInputPromise = new Promise<RunLaunchInput>((resolve) => {
+      resolveResumeInput = resolve
+    })
+    const capturedSends: Array<{ text: string; clientSendId?: string }> = []
+    let startCalls = 0
+    const trackingDriver: AgentDriver = {
+      start: (input) => {
+        startCalls += 1
+        if (startCalls === 1) {
+          return createFakeDriver({ script, scheduler: sync }).start(input)
+        }
+        // The resume's driver.start — record sends so we can assert none arrive.
+        return ok({
+          rootRunnerId: root,
+          onEvent: () => undefined,
+          send: (turn) => {
+            capturedSends.push(turn)
+            return ok(undefined)
+          },
+          respondApproval: () => ok(undefined),
+          respondQuestion: () => ok(undefined),
+          interrupt: () => ok(undefined),
+          close: () => ok(undefined),
+        })
+      },
+    }
+    const { deps } = makeDeps(script)
+    const manager = createRunManager({
+      ...deps,
+      driver: trackingDriver,
+      resolveResumeInput: () => resolveResumeInputPromise,
+    })
+    manager.launch({ harnessId, cwd: "/tmp", env: {} })
+    // Initial start + finish closed the session and dropped the live handle.
+    expect(startCalls).toBe(1)
+    // First send seeds the resume queue and starts doResume (pauses at resolveResumeInput).
+    manager.handleInbound({ type: "run-send", id: sessionId, text: "first" })
+    // Second send piles onto the resume queue.
+    manager.handleInbound({ type: "run-send", id: sessionId, text: "second" })
+    // Act: interrupt before the async resume flushes.
+    manager.handleInbound({ type: "run-interrupt", id: sessionId })
+    // Allow the doResume microtask to advance past the interrupt point.
+    resolveResumeInput({ harnessId, cwd: "/tmp", env: {} })
+    // Flush enough microtask ticks for doResume to complete.
+    await Promise.resolve()
+    await Promise.resolve()
+    await Promise.resolve()
+    await Promise.resolve()
+    // Assert: the resume driver DID start (the resume itself still completes) but
+    // NO queued turns were flushed to agent.send because the queue was cleared.
+    expect(startCalls).toBe(2)
+    expect(capturedSends).toHaveLength(0)
   })
 
   it("emits a synthetic runner-finished:errored frame on the runner socket when resume driver.start fails", async () => {

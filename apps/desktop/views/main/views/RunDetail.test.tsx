@@ -970,6 +970,63 @@ describe("RunDetail (outbox / optimistic send)", () => {
     cleanup()
   })
 
+  it("clears pending optimistic sends when the user interrupts", async () => {
+    const interrupted: SessionId[] = []
+    const base = makeRichFakeRunner()
+    const runner: typeof base = {
+      ...base,
+      interrupt: (sid) => interrupted.push(sid),
+    }
+    renderWithProviders(
+      <RunDetail mode="live" sessionId={id} runnerClient={runner} />,
+      createFakeIpcClient({}),
+    )
+
+    // Start the runner so the composer is visible.
+    runner.push(
+      stored(0, { type: "runner-started", runnerId: "run_root" as never }),
+    )
+    await waitFor(() => screen.getByRole("button", { name: "Send message" }))
+
+    // Send a message — this enqueues a "sending" optimistic bubble.
+    fireEvent.change(screen.getByRole("textbox"), {
+      target: { value: "queued prompt" },
+    })
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }))
+
+    // Wait for the sending bubble to appear.
+    await waitFor(() =>
+      expect(document.querySelector('[data-status="sending"]')).not.toBeNull(),
+    )
+    expect(screen.queryByText("queued prompt")).not.toBeNull()
+
+    // Push a user text-delta so the run goes busy (shows the Stop button).
+    runner.push(
+      stored(1, {
+        type: "text-delta",
+        runnerId: "run_root" as never,
+        messageId: "m1",
+        text: "thinking…",
+        role: "user",
+      }),
+    )
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Stop run" }),
+      ).toBeInTheDocument(),
+    )
+
+    // Click the stop button — should interrupt AND clear the pending send.
+    fireEvent.click(screen.getByRole("button", { name: "Stop run" }))
+
+    expect(interrupted).toEqual([id])
+    await waitFor(() =>
+      expect(document.querySelector('[data-status="sending"]')).toBeNull(),
+    )
+
+    cleanup()
+  })
+
   it("removes the optimistic bubble once the echo with the same clientSendId arrives", async () => {
     const runner = makeRichFakeRunner()
     renderWithProviders(

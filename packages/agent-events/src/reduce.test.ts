@@ -31,9 +31,11 @@ describe("reduce — runner lifecycle", () => {
     expect(runner?.items).toEqual([])
   })
 
-  it("does not overwrite rootRunnerId when a second parentless runner starts", () => {
+  it("updates rootRunnerId to the new runner when a second parentless runner starts (resume continuation)", () => {
+    // On session resume the manager folds the prior backlog then a fresh root runner-started
+    // arrives with a new id. The new runner becomes the rendered root (it inherits history).
     const state = fold([started("root"), started("other")])
-    expect(state.rootRunnerId).toBe(rid("root"))
+    expect(state.rootRunnerId).toBe(rid("other"))
   })
 
   it("sets a runner's status when it finishes", () => {
@@ -563,6 +565,68 @@ describe("reduce — supportedModes", () => {
       "manual",
       "bypass",
     ])
+  })
+})
+
+describe("reduce — session resume continuation", () => {
+  it("preserves prior history when a resumed run emits a new root runner", () => {
+    const r1 = "rnr-1" as RunnerId
+    const r2 = "rnr-2" as RunnerId
+    let s = initialRunState
+    // Original run: root R1 with one user + one assistant message.
+    s = reduce(s, { type: "runner-started", runnerId: r1 })
+    s = reduce(s, {
+      type: "text-delta",
+      runnerId: r1,
+      messageId: "m1",
+      text: "hello",
+      role: "user",
+    })
+    s = reduce(s, {
+      type: "text-delta",
+      runnerId: r1,
+      messageId: "m2",
+      text: "hi there",
+      role: "assistant",
+    })
+    s = reduce(s, {
+      type: "runner-finished",
+      runnerId: r1,
+      status: "completed",
+    })
+    // Resume: a new root R2 starts (backlog already folded above).
+    s = reduce(s, { type: "runner-started", runnerId: r2 })
+    s = reduce(s, {
+      type: "text-delta",
+      runnerId: r2,
+      messageId: "m3",
+      text: "follow up",
+      role: "user",
+    })
+
+    const root = s.runners.get(s.rootRunnerId as RunnerId)
+    expect(s.rootRunnerId).toBe(r2)
+    expect(
+      root?.items.map((i) => (i.kind === "message" ? i.messageId : i.kind)),
+    ).toEqual(["m1", "m2", "m3"])
+  })
+
+  it("keeps items on an idempotent same-id runner-started re-emit", () => {
+    const r1 = "rnr-1" as RunnerId
+    let s = initialRunState
+    s = reduce(s, { type: "runner-started", runnerId: r1 })
+    s = reduce(s, {
+      type: "text-delta",
+      runnerId: r1,
+      messageId: "m1",
+      text: "hi",
+      role: "assistant",
+    })
+    s = reduce(s, { type: "runner-started", runnerId: r1, title: "My Title" })
+    const root = s.runners.get(r1)
+    expect(s.rootRunnerId).toBe(r1)
+    expect(root?.items).toHaveLength(1)
+    expect(root?.title).toBe("My Title")
   })
 })
 

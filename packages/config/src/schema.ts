@@ -8,12 +8,14 @@ export const CURRENT_CONFIG_VERSION = 12
  * Per-harness "last used" prefs. `mode` is the normalized permission mode the user last selected
  * for this harness, stored as a plain string (like `modelId`) so this package needs no dependency
  * on `@spectrum/agent-events`; the canonical `PermissionMode` is validated at the IPC boundary
- * and re-checked when read at launch. Phase 2 adds optional `modelId`.
+ * and re-checked when read at launch. Optional `modelId` overrides the harness default model;
+ * optional `thinkingEffort` stores the user's last-selected thinking-effort level.
  */
 export const HarnessPrefsSchema = z
   .object({
     mode: z.string().optional(),
     modelId: z.string().optional(),
+    thinkingEffort: z.string().optional(),
   })
   .strict()
 export type HarnessPrefs = z.infer<typeof HarnessPrefsSchema>

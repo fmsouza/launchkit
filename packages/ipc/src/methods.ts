@@ -1,4 +1,8 @@
-import { PermissionModeSchema, StoredEventSchema } from "@spectrum/agent-events"
+import {
+  PermissionModeSchema,
+  StoredEventSchema,
+  ThinkingEffortSchema,
+} from "@spectrum/agent-events"
 import { ProviderCatalogEntrySchema } from "@spectrum/providers"
 import {
   HarnessDefinitionSchema,
@@ -318,6 +322,7 @@ export const UpdateHarnessPrefsParamsSchema = z
     harnessId: HarnessIdSchema,
     mode: PermissionModeSchema.optional(),
     modelId: z.string().optional(),
+    thinkingEffort: ThinkingEffortSchema.optional(),
   })
   .strict()
 export const UpdateHarnessPrefsResultSchema = VoidSchema

@@ -4,6 +4,7 @@ import type {
   PermissionMode,
   QuestionAnswer,
   StoredEvent,
+  ThinkingEffort,
 } from "@spectrum/agent-events"
 import type { ModelId, SessionId } from "@spectrum/types"
 
@@ -21,6 +22,7 @@ export interface RunnerClient {
   interrupt(id: SessionId): void
   setMode(id: SessionId, mode: PermissionMode): void
   setModel(id: SessionId, modelId: ModelId | null): void
+  setThinkingEffort(id: SessionId, effort: ThinkingEffort): void
   /** route an inbound RunnerOutbound frame to the registered per-session listener */
   dispatch(message: RunnerOutbound): void
   onEvent(id: SessionId, cb: (event: StoredEvent) => void): void
@@ -109,6 +111,9 @@ export const createRunnerClient = (
     },
     setModel: (id, modelId) => {
       send({ type: "run-set-model", id, modelId })
+    },
+    setThinkingEffort: (id, effort) => {
+      send({ type: "run-set-thinking-effort", id, effort })
     },
     dispatch: (message) => {
       const dispatcher = dispatchers.get(message.type)

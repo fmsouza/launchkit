@@ -4,6 +4,7 @@ import type {
   CanonicalEvent,
   PermissionMode,
   QuestionAnswer,
+  ThinkingEffort,
 } from "@spectrum/agent-events"
 import type { HarnessId, ModelId, SessionId } from "@spectrum/types"
 import type { Result } from "@spectrum/utils"
@@ -39,6 +40,8 @@ export interface AgentStartInput {
   readonly args?: readonly string[]
   /** The normalized permission mode the session starts in; absent = "manual". */
   readonly permissionMode?: PermissionMode
+  /** The thinking-effort tier the session starts at; absent = the harness default. */
+  readonly thinkingEffort?: ThinkingEffort
   /**
    * The harness-native session id to resume (e.g. Claude's session_id, Codex's threadId).
    * Absent = a fresh harness session; present = resume the exact prior conversation.
@@ -76,6 +79,8 @@ export interface AgentSession {
     modelId: ModelId | null,
     env?: Readonly<Record<string, string>>,
   ): Result<void, DriverError>
+  /** Switch the thinking-effort tier mid-session (driver applies natively or on next turn). */
+  setThinkingEffort?(effort: ThinkingEffort): Result<void, DriverError>
 }
 
 export interface AgentDriver {

@@ -193,6 +193,14 @@ describe("createOpenclawAdapter", () => {
     expect(t.disconnected).toBe(true)
   })
 
+  it("accepts setThinkingEffort without throwing and does not disrupt a subsequent send", async () => {
+    const t = setup()
+    const handle = await t.adapter.start(START, t.ctx)
+    expect(() => handle.setThinkingEffort?.("high")).not.toThrow()
+    handle.send("after-effort")
+    expect(t.sentText).toBe("after-effort")
+  })
+
   it("emits exactly one approval-requested per gateway approval (no duplicate)", async () => {
     const t = setup("allow")
     await t.adapter.start(START, t.ctx)

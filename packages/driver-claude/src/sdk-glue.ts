@@ -1,5 +1,9 @@
 import type { AgentStartInput } from "@spectrum/agent-driver"
-import type { ApprovalDecision, ApprovalTarget } from "@spectrum/agent-events"
+import type {
+  ApprovalDecision,
+  ApprovalTarget,
+  ThinkingEffort,
+} from "@spectrum/agent-events"
 import type {
   AdapterCtx,
   AdapterHandle,
@@ -20,6 +24,7 @@ import {
   mapRefusalFallbackPayload,
 } from "./refusal-fallback"
 import type { SdkMessageLike, SdkResultMessage } from "./sdk-types"
+import { toClaudeThinkingBudget } from "./thinking-effort"
 
 /** Default timer implementation backed by global setTimeout/clearTimeout. */
 const defaultSetTimer = (fn: () => void, ms: number): (() => void) => {
@@ -73,6 +78,10 @@ export interface SdkOptions {
   readonly permissionMode?: string
   readonly pathToClaudeCodeExecutable?: string
   readonly resume?: string
+  readonly thinking?: {
+    readonly type: "enabled"
+    readonly budgetTokens: number
+  }
   readonly canUseTool?: (
     toolName: string,
     input: Record<string, unknown>,
@@ -136,6 +145,7 @@ const targetFor = (
 const makeInputStream = (): {
   stream: AsyncGenerator<SdkUserInput>
   push: (text: string) => void
+  drain: () => void
   end: () => void
 } => {
   const queue: SdkUserInput[] = []
@@ -165,6 +175,9 @@ const makeInputStream = (): {
       })
       wake?.()
       wake = null
+    },
+    drain: () => {
+      queue.length = 0
     },
     end: () => {
       ended = true
@@ -212,6 +225,8 @@ export const createClaudeAdapter = (deps: {
     // Mutable env: setModel may swap the route (direct↔proxied) by supplying a freshly
     // rendered proxy env. launch()/restart() always read the CURRENT env.
     let currentEnv: Readonly<Record<string, string>> = input.env
+    // Mutable thinking effort: setThinkingEffort mutates and relaunches (options are fixed per query).
+    let currentEffort: ThinkingEffort | undefined = input.thinkingEffort
 
     log?.info("claude adapter starting", {
       cwd: input.cwd,
@@ -275,12 +290,27 @@ export const createClaudeAdapter = (deps: {
       // Per-launch first-message tracking for the "log once" behaviour.
       let firstMsgLogged = false
 
+      // Resolve the extended-thinking budget once. null (the "off" tier, or no
+      // effort set) omits the `thinking` option entirely so thinking stays disabled.
+      const thinkingBudget =
+        currentEffort !== undefined
+          ? toClaudeThinkingBudget(currentEffort)
+          : null
+
       const query = sdk.query({
         prompt: inputStream.stream,
         options: {
           cwd: input.cwd,
           env: { ...(deps.baseEnv?.() ?? {}), ...currentEnv },
           ...(currentModel !== undefined ? { model: currentModel } : {}),
+          ...(thinkingBudget !== null
+            ? {
+                thinking: {
+                  type: "enabled" as const,
+                  budgetTokens: thinkingBudget,
+                },
+              }
+            : {}),
           abortController: abort,
           permissionMode: currentMode,
           ...(executable !== undefined
@@ -492,7 +522,16 @@ export const createClaudeAdapter = (deps: {
         if (env !== undefined) currentEnv = env
         restart()
       },
+      setThinkingEffort: (effort) => {
+        // Thinking budget is fixed per SDK query (options are read at query() time).
+        // Relaunch resuming the same claude session so history is preserved.
+        currentEffort = effort
+        restart()
+      },
       interrupt: () => {
+        // Drain any buffered-but-unsent turns so a rapid multi-send is fully
+        // stopped, then interrupt the in-flight turn.
+        current.inputStream.drain()
         void current.query.interrupt()
       },
       close: () => {

@@ -301,6 +301,10 @@ export const createOpencodeAdapter = (
           { model: String(modelId), isInitial: false },
         )
       },
+      // OpenCode routes through the Spectrum proxy (OPENAI_MODEL / provider config) and exposes no
+      // per-turn reasoning-effort knob today; accept the tier so the seam is uniform and the UI
+      // selector is harmless. No-op by design.
+      setThinkingEffort: () => {},
     }
   },
 })

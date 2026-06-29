@@ -7,6 +7,7 @@ import type {
   QuestionAnswer,
   QuestionPrompt,
   RunnerId,
+  ThinkingEffort,
 } from "@spectrum/agent-events"
 import type { ModelId } from "@spectrum/types"
 
@@ -25,6 +26,8 @@ export interface AdapterHandle {
     modelId: ModelId | null,
     env?: Readonly<Record<string, string>>,
   ): void
+  /** Switch the thinking-effort tier (apply natively now, or stash for the next turn). */
+  setThinkingEffort?(effort: ThinkingEffort): void
 }
 
 /** What the runtime gives the adapter: a push channel + the approval bridge + runner-id minting. */

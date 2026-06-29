@@ -159,4 +159,20 @@ describe("decodeRunnerInbound", () => {
       modelId: null,
     })
   })
+
+  it("decodes a run-set-thinking-effort command", () => {
+    const r = decodeRunnerInbound({
+      type: "run-set-thinking-effort",
+      id: "sess-1",
+      effort: "high",
+    })
+    expect(r.ok).toBe(true)
+    if (r.ok) {
+      expect(r.value).toEqual({
+        type: "run-set-thinking-effort",
+        id: "sess-1" as never,
+        effort: "high",
+      })
+    }
+  })
 })
