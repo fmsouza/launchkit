@@ -37,3 +37,30 @@ describe("electrobun.config webview browser bundle", () => {
     expect(view.external ?? []).toContain("node:fs")
   })
 })
+
+/**
+ * Regression guard for the packaged-GUI startup crash.
+ *
+ * Electrobun bundles its own Bun runtime and defaults to a pinned version
+ * (`BUN_VERSION` in its `dist/api/shared/bun-version.ts`). Without an explicit
+ * `build.bunVersion` override, the CLI uses that default — which at Electrobun
+ * 1.18.x is Bun 1.3.13. The packaged `bun` 1.3.13 hits a JSC heap-helper
+ * `RELEASE_ASSERT` (`EXC_BREAKPOINT` / `brk 1` on the "Heap Helper Thread")
+ * ~1.7s after launch, mid-first-IPC-message — a hard, uncatchable crash that
+ * never reproduces in dev (dev runs `bun@1.3.14` via the root `packageManager`
+ * pin). The dev environment's 1.3.14 is the proven-good runtime, so we pin the
+ * bundle to it explicitly. This lock prevents the override from silently
+ * disappearing and shipping the crashing default again.
+ */
+describe("electrobun.config bundled bun runtime", () => {
+  it("pins build.bunVersion to a non-crashing runtime (>= 1.3.14, matching dev)", () => {
+    const version = config.build.bunVersion
+    expect(typeof version).toBe("string")
+    const [major, minor, patch] = (version as string)
+      .split(".")
+      .map((n) => Number.parseInt(n, 10))
+    expect(major).toBe(1)
+    expect(minor).toBe(3)
+    expect(patch).toBeGreaterThanOrEqual(14)
+  })
+})
