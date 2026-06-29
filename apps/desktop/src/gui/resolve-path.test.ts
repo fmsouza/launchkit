@@ -1,6 +1,12 @@
-import { describe, expect, it } from "bun:test"
+import { afterAll, beforeEach, describe, expect, it } from "bun:test"
+import { homedir } from "node:os"
 import { PATH_SENTINEL_END, PATH_SENTINEL_START } from "@spectrum/platform"
-import { resolveGuiPath } from "./resolve-path"
+import {
+  type ShellPathProbeAsync,
+  __resetGuiPathAsyncForTest,
+  enrichGuiPathAsync,
+  resolveGuiPath,
+} from "./resolve-path"
 
 const wrap = (path: string): string =>
   `banner line\n${PATH_SENTINEL_START}${path}${PATH_SENTINEL_END}\n`
@@ -77,5 +83,70 @@ describe("resolveGuiPath", () => {
     })
     const occurrences = result.split(":").filter((e) => e === "/usr/local/bin")
     expect(occurrences).toHaveLength(1)
+  })
+})
+
+describe("enrichGuiPathAsync", () => {
+  const originalPath = process.env.PATH
+
+  beforeEach(() => {
+    __resetGuiPathAsyncForTest()
+    process.env.PATH = originalPath
+  })
+  afterAll(() => {
+    process.env.PATH = originalPath
+  })
+
+  it("resolves the PATH via the async probe and mutates process.env.PATH once settled", async () => {
+    process.env.PATH = "/usr/bin:/bin"
+    let calls = 0
+    const probe: ShellPathProbeAsync = async () => {
+      calls++
+      return wrap("/Users/me/.nvm/versions/node/v24/bin")
+    }
+    const result = await enrichGuiPathAsync(probe)
+    expect(calls).toBe(1)
+    expect(result.split(":")[0]).toBe("/Users/me/.nvm/versions/node/v24/bin")
+    expect(process.env.PATH).toBe(result)
+  })
+
+  it("memoizes: a second await does not invoke the probe again", async () => {
+    let calls = 0
+    const probe: ShellPathProbeAsync = async () => {
+      calls++
+      return wrap("/opt/x/bin")
+    }
+    await enrichGuiPathAsync(probe)
+    await enrichGuiPathAsync(probe)
+    expect(calls).toBe(1)
+  })
+
+  it("concurrent awaiters share one in-flight probe (no duplicate spawn)", async () => {
+    let calls = 0
+    const probe: ShellPathProbeAsync = async () => {
+      calls++
+      // yield once so concurrent awaiters both hit the in-flight promise
+      await Promise.resolve()
+      return wrap("/opt/y/bin")
+    }
+    const [a, b] = await Promise.all([
+      enrichGuiPathAsync(probe),
+      enrichGuiPathAsync(probe),
+    ])
+    expect(calls).toBe(1)
+    expect(a).toBe(b)
+  })
+
+  it("falls back to common bin dirs (never rejects) when the probe throws", async () => {
+    process.env.PATH = "/usr/bin"
+    const probe: ShellPathProbeAsync = async () => {
+      throw new Error("spawn failed")
+    }
+    const result = await enrichGuiPathAsync(probe)
+    expect(result).toContain(
+      "/Users/fred/.local/bin".replace("/Users/fred", homedir()),
+    )
+    expect(result).toContain("/opt/homebrew/bin")
+    expect(result).toContain("/usr/bin")
   })
 })
