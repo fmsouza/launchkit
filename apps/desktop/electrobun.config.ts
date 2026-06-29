@@ -61,8 +61,29 @@ const config = {
   },
   build: {
     bun: { entrypoint: "src/index.ts" },
+    // Override the bundled Bun runtime. Electrobun downloads a per-platform official Bun release
+    // (https://github.com/oven-sh/bun/releases/download/bun-v<version>/…) and uses it as the
+    // `Contents/MacOS/bun` the launcher execs. Without it, the CLI falls back to Electrobun's
+    // pinned default (`BUN_VERSION` in its `dist/api/shared/bun-version.ts`) — Bun 1.3.13 at
+    // Electrobun 1.18.x, which hits a JSC heap-helper RELEASE_ASSERT (`EXC_BREAKPOINT` / `brk 1`
+    // on the "Heap Helper Thread") ~1.7s after a packaged launch, mid-first-IPC-message: a hard,
+    // uncatchable startup crash that never reproduces in dev (dev runs `bun@1.3.14` via the root
+    // `packageManager` pin). Pin the bundle to 1.3.14 — the proven-good runtime — so channel builds
+    // don't ship the crashing 1.3.13. Bump this floor when adopting a newer proven Bun; the config
+    // test guards it.
+    bunVersion: "1.3.14",
     views: {
-      main: { entrypoint: "views/main/app.tsx" },
+      main: {
+        entrypoint: "views/main/app.tsx",
+        // The webview's `target: "browser"` bundle imports only the PURE terminal protocol
+        // (`isTerminalOutbound`, schemas, types) from `@spectrum/pty`, whose barrel also
+        // re-exports the Bun-native PTY spawner (`bun-ffi-pty.ts`). That module lazily `require`s
+        // `bun:ffi` and `node:fs` — both unavailable in a browser bundle — so we mark them
+        // external. Without this the browser bundler tries to resolve them and the webview build
+        // fails; marking them external lets Bun tree-shake the unused native code out of the
+        // webview bundle entirely.
+        external: ["bun:ffi", "node:fs"],
+      },
     },
     copy: {
       "views/main/index.html": "views/main/index.html",
@@ -107,32 +128,14 @@ const config = {
     },
     linux: { bundleCEF: true, defaultRenderer: "cef" },
     win: {},
-  },
-} satisfies ElectrobunConfig
-
-// `build.watch`/`build.watchIgnore` drive `electrobun dev --watch`, and `build.views.main.external`
-// passes through to Bun.build — all are honored by the CLI at runtime but absent from the v1.18.1
-// `ElectrobunConfig` type. Attach them AFTER the `satisfies` check so the core config is still
-// type-validated while these extra, runtime-only keys pass through.
-//
-// The webview's `target: "browser"` bundle imports only the PURE terminal protocol
-// (`isTerminalOutbound`, schemas, types) from `@spectrum/pty`, whose barrel also re-exports
-// the Bun-native PTY spawner (`bun-ffi-pty.ts`). That module lazily `require`s `bun:ffi` and
-// `node:fs` — both unavailable in a browser bundle — so we mark them external. Without this the
-// browser bundler tries to resolve them and the webview build fails; marking them external lets
-// Bun tree-shake the unused native code out of the webview bundle entirely.
-export default {
-  ...config,
-  build: {
-    ...config.build,
-    views: {
-      ...config.build.views,
-      main: {
-        ...config.build.views.main,
-        external: ["bun:ffi", "node:fs"],
-      },
-    },
+    // Extra paths `electrobun dev --watch` watches for rebuilds (the monorepo's `packages/`
+    // feed the build, so a change there must rebuild the app). `watchIgnore` excludes tests
+    // so editing a `.test.ts` doesn't relaunch. Both are honored by the CLI at runtime; they
+    // live inside the `satisfies ElectrobunConfig` object so they're compile-time validated
+    // against the local type shim (`src/types/electrobun-root.d.ts`).
     watch: ["../../packages"],
     watchIgnore: ["**/*.test.ts", "**/*.test.tsx", "**/*.test.js"],
   },
-}
+} satisfies ElectrobunConfig
+
+export default config
