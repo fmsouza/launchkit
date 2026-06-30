@@ -496,6 +496,21 @@ export const createIpcHandlers = (ctx: GuiContext): IpcHandlers => {
       return null
     },
 
+    getSessionNamingSettings: async () => {
+      const config = await loadConfig()
+      return { sessionNameModelId: config.settings.sessionNameModelId ?? null }
+    },
+
+    updateSessionNamingSettings: async ({ sessionNameModelId }) => {
+      const config = await loadConfig()
+      const saved = await ctx.config.save({
+        ...config,
+        settings: { ...config.settings, sessionNameModelId },
+      })
+      if (!isOk(saved)) return fail("could not save session naming settings")
+      return null
+    },
+
     // ── Projects ──────────────────────────────────────────────────────────────
     getProjects: async () => {
       const result = ctx.projects.list()

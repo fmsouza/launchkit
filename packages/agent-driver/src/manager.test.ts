@@ -15,13 +15,18 @@ import {
   type Session,
   SessionIdSchema,
 } from "@spectrum/types"
-import { createFixedClock, err, isOk, ok } from "@spectrum/utils"
+import { type Result, createFixedClock, err, isOk, ok } from "@spectrum/utils"
 import type { AgentDriver, AgentStartInput } from "./driver"
 import { createFakeDriver } from "./fake-driver"
 import type { FakeScript } from "./fake-driver"
 import { createRunManager } from "./manager"
 import type { RunLaunchInput } from "./manager"
-import type { RunEventSink, SessionSink } from "./ports"
+import type {
+  NameGenError,
+  NameGeneratorPort,
+  RunEventSink,
+  SessionSink,
+} from "./ports"
 import type { RunnerOutbound } from "./protocol"
 
 const sessionId = SessionIdSchema.parse(
@@ -1111,6 +1116,318 @@ describe("createRunManager session naming", () => {
     // here we assert markUserNamed is idempotent and a no-op for unknown ids.
     expect(manager.markUserNamed(sessionId)).toBeUndefined()
     expect(manager.markUserNamed(otherId as never)).toBeUndefined()
+  })
+})
+
+describe("createRunManager AI session naming", () => {
+  // Testable fake for the name generator port. Mirrors the existing pattern of
+  // fakes in manager.test.ts: captures args, lets each call resolve or reject
+  // on demand. The `modelId` default of the AI naming port is the constant below.
+  const aiModelId = "mdl_ai_namer" as ModelId
+  const makeGenerateNameFake = (): {
+    fake: NameGeneratorPort
+    calls: Array<{
+      modelId: ModelId
+      firstPrompt: string
+      signal: AbortSignal
+    }>
+    resolveNext: (value: string) => void
+    rejectNext: (error: NameGenError) => void
+  } => {
+    const calls: Array<{
+      modelId: ModelId
+      firstPrompt: string
+      signal: AbortSignal
+    }> = []
+    // The generator contract: resolve with `ok(value)` on success or
+    // `err({ kind, ... })` on failure. The "aborted" case is a RESOLVED
+    // `err({ kind: "aborted" })`, not a rejection — so the manager's
+    // `.then(r => !r.ok)` branch handles it without an unhandled rejection.
+    const resolvers: Array<(r: Result<string, NameGenError>) => void> = []
+    const fake: NameGeneratorPort = {
+      generate: (modelId, firstPrompt, signal) =>
+        new Promise((resolve) => {
+          calls.push({ modelId, firstPrompt, signal })
+          if (signal.aborted) {
+            resolve(err({ kind: "aborted" }))
+            return
+          }
+          signal.addEventListener("abort", () => {
+            resolve(err({ kind: "aborted" }))
+          })
+          resolvers.push((r) => resolve(r))
+        }),
+    }
+    return {
+      fake,
+      calls,
+      resolveNext: (v: string) => {
+        const r = resolvers.shift()
+        if (r) r(ok(v))
+      },
+      rejectNext: (e) => {
+        const r = resolvers.shift()
+        if (r) r(err(e))
+      },
+    }
+  }
+
+  it("writes the fallback first, then refines with the AI name when it resolves", async () => {
+    const userDelta: CanonicalEvent = {
+      type: "text-delta",
+      runnerId: root,
+      messageId: "mu1",
+      text: "help me debug a flaky CI test",
+      role: "user",
+    }
+    const { fake, calls, resolveNext } = makeGenerateNameFake()
+    const sessionNameModelId = async () => aiModelId
+    const { deps, renamed, sent } = makeDeps(scriptOf([userDelta]))
+    const manager = createRunManager({
+      ...deps,
+      generateName: fake,
+      sessionNameModelId,
+    })
+    manager.launch({ harnessId, cwd: "/tmp", env: {} })
+    // Fallback written first (sync).
+    expect(renamed[0]?.name).toBe("help me debug a flaky CI test")
+    // Flush microtasks so sessionNameModelId().then(generate) runs.
+    await new Promise((r) => setTimeout(r, 0))
+    // generateName was called.
+    expect(calls).toHaveLength(1)
+    expect(calls[0]?.firstPrompt).toBe("help me debug a flaky CI test")
+    // Resolve the AI name.
+    resolveNext("Fix flaky test")
+    // Flush microtasks.
+    await new Promise((r) => setTimeout(r, 0))
+    // Now the second rename landed.
+    expect(renamed.map((r) => r.name)).toEqual([
+      "help me debug a flaky CI test",
+      "Fix flaky test",
+    ])
+    expect(
+      sent.filter((m) => m.type === "session-renamed").map((m) => m),
+    ).toContainEqual({
+      type: "session-renamed",
+      id: sessionId,
+      name: "Fix flaky test",
+    })
+  })
+
+  it("keeps the fallback and warns (no throw, no second rename) when generation fails", async () => {
+    const userDelta: CanonicalEvent = {
+      type: "text-delta",
+      runnerId: root,
+      messageId: "mu1",
+      text: "first prompt",
+      role: "user",
+    }
+    const { fake, rejectNext } = makeGenerateNameFake()
+    const sessionNameModelId = async () => aiModelId
+    const { deps, renamed, sent } = makeDeps(scriptOf([userDelta]))
+    const { logger, calls: logCalls } = createFakeLogger()
+    const manager = createRunManager({
+      ...deps,
+      generateName: fake,
+      sessionNameModelId,
+      logger,
+    })
+    manager.launch({ harnessId, cwd: "/tmp", env: {} })
+    // Fallback written first.
+    expect(renamed).toHaveLength(1)
+    expect(renamed[0]?.name).toBe("first prompt")
+    // Flush microtasks so sessionNameModelId().then(generate) runs and generate's
+    // executor registers its resolvers/rejecters.
+    await new Promise((r) => setTimeout(r, 0))
+    // Reject the AI generation.
+    rejectNext({ kind: "generation-failed", detail: "boom" })
+    await new Promise((r) => setTimeout(r, 0))
+    // Still only one rename, and a warn was logged.
+    expect(renamed).toHaveLength(1)
+    expect(sent.filter((m) => m.type === "session-renamed")).toHaveLength(1)
+    const warn = logCalls.find(
+      (c) => c.level === "warn" && c.msg === "session name generation failed",
+    )
+    expect(warn).toBeDefined()
+    expect(warn?.fields).toMatchObject({
+      sessionId,
+      kind: "generation-failed",
+    })
+  })
+
+  it("does not overwrite a user-set name (markUserNamed flips to 'user')", async () => {
+    const userDelta: CanonicalEvent = {
+      type: "text-delta",
+      runnerId: root,
+      messageId: "mu1",
+      text: "first prompt",
+      role: "user",
+    }
+    const { fake, resolveNext } = makeGenerateNameFake()
+    const sessionNameModelId = async () => aiModelId
+    const { deps, renamed, sent } = makeDeps(scriptOf([userDelta]))
+    const manager = createRunManager({
+      ...deps,
+      generateName: fake,
+      sessionNameModelId,
+    })
+    manager.launch({ harnessId, cwd: "/tmp", env: {} })
+    // Fallback was written (sync).
+    expect(renamed).toHaveLength(1)
+    // Flush microtasks so sessionNameModelId().then(generate) runs.
+    await new Promise((r) => setTimeout(r, 0))
+    // Mark as user-named BEFORE the AI result resolves.
+    manager.markUserNamed(sessionId)
+    resolveNext("AI generated name")
+    await new Promise((r) => setTimeout(r, 0))
+    // No second rename.
+    expect(renamed).toHaveLength(1)
+    expect(renamed[0]?.name).toBe("first prompt")
+    expect(sent.filter((m) => m.type === "session-renamed")).toHaveLength(1)
+  })
+
+  it("aborts the in-flight generation when the session closes", async () => {
+    const userDelta: CanonicalEvent = {
+      type: "text-delta",
+      runnerId: root,
+      messageId: "mu1",
+      text: "first prompt",
+      role: "user",
+    }
+    const finish: CanonicalEvent = {
+      type: "runner-finished",
+      runnerId: root,
+      status: "completed",
+    }
+    const { fake, calls } = makeGenerateNameFake()
+    const sessionNameModelId = async () => aiModelId
+    const { deps, renamed } = makeDeps(scriptOf([userDelta, finish]))
+    const manager = createRunManager({
+      ...deps,
+      generateName: fake,
+      sessionNameModelId,
+    })
+    manager.launch({ harnessId, cwd: "/tmp", env: {} })
+    // Flush microtasks so sessionNameModelId().then(generate) runs.
+    await new Promise((r) => setTimeout(r, 0))
+    // generateName was called.
+    expect(calls).toHaveLength(1)
+    const signal = calls[0]?.signal
+    expect(signal).toBeDefined()
+    // Flush the start batch through FakeDriver so the finish event runs.
+    await new Promise((r) => setTimeout(r, 0))
+    // The signal should now be aborted.
+    expect(signal?.aborted).toBe(true)
+    // No second rename because the AI call was aborted.
+    expect(renamed).toHaveLength(1)
+    expect(renamed[0]?.name).toBe("first prompt")
+  })
+
+  it("skips refinement entirely when sessionNameModelId resolves null", async () => {
+    const userDelta: CanonicalEvent = {
+      type: "text-delta",
+      runnerId: root,
+      messageId: "mu1",
+      text: "first prompt",
+      role: "user",
+    }
+    const { fake, calls } = makeGenerateNameFake()
+    const sessionNameModelId = async () => null
+    const { deps, renamed } = makeDeps(scriptOf([userDelta]))
+    const manager = createRunManager({
+      ...deps,
+      generateName: fake,
+      sessionNameModelId,
+    })
+    manager.launch({ harnessId, cwd: "/tmp", env: {} })
+    // Flush microtasks so sessionNameModelId().then runs (and skips generate).
+    await new Promise((r) => setTimeout(r, 0))
+    // generateName.generate is never called when modelId is null.
+    expect(calls).toHaveLength(0)
+    // Only the fallback is written.
+    expect(renamed).toHaveLength(1)
+    expect(renamed[0]?.name).toBe("first prompt")
+  })
+
+  it("skips refinement when generateName is absent", async () => {
+    const userDelta: CanonicalEvent = {
+      type: "text-delta",
+      runnerId: root,
+      messageId: "mu1",
+      text: "first prompt",
+      role: "user",
+    }
+    const sessionNameModelId = async () => aiModelId
+    const { deps, renamed } = makeDeps(scriptOf([userDelta]))
+    const manager = createRunManager({ ...deps, sessionNameModelId })
+    manager.launch({ harnessId, cwd: "/tmp", env: {} })
+    // No generateName port = no AI refine. Only the fallback.
+    expect(renamed).toHaveLength(1)
+    expect(renamed[0]?.name).toBe("first prompt")
+  })
+
+  it("lets a later harness title overwrite an AI name (last auto-writer wins)", async () => {
+    const userDelta: CanonicalEvent = {
+      type: "text-delta",
+      runnerId: root,
+      messageId: "mu1",
+      text: "first prompt",
+      role: "user",
+    }
+    // The titled event fires AFTER the AI refinement resolves.
+    const titled: CanonicalEvent = {
+      type: "runner-started",
+      runnerId: root,
+      title: "Harness title beats AI",
+    }
+    // Custom driver: lets the test emit events on demand so the harness title
+    // arrives AFTER the AI result resolves. The FakeScript's "start" batch fires
+    // all events synchronously, which would put the title before the AI result.
+    let eventCb: ((e: CanonicalEvent) => void) | null = null
+    const driver: AgentDriver = {
+      start: () =>
+        ok({
+          rootRunnerId: root,
+          onEvent: (cb) => {
+            eventCb = cb
+          },
+          send: () => ok(undefined),
+          respondApproval: () => ok(undefined),
+          respondQuestion: () => ok(undefined),
+          interrupt: () => ok(undefined),
+          close: () => ok(undefined),
+        }),
+    }
+    const { fake, resolveNext } = makeGenerateNameFake()
+    const sessionNameModelId = async () => aiModelId
+    const { deps, renamed } = makeDeps(scriptOf([])) // empty start batch
+    const manager = createRunManager({
+      ...deps,
+      driver,
+      generateName: fake,
+      sessionNameModelId,
+    })
+    manager.launch({ harnessId, cwd: "/tmp", env: {} })
+    // Drive the first user prompt (fallback written).
+    expect(eventCb).not.toBeNull()
+    const emit: (e: CanonicalEvent) => void = eventCb ?? ((): void => {})
+    emit(userDelta)
+    // First the fallback.
+    expect(renamed[0]?.name).toBe("first prompt")
+    // Flush microtasks so generate's resolver is registered, then resolve it.
+    await new Promise((r) => setTimeout(r, 0))
+    resolveNext("AI generated")
+    await new Promise((r) => setTimeout(r, 0))
+    // Now the AI name was written.
+    expect(renamed.map((r) => r.name)).toEqual(["first prompt", "AI generated"])
+    // Drive the harness title event. Since nameSource is "auto" and source !== "user",
+    // the harness title overwrites the AI name (last-auto-writer-wins).
+    emit(titled)
+    expect(renamed.map((r) => r.name)).toEqual([
+      "first prompt",
+      "AI generated",
+      "Harness title beats AI",
+    ])
   })
 })
 

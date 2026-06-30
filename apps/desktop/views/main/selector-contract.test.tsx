@@ -863,5 +863,26 @@ const renderAllStates = async (): Promise<ReadonlyArray<ParentNode>> => {
     cleanup()
   }
 
+  // ── State 10: Settings — Updates page (moved-up updater + timeouts sections) ─
+  // Renders: .settings-updates* and .settings-timeouts* selectors that moved here
+  // from the General page in the auto-session-name work. baseStubs already includes
+  // checkForUpdate/getUpdateState (see State 4) and getTimeoutSettings.
+  {
+    const client = createFakeIpcClient(baseStubs)
+    const { container } = render(
+      <App
+        client={client}
+        runnerClient={fakeRunnerClient}
+        updateClient={createUpdateClient()}
+        initialView="settings/updates"
+      />,
+    )
+    await waitFor(() => {
+      expect(container.querySelector(".settings-updates")).not.toBeNull()
+    })
+    containers.push(container.cloneNode(true) as ParentNode)
+    cleanup()
+  }
+
   return containers
 }

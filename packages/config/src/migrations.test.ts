@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test"
 import { isOk } from "@spectrum/utils"
 import { migrations, runMigrations } from "./migrations"
-import { CURRENT_CONFIG_VERSION } from "./schema"
+import { CURRENT_CONFIG_VERSION, ConfigSchema } from "./schema"
 
 // A realistic v1 document: providers carried their key inline, no `secrets` field, no settings.
 const v1Config = {
@@ -20,8 +20,8 @@ const v1Config = {
 }
 
 describe("migrations", () => {
-  it("ships ordered v1->v2, v2->v3, v3->v4, v4->v5, v5->v6, v6->v7, v7->v8, v8->v9, v9->v10, v10->v11, and v11->v12 migrations", () => {
-    expect(migrations).toHaveLength(11)
+  it("ships ordered v1->v2, v2->v3, v3->v4, v4->v5, v5->v6, v6->v7, v7->v8, v8->v9, v9->v10, v10->v11, v11->v12, and v12->v13 migrations", () => {
+    expect(migrations).toHaveLength(12)
     expect(migrations[0]?.from).toBe(1)
     expect(migrations[0]?.to).toBe(2)
     expect(migrations[1]?.from).toBe(2)
@@ -44,6 +44,8 @@ describe("migrations", () => {
     expect(migrations[9]?.to).toBe(11)
     expect(migrations[10]?.from).toBe(11)
     expect(migrations[10]?.to).toBe(12)
+    expect(migrations[11]?.from).toBe(12)
+    expect(migrations[11]?.to).toBe(13)
   })
 })
 
@@ -78,6 +80,7 @@ describe("runMigrations", () => {
         firstTokenTimeoutMs: 120000,
         interTokenTimeoutMs: 60000,
         windowBounds: null,
+        sessionNameModelId: null,
       },
     }
     expect(runMigrations(current)).toEqual({ ok: true, value: current })
@@ -473,7 +476,43 @@ describe("v11 → v12 (add settings.windowBounds)", () => {
     const result = runMigrations(raw)
     expect(result.ok).toBe(true)
     if (!result.ok) return
-    expect(result.value.version).toBe(12)
+    expect(result.value.version).toBe(CURRENT_CONFIG_VERSION)
     expect(result.value.settings.windowBounds).toBeNull()
+  })
+})
+
+describe("v12 → v13 migration (sessionNameModelId)", () => {
+  it("migrates a v12 doc to v13 with the new field defaulted to null", () => {
+    const v12 = {
+      version: 12,
+      providers: [],
+      models: [],
+      settings: { proxyPort: 4000, proxyHost: "127.0.0.1" },
+    }
+    const migrated = runMigrations(v12 as Record<string, unknown>)
+    expect(migrated.ok).toBe(true)
+    if (!migrated.ok) return
+    expect(migrated.value.version).toBe(CURRENT_CONFIG_VERSION)
+    // round-trips through ConfigSchema
+    const parsed = ConfigSchema.parse(migrated.value)
+    expect(parsed.settings.sessionNameModelId).toBeNull()
+  })
+
+  it("preserves an existing v13 doc with a set id unchanged", () => {
+    const v13 = {
+      version: 13,
+      providers: [],
+      models: [],
+      settings: {
+        proxyPort: 4000,
+        proxyHost: "127.0.0.1",
+        sessionNameModelId: "mdl_xyz",
+      },
+    }
+    const migrated = runMigrations(v13 as Record<string, unknown>)
+    expect(migrated.ok).toBe(true)
+    if (!migrated.ok) return
+    const parsed = ConfigSchema.parse(migrated.value)
+    expect(parsed.settings.sessionNameModelId).toBe("mdl_xyz")
   })
 })

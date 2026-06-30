@@ -36,6 +36,8 @@ const METHOD_NAMES = [
   "getSettings",
   "getTimeoutSettings",
   "updateTimeoutSettings",
+  "getSessionNamingSettings",
+  "updateSessionNamingSettings",
   "getProjects",
   "setCollapsedProjects",
   "getRunnerSocketUrl",

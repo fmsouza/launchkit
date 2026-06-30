@@ -10,10 +10,12 @@ import {
   HarnessesPage,
   ModelsPage,
   ProvidersPage,
+  UpdatesPage,
 } from "../pages"
 
 const SECTIONS = [
   { key: "general", label: "General" },
+  { key: "updates", label: "Updates" },
   { key: "providers", label: "Providers" },
   { key: "models", label: "Models" },
   { key: "harnesses", label: "Harnesses" },
@@ -85,6 +87,8 @@ const detailFor = (section: string): ReactNode => {
       return <HarnessesPage />
     case "data":
       return <DataPageConnected />
+    case "updates":
+      return <UpdatesPage />
     default:
       return <GeneralPage />
   }

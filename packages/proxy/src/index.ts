@@ -39,6 +39,18 @@ export type {
 export { createModelLister, createFetchHttpGet } from "./model-lister"
 export type { ModelLister, ModelListerInput, HttpGet } from "./model-lister"
 export {
+  createNameGenerator,
+  NAME_GEN_TIMEOUT_MS,
+  NAME_MAX_CHARS,
+  NAME_GEN_MAX_TOKENS,
+} from "./name-generator"
+export type {
+  NameGenerator,
+  NameGeneratorDeps,
+  NameGenError,
+} from "./name-generator"
+export { buildNamePrompt, NAME_PROMPT_MAX } from "./session-name-prompt"
+export {
   createInMemoryRuntimeState,
   createFileRuntimeState,
 } from "./runtime-state"

@@ -2321,3 +2321,69 @@ describe("createIpcHandlers.updateTimeoutSettings", () => {
     expect(saved?.settings.lastSelectedHarnessId).toBe("claude")
   })
 })
+
+describe("createIpcHandlers.getSessionNamingSettings", () => {
+  it("returns the configured id when one has been persisted", async () => {
+    const { ctx } = makeCtx()
+    const loaded = (await ctx.config.load()).value
+    await ctx.config.save({
+      ...loaded,
+      settings: { ...loaded.settings, sessionNameModelId: "mdl_1" },
+    } as Config)
+    const handlers = createIpcHandlers(ctx)
+
+    const r = await handlers.getSessionNamingSettings(undefined)
+
+    expect(r).toEqual({ sessionNameModelId: "mdl_1" })
+  })
+
+  it("returns null when the session name model has not been set", async () => {
+    const { ctx } = makeCtx()
+    const handlers = createIpcHandlers(ctx)
+
+    const r = await handlers.getSessionNamingSettings(undefined)
+
+    expect(r).toEqual({ sessionNameModelId: null })
+  })
+})
+
+describe("createIpcHandlers.updateSessionNamingSettings", () => {
+  it("persists the id into settings.sessionNameModelId and returns null on success", async () => {
+    const { ctx, saves } = makeCtx()
+    const handlers = createIpcHandlers(ctx)
+
+    const r = await handlers.updateSessionNamingSettings({
+      sessionNameModelId: "mdl_2",
+    })
+
+    expect(r).toBeNull()
+    expect(saves.at(-1)?.settings.sessionNameModelId).toBe("mdl_2")
+  })
+
+  it("persists null (off) when the caller clears the session name model", async () => {
+    const { ctx, saves } = makeCtx()
+    const loaded = (await ctx.config.load()).value
+    await ctx.config.save({
+      ...loaded,
+      settings: { ...loaded.settings, sessionNameModelId: "mdl_will_clear" },
+    } as Config)
+    const handlers = createIpcHandlers(ctx)
+
+    const r = await handlers.updateSessionNamingSettings({
+      sessionNameModelId: null,
+    })
+
+    expect(r).toBeNull()
+    expect(saves.at(-1)?.settings.sessionNameModelId).toBeNull()
+  })
+
+  it("raises a handler error when the underlying save fails", async () => {
+    const { ctx } = makeCtx()
+    ;(ctx.config as { save: unknown }).save = async () => err({ kind: "io" })
+    const handlers = createIpcHandlers(ctx)
+
+    await expect(
+      handlers.updateSessionNamingSettings({ sessionNameModelId: null }),
+    ).rejects.toThrow()
+  })
+})

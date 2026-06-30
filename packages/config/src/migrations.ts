@@ -240,6 +240,18 @@ const v11ToV12: Migration = {
   migrate: (raw) => ({ ...raw, version: 12 }),
 }
 
+/**
+ * v13 adds `settings.sessionNameModelId` (the model id used to AI-generate
+ * session names, or null = off). The schema default backfills the field on
+ * parse, so this step is a version stamp only — same pattern as recent
+ * additive migrations.
+ */
+const v12ToV13: Migration = {
+  from: 12,
+  to: 13,
+  migrate: (raw) => ({ ...raw, version: 13 }),
+}
+
 /** Ordered list of forward migrations. Append a new step whenever `CURRENT_CONFIG_VERSION` bumps. */
 export const migrations: readonly Migration[] = [
   v1ToV2,
@@ -253,6 +265,7 @@ export const migrations: readonly Migration[] = [
   v9ToV10,
   v10ToV11,
   v11ToV12,
+  v12ToV13,
 ]
 
 /**
