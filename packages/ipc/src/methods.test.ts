@@ -402,6 +402,8 @@ describe("IpcMethodSchemas", () => {
       "getSettings",
       "getTimeoutSettings",
       "updateTimeoutSettings",
+      "getSessionNamingSettings",
+      "updateSessionNamingSettings",
       "getProjects",
       "setCollapsedProjects",
       "deleteProject",

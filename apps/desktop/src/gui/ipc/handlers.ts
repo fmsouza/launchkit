@@ -496,6 +496,11 @@ export const createIpcHandlers = (ctx: GuiContext): IpcHandlers => {
       return null
     },
 
+    getSessionNamingSettings: async () =>
+      fail("getSessionNamingSettings: not implemented (Task 10)"),
+    updateSessionNamingSettings: async () =>
+      fail("updateSessionNamingSettings: not implemented (Task 10)"),
+
     // ── Projects ──────────────────────────────────────────────────────────────
     getProjects: async () => {
       const result = ctx.projects.list()

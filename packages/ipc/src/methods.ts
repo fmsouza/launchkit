@@ -350,6 +350,20 @@ export const UpdateTimeoutSettingsParamsSchema = z
   .strict()
 export const UpdateTimeoutSettingsResultSchema = VoidSchema
 
+// ── Session naming ─────────────────────────────────────────────────────────
+
+// Read the AI session-naming model id (null = off). Mirrors SettingsSchema.
+export const GetSessionNamingSettingsParamsSchema = z.undefined()
+export const GetSessionNamingSettingsResultSchema = z
+  .object({ sessionNameModelId: z.string().nullable() })
+  .strict()
+
+// Persist the AI session-naming model id (null = off; string = a ModelId). Mirrors SettingsSchema.
+export const UpdateSessionNamingSettingsParamsSchema = z
+  .object({ sessionNameModelId: z.string().nullable() })
+  .strict()
+export const UpdateSessionNamingSettingsResultSchema = VoidSchema
+
 // ── Projects ──────────────────────────────────────────────────────────────
 
 export const GetProjectsParamsSchema = z.undefined()
@@ -580,6 +594,14 @@ export const IpcMethodSchemas = {
   updateTimeoutSettings: {
     params: UpdateTimeoutSettingsParamsSchema,
     result: UpdateTimeoutSettingsResultSchema,
+  },
+  getSessionNamingSettings: {
+    params: GetSessionNamingSettingsParamsSchema,
+    result: GetSessionNamingSettingsResultSchema,
+  },
+  updateSessionNamingSettings: {
+    params: UpdateSessionNamingSettingsParamsSchema,
+    result: UpdateSessionNamingSettingsResultSchema,
   },
   getProjects: {
     params: GetProjectsParamsSchema,
