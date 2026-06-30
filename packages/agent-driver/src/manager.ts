@@ -9,7 +9,7 @@ import type { HarnessId, ModelId, RunnerId, SessionId } from "@spectrum/types"
 import { type Clock, type Result, isErr, isOk, ok } from "@spectrum/utils"
 import { deriveSessionName } from "./derive-session-name"
 import type { AgentDriver, AgentSession, DriverError } from "./driver"
-import type { RunEventSink, SessionSink } from "./ports"
+import type { NameGeneratorPort, RunEventSink, SessionSink } from "./ports"
 import type { RunnerInbound, RunnerOutbound } from "./protocol"
 
 export interface RunLaunchInput {
@@ -59,6 +59,18 @@ export interface RunManagerDeps {
     readonly modelId?: ModelId
     readonly cwd: string
   }) => Promise<RunLaunchInput>
+  /**
+   * The live model id to use for AI session naming (null = off). Async so the
+   * composition root can read the live cached config without a startup snapshot;
+   * a Settings change takes effect on the next session without restart. Absent
+   * (tests) ⇒ AI naming disabled.
+   */
+  readonly sessionNameModelId?: () => Promise<ModelId | null>
+  /**
+   * Optional AI name generator (proxy-backed). Absent (tests) ⇒ AI naming
+   * disabled — the manager stays free of `@spectrum/proxy`.
+   */
+  readonly generateName?: NameGeneratorPort
   send(message: RunnerOutbound): void
 }
 

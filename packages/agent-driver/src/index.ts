@@ -7,7 +7,7 @@ export type {
 } from "./driver"
 export type { FakeReaction, FakeScript } from "./fake-driver"
 export { createFakeDriver, demoScript } from "./fake-driver"
-export type { RunEventSink, SessionSink } from "./ports"
+export type { NameGenError, NameGeneratorPort, RunEventSink, SessionSink } from "./ports"
 export type { RunnerInbound, RunnerOutbound } from "./protocol"
 export { decodeRunnerInbound } from "./protocol"
 export type { RunLaunchInput, RunManager, RunManagerDeps } from "./manager"

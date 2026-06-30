@@ -40,3 +40,22 @@ export interface RunEventSink {
   ): Result<{ seq: number }, { detail: string }>
   read(sessionId: SessionId): Result<readonly StoredEvent[], { detail: string }>
 }
+
+/** Error from the injected name generator (kept structural so the manager stays proxy-free). */
+export type NameGenError =
+  | { readonly kind: "no-model-selected" }
+  | { readonly kind: "route-not-found" }
+  | { readonly kind: "provider-not-found" }
+  | { readonly kind: "model-unavailable"; readonly detail?: string }
+  | { readonly kind: "generation-failed"; readonly detail?: string }
+  | { readonly kind: "timed-out" }
+  | { readonly kind: "aborted" }
+
+/** Optional one-shot AI session-name generator, injected by the composition root. */
+export interface NameGeneratorPort {
+  generate(
+    modelId: ModelId,
+    firstPrompt: string,
+    signal: AbortSignal,
+  ): Promise<Result<string, NameGenError>>
+}
