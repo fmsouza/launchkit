@@ -2,7 +2,7 @@ import { ModelRouteSchema, ProviderSchema } from "@spectrum/types"
 import { z } from "zod"
 
 /** Bump on any breaking config shape change; add a matching `Migration` (see migrations.ts). */
-export const CURRENT_CONFIG_VERSION = 12
+export const CURRENT_CONFIG_VERSION = 13
 
 /**
  * Per-harness "last used" prefs. `mode` is the normalized permission mode the user last selected
@@ -83,6 +83,17 @@ export const SettingsSchema = z
       })
       .nullable()
       .default(null),
+    /**
+     * The `ModelId` of a pre-registered model used to generate short, concise
+     * session names from the first user prompt. `null` (default) = off: the
+     * session name is the truncated first prompt (the existing fallback). When
+     * non-null, the referenced `ModelRoute` must still exist in `models[]` at
+     * use time; a dangling id (model deleted) is treated as off there — never
+     * rewrites the config. Plain `string | null` (not `ModelIdSchema`) so a
+     * stray id from a deleted model doesn't fail validation and break the whole
+     * config load.
+     */
+    sessionNameModelId: z.string().nullable().default(null),
   })
   .strict()
 

@@ -40,6 +40,7 @@ describe("@spectrum/config barrel", () => {
         firstTokenTimeoutMs: 120000,
         interTokenTimeoutMs: 60000,
         windowBounds: null,
+        sessionNameModelId: null,
       },
     }
     const saved = await store.save(next)

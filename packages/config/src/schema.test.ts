@@ -30,6 +30,7 @@ describe("SettingsSchema", () => {
       firstTokenTimeoutMs: 120000,
       interTokenTimeoutMs: 60000,
       windowBounds: null,
+      sessionNameModelId: null,
     })
   })
 
@@ -168,6 +169,7 @@ describe("ConfigSchema", () => {
         firstTokenTimeoutMs: 120000,
         interTokenTimeoutMs: 60000,
         windowBounds: null,
+        sessionNameModelId: null,
       },
     }
     expect(ConfigSchema.parse(config)).toEqual(config)
@@ -245,13 +247,40 @@ describe("defaultConfig", () => {
         firstTokenTimeoutMs: 120000,
         interTokenTimeoutMs: 60000,
         windowBounds: null,
+        sessionNameModelId: null,
       },
     })
   })
   it("produces a config that satisfies ConfigSchema", () => {
     expect(ConfigSchema.safeParse(defaultConfig()).success).toBe(true)
   })
-  it("uses the bumped CURRENT_CONFIG_VERSION of 12", () => {
-    expect(CURRENT_CONFIG_VERSION).toBe(12)
+  it("uses the bumped CURRENT_CONFIG_VERSION of 13", () => {
+    expect(CURRENT_CONFIG_VERSION).toBe(13)
+  })
+})
+
+describe("SettingsSchema sessionNameModelId", () => {
+  it("defaults to null when absent", () => {
+    const parsed = SettingsSchema.parse({})
+    expect(parsed.sessionNameModelId).toBeNull()
+  })
+
+  it("accepts a string id", () => {
+    const parsed = SettingsSchema.parse({ sessionNameModelId: "mdl_abc" })
+    expect(parsed.sessionNameModelId).toBe("mdl_abc")
+  })
+
+  it("rejects non-string non-null values", () => {
+    expect(() => SettingsSchema.parse({ sessionNameModelId: 123 })).toThrow()
+    expect(() => SettingsSchema.parse({ sessionNameModelId: true })).toThrow()
+  })
+
+  it("exposes the bumped current config version", () => {
+    expect(CURRENT_CONFIG_VERSION).toBe(13)
+  })
+
+  it("defaults the new field in defaultConfig()", () => {
+    expect(defaultConfig().settings.sessionNameModelId).toBeNull()
+    expect(defaultConfig().version).toBe(13)
   })
 })
