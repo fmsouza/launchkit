@@ -60,7 +60,7 @@ describe("SubRunnerList", () => {
     // The root's title must not appear as a roster row. The empty-state hint
     // must not appear either (two children exist).
     expect(screen.queryByText("main")).toBeNull()
-    expect(screen.queryByText(/No sub-agents/i)).toBeNull()
+    expect(screen.queryByText(/No agents yet/i)).toBeNull()
     cleanup()
   })
 
@@ -177,7 +177,9 @@ describe("SubRunnerList", () => {
         onOpen={() => {}}
       />,
     )
-    expect(screen.getByText(/No sub-agents/i)).toBeInTheDocument()
+    expect(screen.getByText(/No agents yet/i)).toBeInTheDocument()
+    // The roster container's accessible name aligns with the "Agents" rail tab.
+    expect(screen.getByLabelText("Agents")).toBeInTheDocument()
     cleanup()
   })
 

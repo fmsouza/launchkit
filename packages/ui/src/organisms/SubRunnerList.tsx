@@ -46,12 +46,12 @@ export const SubRunnerList = ({
   const subs = orderedSubs(runners, rootId)
   if (subs.length === 0)
     return (
-      <div className="lk-sub-runner-list">
-        <p className="lk-sub-runner-list__empty">No sub-agents yet</p>
+      <div className="lk-sub-runner-list" aria-label="Agents">
+        <p className="lk-sub-runner-list__empty">No agents yet</p>
       </div>
     )
   return (
-    <ul className="lk-sub-runner-list" aria-label="Sub-agents">
+    <ul className="lk-sub-runner-list" aria-label="Agents">
       {subs.map((r) => (
         <li
           key={String(r.id)}
