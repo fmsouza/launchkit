@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test"
 import { isOk } from "@spectrum/utils"
 import { migrations, runMigrations } from "./migrations"
-import { CURRENT_CONFIG_VERSION } from "./schema"
+import { CURRENT_CONFIG_VERSION, ConfigSchema } from "./schema"
 
 // A realistic v1 document: providers carried their key inline, no `secrets` field, no settings.
 const v1Config = {
@@ -480,10 +480,6 @@ describe("v11 → v12 (add settings.windowBounds)", () => {
     expect(result.value.settings.windowBounds).toBeNull()
   })
 })
-
-import { CURRENT_CONFIG_VERSION } from "./schema"
-import { runMigrations } from "./migrations"
-import { ConfigSchema } from "./schema"
 
 describe("v12 → v13 migration (sessionNameModelId)", () => {
   it("migrates a v12 doc to v13 with the new field defaulted to null", () => {
