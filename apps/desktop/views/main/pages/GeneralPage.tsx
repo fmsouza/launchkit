@@ -34,13 +34,18 @@ export const GeneralPage = (): ReactElement => {
           m.value.map((r) => ({
             id: r.id,
             providerModel: r.providerModel,
+            // `ProviderId` is a branded string; `ModelOption.providerId` is intentionally
+            // `string` because it's used as a `Map<string, string>` key below.
             providerId: String(r.providerId),
           })),
         )
       }
       if (p.ok) {
         const map = new Map<string, string>()
-        for (const prov of p.value) map.set(String(prov.id), prov.name)
+        for (const prov of p.value) {
+          // `ProviderId` is a branded string; `Map<string, string>` keys need the raw string.
+          map.set(String(prov.id), prov.name)
+        }
         setProviderName(map)
       }
     })

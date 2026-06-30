@@ -27,6 +27,11 @@ const makeConfigStore = (config: Config): ConfigStore => ({
   save: async () => ok(undefined),
 })
 
+const failingConfigStore: ConfigStore = {
+  load: async () => err({ kind: "parse-failed", detail: "io" }),
+  save: async () => ok(undefined),
+}
+
 const okFactory = (handle: unknown) => ({
   getModel: async () => ok(handle),
   getModelFromResolved: async () => ok(handle),
@@ -84,6 +89,20 @@ describe("createNameGenerator", () => {
     expect(r.ok).toBe(true)
     if (!r.ok) return
     expect(r.value.length).toBe(NAME_MAX_CHARS)
+  })
+
+  it("returns config-load-failed when config.load returns an error", async () => {
+    const gen = createNameGenerator({
+      config: failingConfigStore,
+      // biome-ignore lint/suspicious/noExplicitAny: ProviderFactory shape is heavy; the test only needs getModel.
+      factory: okFactory("HANDLE") as any,
+      clock: { now: () => new Date("2026-06-30T00:00:00Z") },
+      generateText: async () => ({ text: "x" }),
+    })
+    const r = await gen.generate(mid, "p", new AbortController().signal)
+    expect(r).toEqual(
+      err({ kind: "config-load-failed", detail: "parse-failed" }),
+    )
   })
 
   it("returns route-not-found when the model id is not in config", async () => {

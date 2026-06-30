@@ -44,6 +44,7 @@ export interface RunEventSink {
 /** Error from the injected name generator (kept structural so the manager stays proxy-free). */
 export type NameGenError =
   | { readonly kind: "no-model-selected" }
+  | { readonly kind: "config-load-failed"; readonly detail: string }
   | { readonly kind: "route-not-found" }
   | { readonly kind: "provider-not-found" }
   | { readonly kind: "model-unavailable"; readonly detail?: string }

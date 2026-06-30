@@ -9,6 +9,7 @@ import { buildNamePrompt } from "./session-name-prompt"
 
 export type NameGenError =
   | { readonly kind: "no-model-selected" }
+  | { readonly kind: "config-load-failed"; readonly detail: string }
   | { readonly kind: "route-not-found" }
   | { readonly kind: "provider-not-found" }
   | { readonly kind: "model-unavailable"; readonly detail?: string }
@@ -62,7 +63,12 @@ export const createNameGenerator = (deps: NameGeneratorDeps): NameGenerator => {
     if (signal.aborted) return err({ kind: "aborted" })
 
     const loaded = await deps.config.load()
-    if (!loaded.ok) return err({ kind: "route-not-found" })
+    if (!loaded.ok) {
+      logger?.warn("session name config load failed", {
+        kind: "config-load-failed",
+      })
+      return err({ kind: "config-load-failed", detail: loaded.error.kind })
+    }
     const cfg: Config = loaded.value
     const route: ModelRoute | undefined = cfg.models.find(
       (m) => m.id === modelId,
