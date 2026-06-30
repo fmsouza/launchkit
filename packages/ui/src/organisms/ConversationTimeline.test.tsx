@@ -252,6 +252,42 @@ describe("ConversationTimeline", () => {
     cleanup()
   })
 
+  it("shows the spawning tool-call description as the sub-runner detail when the child has no title", () => {
+    const events: readonly CanonicalEvent[] = [
+      { type: "runner-started", runnerId: root },
+      {
+        type: "tool-call-started",
+        runnerId: root,
+        callId: "c10",
+        tool: "Task",
+        input: { description: "Investigate tool rendering", prompt: "long…" },
+      },
+      {
+        type: "runner-started",
+        runnerId: child,
+        parentRunnerId: root,
+        spawnedByCallId: "c10",
+        // no title
+      },
+    ]
+    const state = fold(events)
+    const runner = state.runners.get(root)
+    if (runner === undefined) throw new Error("no root runner")
+    render(
+      <ConversationTimeline
+        runner={runner}
+        runners={state.runners}
+        onOpenSubRunner={() => {}}
+        onDecide={() => {}}
+        onAnswer={() => {}}
+      />,
+    )
+    expect(screen.getByText("Investigate tool rendering")).toBeInTheDocument()
+    // The title line is the literal "Agent", not the runner's id or type.
+    expect(screen.getAllByText("Agent").length).toBeGreaterThanOrEqual(1)
+    cleanup()
+  })
+
   it("renders a question card and forwards the answer with requestId", () => {
     const state = fold([
       { type: "runner-started", runnerId: root },

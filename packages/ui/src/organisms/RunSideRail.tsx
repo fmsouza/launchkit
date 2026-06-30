@@ -80,7 +80,7 @@ export const RunSideRail = ({
   const terminalLabel = paneOpen ? "Hide terminal pane" : "Show terminal pane"
 
   // Collapsed: a thin vertical strip with an expand control and vertical
-  // Tasks/Sub-agent buttons (disabled when their content is empty). Always
+  // Tasks/Agents buttons (disabled when their content is empty). Always
   // renders — even when both are empty — so the rail never disappears. The
   // tasks count lives only inside the expanded TaskRail panel.
   if (collapsed) {
@@ -109,14 +109,14 @@ export const RunSideRail = ({
         <button
           type="button"
           className="lk-side-rail__vtab"
-          aria-label="Sub-agent"
+          aria-label="Agents"
           disabled={!subAvailable}
           onClick={() => {
             setSegment("sub")
             onToggleCollapsed()
           }}
         >
-          Sub-agent
+          Agents
         </button>
         <div className="lk-side-rail__footer">
           <Tooltip label={terminalLabel} placement="left">
@@ -133,9 +133,9 @@ export const RunSideRail = ({
     )
   }
 
-  // Expanded: one fixed structure. The Tasks/Sub-agent header is always
+  // Expanded: one fixed structure. The Tasks/Agents header is always
   // present; each tab is disabled when its content is empty. The body is
-  // always a real component. Sub-agent shows the roster when no sub is
+  // always a real component. Agents shows the roster when no sub is
   // focused, or the focused agent's timeline (with Back) when one is.
   const activeTaskList = subRunner !== undefined ? subTaskList : rootTaskList
   const showingTasks = segment === "tasks" && tasksAvailable
@@ -161,7 +161,7 @@ export const RunSideRail = ({
           disabled={!subAvailable}
           onClick={() => setSegment("sub")}
         >
-          Sub-agent
+          Agents
         </button>
         <button
           type="button"
@@ -195,7 +195,7 @@ export const RunSideRail = ({
         )
       ) : activeTaskList !== undefined ? (
         // Root-only with tasks: show them even though the default segment is "sub",
-        // because Sub-agent is unavailable.
+        // because Agents is unavailable.
         <TaskRail taskList={activeTaskList} onCollapse={onToggleCollapsed} />
       ) : null}
       <div className="lk-side-rail__footer">

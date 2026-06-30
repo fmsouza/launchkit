@@ -60,7 +60,7 @@ describe("SubRunnerList", () => {
     // The root's title must not appear as a roster row. The empty-state hint
     // must not appear either (two children exist).
     expect(screen.queryByText("main")).toBeNull()
-    expect(screen.queryByText(/No sub-agents/i)).toBeNull()
+    expect(screen.queryByText(/No agents yet/i)).toBeNull()
     cleanup()
   })
 
@@ -79,11 +79,88 @@ describe("SubRunnerList", () => {
         onOpen={() => {}}
       />,
     )
-    const titles = Array.from(
-      container.querySelectorAll(".lk-sub-runner-card__title"),
+    const details = Array.from(
+      container.querySelectorAll(".lk-sub-runner-card__detail"),
     ).map((el) => el.textContent)
-    // childA is running; childB completed → A first, then B.
-    expect(titles).toEqual(["search docs", "refactor module"])
+    // childA is running; childB completed → A first, then B. The started-for
+    // text (the child titles "search docs" / "refactor module") is now the detail.
+    expect(details).toEqual(["search docs", "refactor module"])
+    cleanup()
+  })
+
+  it("shows the literal title Agent and the started-for detail, not the agentType", () => {
+    // A child with BOTH a title and an agentType: under the old logic the title
+    // span showed the title and the detail showed the agentType. Under the new
+    // logic the title span is "Agent" and the detail shows the started-for text
+    // (subRunnerDetail prefers the child title, so the detail is the title).
+    const withType: RunState = (
+      [
+        { type: "runner-started", runnerId: root, title: "main" },
+        {
+          type: "tool-call-started",
+          runnerId: root,
+          callId: "c1",
+          tool: "Task",
+          input: { description: "ignored because child has title" },
+        },
+        {
+          type: "runner-started",
+          runnerId: childA,
+          parentRunnerId: root,
+          spawnedByCallId: "c1",
+          title: "search docs",
+          agentType: "general-purpose",
+        },
+      ] satisfies readonly CanonicalEvent[]
+    ).reduce(reduce, initialRunState)
+    const { container } = render(
+      <SubRunnerList
+        runners={withType.runners}
+        rootRunnerId={root}
+        onOpen={() => {}}
+      />,
+    )
+    const titles = container.querySelectorAll(".lk-sub-runner-card__title")
+    expect(titles.length).toBe(1)
+    expect(titles[0]?.textContent).toBe("Agent")
+    // The detail is the started-for text (subRunnerDetail returns the child
+    // title "search docs"); the agentType "general-purpose" is NOT shown.
+    expect(
+      container.querySelector(".lk-sub-runner-card__detail")?.textContent,
+    ).toBe("search docs")
+    expect(container.textContent ?? "").not.toContain("general-purpose")
+    cleanup()
+  })
+
+  it("derives the detail from the parent tool-call description when the child has no title", () => {
+    const noTitle: RunState = (
+      [
+        { type: "runner-started", runnerId: root, title: "main" },
+        {
+          type: "tool-call-started",
+          runnerId: root,
+          callId: "c1",
+          tool: "Task",
+          input: { description: "Investigate tool rendering" },
+        },
+        {
+          type: "runner-started",
+          runnerId: childA,
+          parentRunnerId: root,
+          spawnedByCallId: "c1",
+          agentType: "general-purpose",
+        },
+      ] satisfies readonly CanonicalEvent[]
+    ).reduce(reduce, initialRunState)
+    render(
+      <SubRunnerList
+        runners={noTitle.runners}
+        rootRunnerId={root}
+        onOpen={() => {}}
+      />,
+    )
+    expect(screen.getByText("Investigate tool rendering")).toBeInTheDocument()
+    expect(screen.queryByText("general-purpose")).toBeNull()
     cleanup()
   })
 
@@ -100,7 +177,9 @@ describe("SubRunnerList", () => {
         onOpen={() => {}}
       />,
     )
-    expect(screen.getByText(/No sub-agents/i)).toBeInTheDocument()
+    expect(screen.getByText(/No agents yet/i)).toBeInTheDocument()
+    // The roster container's accessible name aligns with the "Agents" rail tab.
+    expect(screen.getByLabelText("Agents")).toBeInTheDocument()
     cleanup()
   })
 

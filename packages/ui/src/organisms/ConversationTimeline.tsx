@@ -15,7 +15,7 @@ import { ReasoningBlock } from "../molecules/ReasoningBlock"
 import { SubRunnerCard } from "../molecules/SubRunnerCard"
 import { ToolCallCard } from "../molecules/ToolCallCard"
 import { UsageFooter } from "../molecules/UsageFooter"
-import { subAgentDetail } from "../molecules/subAgentDetail"
+import { subRunnerDetail } from "../molecules/subRunnerDetail"
 
 export type ConversationTimelineProps = {
   readonly runner: RunnerState
@@ -109,7 +109,7 @@ export const ConversationTimeline = ({
           case "tool-call": {
             if (item.spawnedRunnerId !== undefined) {
               const childRunner = runners.get(item.spawnedRunnerId)
-              const detail = childRunner?.title ?? subAgentDetail(item.input)
+              const detail = subRunnerDetail(item.spawnedRunnerId, runners)
               return (
                 <SubRunnerCard
                   key={`s-${item.callId}`}

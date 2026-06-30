@@ -1,6 +1,7 @@
 import type { RunnerId, RunnerState } from "@spectrum/agent-events"
 import type { ReactElement } from "react"
 import { SubRunnerCard } from "../molecules/SubRunnerCard"
+import { subRunnerDetail } from "../molecules/subRunnerDetail"
 
 export type SubRunnerListProps = {
   /** All runners for the session (includes the root). */
@@ -45,12 +46,12 @@ export const SubRunnerList = ({
   const subs = orderedSubs(runners, rootId)
   if (subs.length === 0)
     return (
-      <div className="lk-sub-runner-list">
-        <p className="lk-sub-runner-list__empty">No sub-agents yet</p>
+      <div className="lk-sub-runner-list" aria-label="Agents">
+        <p className="lk-sub-runner-list__empty">No agents yet</p>
       </div>
     )
   return (
-    <ul className="lk-sub-runner-list" aria-label="Sub-agents">
+    <ul className="lk-sub-runner-list" aria-label="Agents">
       {subs.map((r) => (
         <li
           key={String(r.id)}
@@ -60,8 +61,11 @@ export const SubRunnerList = ({
         >
           <SubRunnerCard
             runnerId={r.id}
-            title={r.title ?? "Agent"}
-            {...(r.agentType === undefined ? {} : { detail: r.agentType })}
+            title="Agent"
+            {...(() => {
+              const detail = subRunnerDetail(r.id, runners)
+              return detail === undefined ? {} : { detail }
+            })()}
             status={r.status}
             onOpen={onOpen}
           />
