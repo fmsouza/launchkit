@@ -1,241 +1,114 @@
-import { describe, expect, it } from "bun:test"
+import { describe, expect, it, mock } from "bun:test"
 import { ok } from "@spectrum/utils"
 import { fireEvent, screen, waitFor } from "@testing-library/react"
 import { createFakeIpcClient } from "../test/fake-client"
 import { renderWithProviders } from "../test/renderWithProviders"
 import { GeneralPage } from "./GeneralPage"
 
-const upToDate = {
-  phase: "up-to-date" as const,
-  currentVersion: "1.0.0",
-  latestVersion: null,
-  available: false,
-  progress: 0,
-  error: null,
-  channel: "stable" as const,
-  showBanner: false,
-}
+const sampleModels = [
+  { id: "mdl_1", providerId: "prv_1", providerModel: "gpt-4o", aliases: [] },
+  {
+    id: "mdl_2",
+    providerId: "prv_2",
+    providerModel: "claude-3-5-haiku",
+    aliases: [],
+  },
+]
+const sampleProviders = [
+  {
+    id: "prv_1",
+    name: "OpenAI",
+    sdkProvider: "openai",
+    config: {},
+    secretFields: {},
+    models: ["gpt-4o"],
+  },
+  {
+    id: "prv_2",
+    name: "Anthropic",
+    sdkProvider: "anthropic",
+    config: {},
+    secretFields: {},
+    models: ["claude-3-5-haiku"],
+  },
+]
 
-const defaultTimeouts = {
-  firstTokenTimeoutMs: 120000,
-  interTokenTimeoutMs: 60000,
-}
-
-describe("GeneralPage updates section", () => {
-  it("shows the current version", async () => {
+describe("GeneralPage session-name picker", () => {
+  it("renders the Off option and each model", async () => {
     renderWithProviders(
       <GeneralPage />,
       createFakeIpcClient({
-        checkForUpdate: async () => ok(upToDate),
-        getUpdateState: async () => ok(upToDate),
-        getTimeoutSettings: async () => ok(defaultTimeouts),
-      }),
-    )
-    await waitFor(() => expect(screen.getByText(/1\.0\.0/)).toBeTruthy())
-  })
-
-  it("shows the canary version with the -canary.N suffix and channel word", async () => {
-    const canaryState = {
-      ...upToDate,
-      currentVersion: "1.2.3-canary.7",
-      channel: "canary" as const,
-    }
-    renderWithProviders(
-      <GeneralPage />,
-      createFakeIpcClient({
-        checkForUpdate: async () => ok(canaryState),
-        getUpdateState: async () => ok(canaryState),
-        getTimeoutSettings: async () => ok(defaultTimeouts),
+        getModels: async () => ok(sampleModels),
+        getProviders: async () => ok(sampleProviders),
+        getSessionNamingSettings: async () => ok({ sessionNameModelId: null }),
       }),
     )
     await waitFor(() =>
-      expect(screen.getByText(/1\.2\.3-canary\.7 · canary/)).toBeTruthy(),
+      expect(screen.getByText(/Off — use first prompt/i)).toBeTruthy(),
     )
+    expect(screen.getByText(/gpt-4o · OpenAI/i)).toBeTruthy()
+    expect(screen.getByText(/claude-3-5-haiku · Anthropic/i)).toBeTruthy()
   })
 
-  it("switches channel when the canary toggle is chosen", async () => {
-    let chosen: string | null = null
+  it("selects a model and persists its id", async () => {
+    const saveMock = mock(async () => ok(null))
     renderWithProviders(
       <GeneralPage />,
       createFakeIpcClient({
-        checkForUpdate: async () => ok(upToDate),
-        getUpdateState: async () => ok(upToDate),
-        getTimeoutSettings: async () => ok(defaultTimeouts),
-        setUpdateChannel: async ({ channel }) => {
-          chosen = channel
-          return ok({ ...upToDate, channel })
-        },
+        getModels: async () => ok(sampleModels),
+        getProviders: async () => ok(sampleProviders),
+        getSessionNamingSettings: async () => ok({ sessionNameModelId: null }),
+        updateSessionNamingSettings: saveMock,
       }),
     )
-    await waitFor(() => screen.getByLabelText(/canary/i))
-    fireEvent.click(screen.getByLabelText(/canary/i))
-    await waitFor(() => expect(chosen).toBe("canary"))
-  })
-})
-
-describe("GeneralPage update actions", () => {
-  const available = {
-    ...upToDate,
-    phase: "available" as const,
-    latestVersion: "1.1.0",
-    available: true,
-    showBanner: true,
-  }
-  const downloading = {
-    ...available,
-    phase: "downloading" as const,
-    progress: 0.5,
-  }
-  const downloaded = {
-    ...available,
-    phase: "downloaded" as const,
-    progress: 1,
-  }
-
-  it("downloads the update when the download button is clicked in the available phase", async () => {
-    let downloadStarted = false
-    renderWithProviders(
-      <GeneralPage />,
-      createFakeIpcClient({
-        checkForUpdate: async () => ok(available),
-        getUpdateState: async () => ok(available),
-        getTimeoutSettings: async () => ok(defaultTimeouts),
-        startUpdateDownload: async () => {
-          downloadStarted = true
-          return ok(null)
-        },
-      }),
-    )
-    const button = await screen.findByRole("button", {
-      name: /download update/i,
-    })
-    fireEvent.click(button)
-    await waitFor(() => expect(downloadStarted).toBe(true))
-  })
-
-  it("applies the update when the restart button is clicked in the downloaded phase", async () => {
-    let applied = false
-    renderWithProviders(
-      <GeneralPage />,
-      createFakeIpcClient({
-        checkForUpdate: async () => ok(downloaded),
-        getUpdateState: async () => ok(downloaded),
-        getTimeoutSettings: async () => ok(defaultTimeouts),
-        applyUpdate: async () => {
-          applied = true
-          return ok(null)
-        },
-      }),
-    )
-    const button = await screen.findByRole("button", {
-      name: /restart to apply/i,
-    })
-    fireEvent.click(button)
-    await waitFor(() => expect(applied).toBe(true))
-  })
-
-  it("shows a disabled downloading button in the downloading phase", async () => {
-    renderWithProviders(
-      <GeneralPage />,
-      createFakeIpcClient({
-        checkForUpdate: async () => ok(downloading),
-        getUpdateState: async () => ok(downloading),
-        getTimeoutSettings: async () => ok(defaultTimeouts),
-      }),
-    )
-    const button = await screen.findByRole("button", { name: /downloading/i })
-    expect((button as HTMLButtonElement).disabled).toBe(true)
-  })
-
-  it("shows no update action button when up to date", async () => {
-    renderWithProviders(
-      <GeneralPage />,
-      createFakeIpcClient({
-        checkForUpdate: async () => ok(upToDate),
-        getUpdateState: async () => ok(upToDate),
-        getTimeoutSettings: async () => ok(defaultTimeouts),
-      }),
-    )
-    await waitFor(() => screen.getByText(/up to date/i))
-    expect(
-      screen.queryByRole("button", { name: /download update/i }),
-    ).toBeNull()
-    expect(
-      screen.queryByRole("button", { name: /restart to apply/i }),
-    ).toBeNull()
-    expect(screen.queryByRole("button", { name: /downloading/i })).toBeNull()
-  })
-})
-
-describe("GeneralPage timeout settings section", () => {
-  it("renders the two timeout fields populated with values from getTimeoutSettings", async () => {
-    renderWithProviders(
-      <GeneralPage />,
-      createFakeIpcClient({
-        checkForUpdate: async () => ok(upToDate),
-        getUpdateState: async () => ok(upToDate),
-        getTimeoutSettings: async () =>
-          ok({ firstTokenTimeoutMs: 120000, interTokenTimeoutMs: 60000 }),
-      }),
-    )
-    await waitFor(() => {
-      const firstInput = screen.getByLabelText(/first.token timeout/i)
-      const interInput = screen.getByLabelText(/inter.token timeout/i)
-      expect((firstInput as HTMLInputElement).value).toBe("120000")
-      expect((interInput as HTMLInputElement).value).toBe("60000")
-    })
-  })
-
-  it("calls updateTimeoutSettings with new firstToken and unchanged interToken on blur", async () => {
-    let captured: {
-      firstTokenTimeoutMs: number
-      interTokenTimeoutMs: number
-    } | null = null
-    renderWithProviders(
-      <GeneralPage />,
-      createFakeIpcClient({
-        checkForUpdate: async () => ok(upToDate),
-        getUpdateState: async () => ok(upToDate),
-        getTimeoutSettings: async () =>
-          ok({ firstTokenTimeoutMs: 120000, interTokenTimeoutMs: 60000 }),
-        updateTimeoutSettings: async (params) => {
-          captured = params
-          return ok(null)
-        },
-      }),
-    )
-    await waitFor(() => screen.getByLabelText(/first.token timeout/i))
-    const firstInput = screen.getByLabelText(/first.token timeout/i)
-    fireEvent.change(firstInput, { target: { value: "90000" } })
-    fireEvent.blur(firstInput)
     await waitFor(() =>
-      expect(captured).toEqual({
-        firstTokenTimeoutMs: 90000,
-        interTokenTimeoutMs: 60000,
-      }),
+      expect(screen.getByText(/Off — use first prompt/i)).toBeTruthy(),
+    )
+    const select = screen.getByLabelText(/Auto-name model/i)
+    fireEvent.change(select, { target: { value: "mdl_1" } })
+    await waitFor(() =>
+      expect(saveMock).toHaveBeenCalledWith({ sessionNameModelId: "mdl_1" }),
     )
   })
 
-  it("shows a validation error and does not call updateTimeoutSettings when an out-of-bounds value is entered", async () => {
-    let saveCalled = false
+  it("selecting Off persists null", async () => {
+    const saveMock = mock(async () => ok(null))
     renderWithProviders(
       <GeneralPage />,
       createFakeIpcClient({
-        checkForUpdate: async () => ok(upToDate),
-        getUpdateState: async () => ok(upToDate),
-        getTimeoutSettings: async () =>
-          ok({ firstTokenTimeoutMs: 120000, interTokenTimeoutMs: 60000 }),
-        updateTimeoutSettings: async () => {
-          saveCalled = true
-          return ok(null)
-        },
+        getModels: async () => ok(sampleModels),
+        getProviders: async () => ok(sampleProviders),
+        getSessionNamingSettings: async () =>
+          ok({ sessionNameModelId: "mdl_1" }),
+        updateSessionNamingSettings: saveMock,
       }),
     )
-    await waitFor(() => screen.getByLabelText(/first.token timeout/i))
-    const firstInput = screen.getByLabelText(/first.token timeout/i)
-    fireEvent.change(firstInput, { target: { value: "100" } })
-    fireEvent.blur(firstInput)
-    await waitFor(() => expect(screen.getByRole("alert")).toBeTruthy())
-    expect(saveCalled).toBe(false)
+    await waitFor(() =>
+      expect(screen.getByText(/gpt-4o · OpenAI/i)).toBeTruthy(),
+    )
+    const select = screen.getByLabelText(/Auto-name model/i)
+    fireEvent.change(select, { target: { value: "" } })
+    await waitFor(() =>
+      expect(saveMock).toHaveBeenCalledWith({ sessionNameModelId: null }),
+    )
+  })
+
+  it("shows Off selected when the saved id matches no current model (dangling)", async () => {
+    renderWithProviders(
+      <GeneralPage />,
+      createFakeIpcClient({
+        getModels: async () => ok(sampleModels),
+        getProviders: async () => ok(sampleProviders),
+        getSessionNamingSettings: async () =>
+          ok({ sessionNameModelId: "mdl_deleted" }),
+      }),
+    )
+    await waitFor(() =>
+      expect(screen.getByText(/Off — use first prompt/i)).toBeTruthy(),
+    )
+    const select = screen.getByLabelText(
+      /Auto-name model/i,
+    ) as HTMLSelectElement
+    expect(select.value).toBe("")
   })
 })
