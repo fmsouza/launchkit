@@ -39,6 +39,7 @@ import { homedir } from "node:os"
 
 import type {
   AgentDriver,
+  NameGeneratorPort,
   RunManager,
   RunManagerDeps,
   RunnerOutbound,
@@ -47,6 +48,7 @@ import { createRunManager } from "@spectrum/agent-driver"
 import type { RootRunnerMap } from "@spectrum/agent-events"
 import { isRootRunnerFinished, trackRootRunner } from "@spectrum/agent-events"
 import type { Logger } from "@spectrum/logger"
+import { createNameGenerator } from "@spectrum/proxy"
 import {
   type TerminalManager,
   checkNativePtyAvailable,
@@ -54,7 +56,7 @@ import {
   createNoopTerminalManager,
   createTerminalManager,
 } from "@spectrum/pty"
-import type { ProjectId, SessionId } from "@spectrum/types"
+import type { ModelId, ProjectId, SessionId } from "@spectrum/types"
 import { type Result, isOk } from "@spectrum/utils"
 
 import type { AppContext } from "@spectrum/runtime-core"
@@ -262,6 +264,22 @@ export const createGuiContext = (
   }
 
   // ------------------------------------------------------------------
+  // AI session naming — bounded one-shot generateText seam (proxy package)
+  // ------------------------------------------------------------------
+  // Resolves the route+provider+secrets from the live config.
+  // SECURITY: logs { kind } only at the boundary; never the prompt or secrets (see proxy CLAUDE.md).
+  const proxyNameGen = createNameGenerator({
+    config: shared.config,
+    factory: shared.factory,
+    clock: shared.clock,
+    logger: log.child("sessionName"),
+  })
+  const nameGenerator: NameGeneratorPort = {
+    generate: (modelId, firstPrompt, signal) =>
+      proxyNameGen.generate(modelId, firstPrompt, signal),
+  }
+
+  // ------------------------------------------------------------------
   // Runner — built from the SHARED extension points (no re-derivation)
   // ------------------------------------------------------------------
   const baseRunner = deps.createRunManager({
@@ -274,6 +292,13 @@ export const createGuiContext = (
     send: notifyOnRunFinished,
     resolveModelEnv: shared.resolveModelEnv,
     resolveResumeInput: shared.resolveResumeInput,
+    sessionNameModelId: async () => {
+      const loaded = await shared.config.load()
+      if (!loaded.ok) return null
+      const id = loaded.value.settings.sessionNameModelId
+      return id === null ? null : (id as ModelId)
+    },
+    generateName: nameGenerator,
   })
   // The runner socket calls `bindSend` on connect, REPLACING the manager's
   // sink with one that pushes to the live websocket. `withNotifierTap`
