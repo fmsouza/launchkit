@@ -90,6 +90,8 @@ export const createRunManager = (deps: RunManagerDeps): RunManager => {
   const harnessOf = new Map<SessionId, HarnessId>()
   /** Per-session naming guard: none = not yet named, auto = derived/harness-named, user = sticky. */
   const nameSource = new Map<SessionId, "none" | "auto" | "user">()
+  /** Per-session AbortController for an in-flight AI name refinement; aborted on close. */
+  const nameAbort = new Map<SessionId, AbortController>()
   const logger = deps.logger ?? createNoopLogger()
   let sink: (message: RunnerOutbound) => void = deps.send
   const send = (message: RunnerOutbound): void => sink(message)
@@ -149,6 +151,8 @@ export const createRunManager = (deps: RunManagerDeps): RunManager => {
         harnessId: input.harnessId,
       })
       deps.sessions.close(id, 1)
+      nameAbort.get(id)?.abort()
+      nameAbort.delete(id)
       return started
     }
     const agent = started.value
@@ -192,6 +196,8 @@ export const createRunManager = (deps: RunManagerDeps): RunManager => {
       deps.sessions.close(id, 0)
       agent.close()
       live.delete(id)
+      nameAbort.get(id)?.abort()
+      nameAbort.delete(id)
       logger.info("session closed", { sessionId: id })
     }
 
@@ -211,6 +217,7 @@ export const createRunManager = (deps: RunManagerDeps): RunManager => {
           if (isOk(written)) {
             nameSource.set(id, "auto")
             send({ type: "session-renamed", id, name: derived })
+            maybeRefineName(id, event.text)
           } else {
             logger.error("session name update failed", {
               sessionId: id,
@@ -326,6 +333,8 @@ export const createRunManager = (deps: RunManagerDeps): RunManager => {
       }
       send({ type: "runner-event", id, event: stored })
       deps.sessions.close(id, 1)
+      nameAbort.get(id)?.abort()
+      nameAbort.delete(id)
       resuming.delete(id)
       return
     }
@@ -445,6 +454,46 @@ export const createRunManager = (deps: RunManagerDeps): RunManager => {
     // Only flip for sessions the manager knows; a rename of an unknown/closed
     // session is a harmless no-op (the persisted name is still the source of truth).
     if (live.has(id) || nameSource.has(id)) nameSource.set(id, "user")
+  }
+
+  // Fire-and-forget AI name refinement. Runs after the truncated-first-prompt fallback
+  // (which is already on disk before this fires) so the user sees SOMETHING in the
+  // sidebar immediately. The refine only writes when the name is still "auto" — a
+  // user rename (markUserNamed → "user") or a harness-emitted title (also "auto",
+  // but last-writer-wins) will race-safe overwrite or be overwritten per the existing
+  // parity-with-today rule. The AbortController is registered in nameAbort so a
+  // session close can cancel the in-flight LLM call.
+  const maybeRefineName = (id: SessionId, firstPrompt: string): void => {
+    const gen = deps.generateName
+    const getModelId = deps.sessionNameModelId
+    if (gen === undefined || getModelId === undefined) return
+    const controller = new AbortController()
+    nameAbort.set(id, controller)
+    void Promise.resolve(getModelId())
+      .then((modelId) =>
+        modelId === null
+          ? null
+          : gen.generate(modelId, firstPrompt, controller.signal),
+      )
+      .then((r) => {
+        nameAbort.delete(id)
+        if (r === null) return // off
+        if (!r.ok) {
+          logger.warn("session name generation failed", {
+            sessionId: id,
+            kind: r.error.kind,
+          })
+          return
+        }
+        if ((nameSource.get(id) ?? "none") !== "auto") return
+        const written = deps.sessions.updateName(id, r.value)
+        if (isOk(written)) send({ type: "session-renamed", id, name: r.value })
+        else
+          logger.error("session name update failed", {
+            sessionId: id,
+            kind: written.error.kind,
+          })
+      })
   }
 
   return { launch, handleInbound, bindSend, markUserNamed }
