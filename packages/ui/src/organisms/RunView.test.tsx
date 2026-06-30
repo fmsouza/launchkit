@@ -297,7 +297,7 @@ describe("RunView", () => {
     cleanup()
   })
 
-  it("shows the segmented Tasks/Sub-agent header when a sub-runner is open", () => {
+  it("shows the segmented Tasks/Agents header when a sub-runner is open", () => {
     const rid = RunnerIdSchema.parse("run_root2")
     const cid = RunnerIdSchema.parse("run_child2")
     const st = (
@@ -345,7 +345,7 @@ describe("RunView", () => {
         openRunner={childRunner2}
       />,
     )
-    expect(screen.getByRole("tab", { name: "Sub-agent" })).toBeInTheDocument()
+    expect(screen.getByRole("tab", { name: "Agents" })).toBeInTheDocument()
     expect(screen.getByText("child working")).toBeInTheDocument()
     expect(screen.getByRole("tab", { name: "Tasks" })).toBeDisabled()
     cleanup()

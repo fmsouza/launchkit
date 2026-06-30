@@ -70,10 +70,10 @@ describe("RunSideRail", () => {
     cleanup()
   })
 
-  it("shows disabled vertical Tasks and Sub-agent buttons on the collapsed strip when empty", () => {
+  it("shows disabled vertical Tasks and Agents buttons on the collapsed strip when empty", () => {
     render(<RunSideRail {...base} runners={new Map()} collapsed />)
     expect(screen.getByRole("button", { name: /^Tasks/ })).toBeDisabled()
-    expect(screen.getByRole("button", { name: /^Sub-agent/ })).toBeDisabled()
+    expect(screen.getByRole("button", { name: /^Agents/ })).toBeDisabled()
     cleanup()
   })
 
@@ -87,12 +87,12 @@ describe("RunSideRail", () => {
       />,
     )
     expect(screen.getByRole("button", { name: /^Tasks/ })).not.toBeDisabled()
-    // No sub-runners at all → Sub-agent stays disabled.
-    expect(screen.getByRole("button", { name: /^Sub-agent/ })).toBeDisabled()
+    // No sub-runners at all → Agents stays disabled.
+    expect(screen.getByRole("button", { name: /^Agents/ })).toBeDisabled()
     cleanup()
   })
 
-  it("enables the vertical Sub-agent button when a sub-runner is open", () => {
+  it("enables the vertical Agents button when a sub-runner is open", () => {
     render(
       <RunSideRail
         {...base}
@@ -101,9 +101,7 @@ describe("RunSideRail", () => {
         collapsed
       />,
     )
-    expect(
-      screen.getByRole("button", { name: /^Sub-agent/ }),
-    ).not.toBeDisabled()
+    expect(screen.getByRole("button", { name: /^Agents/ })).not.toBeDisabled()
     expect(screen.getByRole("button", { name: /^Tasks/ })).not.toBeDisabled()
     cleanup()
   })
@@ -125,7 +123,7 @@ describe("RunSideRail", () => {
     cleanup()
   })
 
-  it("expands and selects Sub-agent when the vertical Sub-agent button is pressed", () => {
+  it("expands and selects Agents when the vertical Agents button is pressed", () => {
     let toggled = 0
     render(
       <RunSideRail
@@ -138,7 +136,7 @@ describe("RunSideRail", () => {
         }}
       />,
     )
-    fireEvent.click(screen.getByRole("button", { name: /^Sub-agent/ }))
+    fireEvent.click(screen.getByRole("button", { name: /^Agents/ }))
     expect(toggled).toBe(1)
     cleanup()
   })
@@ -148,25 +146,25 @@ describe("RunSideRail", () => {
       <RunSideRail {...base} runners={new Map()} rootTaskList={rootList} />,
     )
     expect(screen.getByText("Root task")).toBeInTheDocument()
-    // Header is present with Sub-agent disabled.
-    expect(screen.getByRole("tab", { name: "Sub-agent" })).toBeDisabled()
+    // Header is present with Agents disabled.
+    expect(screen.getByRole("tab", { name: "Agents" })).toBeDisabled()
     cleanup()
   })
 
-  it("shows the Tasks/Sub-agent header even when only root tasks exist (no sub open)", () => {
+  it("shows the Tasks/Agents header even when only root tasks exist (no sub open)", () => {
     render(
       <RunSideRail {...base} runners={new Map()} rootTaskList={rootList} />,
     )
     expect(screen.getByRole("tab", { name: "Tasks" })).toBeInTheDocument()
-    expect(screen.getByRole("tab", { name: "Sub-agent" })).toBeDisabled()
+    expect(screen.getByRole("tab", { name: "Agents" })).toBeDisabled()
     expect(screen.getByText("Root task")).toBeInTheDocument()
     cleanup()
   })
 
-  it("disables the Tasks tab and enables Sub-agent when a sub-runner has no tasks", () => {
+  it("disables the Tasks tab and enables Agents when a sub-runner has no tasks", () => {
     render(<RunSideRail {...base} subRunner={childRunner} />)
     expect(screen.getByRole("tab", { name: "Tasks" })).toBeDisabled()
-    expect(screen.getByRole("tab", { name: "Sub-agent" })).not.toBeDisabled()
+    expect(screen.getByRole("tab", { name: "Agents" })).not.toBeDisabled()
     cleanup()
   })
 
@@ -177,7 +175,7 @@ describe("RunSideRail", () => {
     cleanup()
   })
 
-  it("defaults to the Sub-agent segment when a sub-runner is open", () => {
+  it("defaults to the Agents segment when a sub-runner is open", () => {
     render(
       <RunSideRail
         {...base}
@@ -261,10 +259,10 @@ describe("RunSideRail", () => {
     cleanup()
   })
 
-  it("enables the Sub-agent tab when any sub-runner exists, even with none focused", () => {
-    // state has one child runner; pass runners but no subRunner → today this disables Sub-agent.
+  it("enables the Agents tab when any sub-runner exists, even with none focused", () => {
+    // state has one child runner; pass runners but no subRunner → today this disables Agents.
     render(<RunSideRail {...base} runners={state.runners} />)
-    expect(screen.getByRole("tab", { name: "Sub-agent" })).not.toBeDisabled()
+    expect(screen.getByRole("tab", { name: "Agents" })).not.toBeDisabled()
     cleanup()
   })
 
@@ -371,7 +369,7 @@ describe("RunSideRail", () => {
     )
     const toggle = screen.getByRole("button", { name: /terminal pane/ })
     // The footer wrapper carries `margin-top: auto`, pushing the toggle to the
-    // trailing edge of the collapsed strip rather than directly under Sub-agent.
+    // trailing edge of the collapsed strip rather than directly under Agents.
     expect(toggle.closest(".lk-side-rail__footer")).not.toBeNull()
     cleanup()
   })

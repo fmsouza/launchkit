@@ -156,7 +156,7 @@ export const RunView = ({
   const [railCollapsed, setRailCollapsed] = useState(true)
 
   // Auto-expand when a sub-runner becomes focused so pressing Open lands the
-  // user on the Sub-agent tab (issue #2). Once expanded, the user's manual
+  // user on the Agents tab (issue #2). Once expanded, the user's manual
   // collapse choice is respected until the next sub-open auto-expands again.
   useEffect(() => {
     if (openRunner !== undefined) setRailCollapsed(false)
