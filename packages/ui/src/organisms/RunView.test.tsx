@@ -115,7 +115,7 @@ describe("RunView", () => {
   })
 
   it("forwards composer input via onSend", () => {
-    let sent: string | undefined
+    let sent: { text: string } | undefined
     render(
       <RunView
         {...base}
@@ -126,7 +126,7 @@ describe("RunView", () => {
     )
     fireEvent.change(screen.getByRole("textbox"), { target: { value: "next" } })
     fireEvent.click(screen.getByRole("button", { name: "Send message" }))
-    expect(sent).toBe("next")
+    expect(sent?.text).toBe("next")
     cleanup()
   })
 

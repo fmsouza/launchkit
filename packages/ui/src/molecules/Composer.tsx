@@ -1,4 +1,9 @@
-import type { PermissionMode, ThinkingEffort } from "@spectrum/agent-events"
+import type {
+  AttachmentCapabilities,
+  AttachmentRef,
+  PermissionMode,
+  ThinkingEffort,
+} from "@spectrum/agent-events"
 import type { ModelRoute } from "@spectrum/types"
 import {
   type KeyboardEvent,
@@ -8,6 +13,7 @@ import {
   useState,
 } from "react"
 import { Icon } from "../atoms/Icon"
+import { AttachmentTray } from "./AttachmentTray"
 import { ModeSelector } from "./ModeSelector"
 import { ModelSelector } from "./ModelSelector"
 import { ThinkingEffortSelector } from "./ThinkingEffortSelector"
@@ -42,8 +48,13 @@ export const resolveMaxHeightPx = (el: HTMLTextAreaElement): number => {
   return Math.floor(window.innerHeight / 3)
 }
 
+export type ComposerTurn = {
+  readonly text: string
+  readonly attachments?: readonly AttachmentRef[]
+}
+
 export type ComposerProps = {
-  readonly onSend: (text: string) => void
+  readonly onSend: (turn: ComposerTurn) => void
   readonly disabled?: boolean
   /** A turn is in flight: swap send → stop (the cancel affordance). Typing stays enabled. */
   readonly busy?: boolean
@@ -62,6 +73,18 @@ export type ComposerProps = {
   readonly prefillText?: string
   /** Bump to re-apply `prefillText` even when the text is unchanged. */
   readonly prefillKey?: string
+  /** What kinds of attachments the active model accepts. Drives the attach button visibility. */
+  readonly attachmentCapabilities?: AttachmentCapabilities
+  /** Files the user has staged for the next send. */
+  readonly pendingAttachments?: readonly AttachmentRef[]
+  /** Optional pre-rendered thumbnails keyed by `AttachmentRef.id`. */
+  readonly attachmentThumbnails?: ReadonlyMap<string, string>
+  /** Triggered when the user clicks the paperclip (opens the native picker). */
+  readonly onPickAttachments?: () => void
+  /** Remove a staged attachment (e.g. clicks the chip's X). */
+  readonly onRemoveAttachment?: (id: string) => void
+  /** Open a staged attachment (e.g. clicks the chip body). */
+  readonly onOpenAttachment?: (ref: AttachmentRef) => void
 }
 
 export const Composer = ({
@@ -80,6 +103,12 @@ export const Composer = ({
   onEffortChange,
   prefillText,
   prefillKey,
+  attachmentCapabilities,
+  pendingAttachments,
+  attachmentThumbnails,
+  onPickAttachments,
+  onRemoveAttachment,
+  onOpenAttachment,
 }: ComposerProps): ReactElement => {
   const [text, setText] = useState("")
   const inputRef = useRef<HTMLTextAreaElement>(null)
@@ -108,10 +137,20 @@ export const Composer = ({
     }
     grow(el)
   }, [text])
+  const attachmentsSupported =
+    attachmentCapabilities !== undefined &&
+    (attachmentCapabilities.image ||
+      attachmentCapabilities.pdf ||
+      attachmentCapabilities.binary)
+  const hasPending = (pendingAttachments ?? []).length > 0
+
   const submit = (): void => {
     const trimmed = text.trim()
-    if (trimmed === "") return
-    onSend(trimmed)
+    if (trimmed === "" && !hasPending) return
+    onSend({
+      text: trimmed,
+      ...(hasPending ? { attachments: [...(pendingAttachments ?? [])] } : {}),
+    })
     setText("")
   }
   // Enter sends; Shift+Enter inserts a newline (the textarea's default, so don't preventDefault there).
@@ -123,6 +162,20 @@ export const Composer = ({
   }
   return (
     <div className="lk-composer">
+      {hasPending ? (
+        <AttachmentTray
+          attachments={pendingAttachments ?? []}
+          {...(attachmentThumbnails !== undefined
+            ? { thumbnails: attachmentThumbnails }
+            : {})}
+          {...(onRemoveAttachment !== undefined
+            ? { onRemove: onRemoveAttachment }
+            : {})}
+          {...(onOpenAttachment !== undefined
+            ? { onOpen: onOpenAttachment }
+            : {})}
+        />
+      ) : null}
       <textarea
         ref={inputRef}
         className="lk-composer__input"
@@ -158,6 +211,18 @@ export const Composer = ({
             disabled={disabled}
           />
         )}
+        {attachmentsSupported ? (
+          <button
+            type="button"
+            className="lk-composer__action"
+            data-action="attach"
+            aria-label="Attach files"
+            disabled={disabled}
+            onClick={() => onPickAttachments?.()}
+          >
+            <Icon name="paperclip" size={14} />
+          </button>
+        ) : null}
         {busy ? (
           <button
             type="button"
@@ -174,7 +239,7 @@ export const Composer = ({
             className="lk-composer__action"
             data-action="send"
             aria-label="Send message"
-            disabled={disabled || text.trim() === ""}
+            disabled={disabled || (text.trim() === "" && !hasPending)}
             onClick={() => submit()}
           >
             <Icon name="send" size={14} />

@@ -263,7 +263,8 @@ const LiveRunDetail = ({
     }
   }
 
-  const handleSend = (text: string): void => {
+  const handleSend = (turn: { text: string }): void => {
+    const text = turn.text
     const clientSendId = crypto.randomUUID()
     enqueueSend(sessionId, { clientSendId, text, status: "sending" })
     runnerClient.send(sessionId, text, clientSendId)
@@ -293,7 +294,7 @@ const LiveRunDetail = ({
       }
       removeSend(sessionId, entry.clientSendId)
     }
-    handleSend(entry.text)
+    handleSend({ text: entry.text })
   }
 
   const handleCancel = (entry: {
@@ -430,8 +431,8 @@ const ReplayRunDetail = ({
   // Replay-mode send → the page adds the session to `openSessionIds` and asks the
   // manager to resume+send. The page-level `onResumeSend` is the bridge; if it's
   // absent (e.g. a test harness) the composer stays inert via the fallback handler.
-  const handleSend = (text: string): void => {
-    onResumeSend?.(text)
+  const handleSend = (turn: { text: string }): void => {
+    onResumeSend?.(turn.text)
   }
 
   return (

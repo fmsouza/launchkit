@@ -49,7 +49,7 @@ export type RunViewProps = {
   readonly subBreadcrumb: readonly string[]
   readonly onOpenSubRunner: (id: RunnerId) => void
   readonly onCloseSub: () => void
-  readonly onSend: (text: string) => void
+  readonly onSend: (turn: { text: string }) => void
   readonly onDecide: (requestId: string, decision: ApprovalDecision) => void
   readonly onAnswer: (requestId: string, answer: QuestionAnswer) => void
   /** Optimistic / failed sends not yet reconciled (forwarded to the timeline). */

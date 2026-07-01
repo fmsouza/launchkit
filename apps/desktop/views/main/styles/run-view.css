@@ -1240,3 +1240,13 @@
   white-space: pre-wrap;
   font-family: var(--sp-font-mono, monospace);
 }
+
+.lk-composer__action[data-action="attach"] {
+  background: transparent;
+  color: var(--sp-text);
+  border-color: transparent;
+}
+.lk-composer__action[data-action="attach"]:hover:not(:disabled) {
+  background: var(--sp-surface-raised);
+  border-color: var(--sp-border);
+}
