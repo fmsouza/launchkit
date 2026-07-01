@@ -262,6 +262,13 @@ const AppInner = ({
   // missing events emitted during the outage. Reset each open session's slice and
   // re-attach so the backend replays its backlog onto empty state (the only state
   // the reducer folds correctly). `shouldReattach` gates this to reconnecting→connected.
+  //
+  // NOTE: `skipAttachIds` is intentionally NOT consulted here. After `reset(id)`
+  // the session's store slice is empty, and the backend agent survives a socket
+  // drop, so a plain `run-attach` replays the persisted backlog onto empty state —
+  // which is always correct on reconnect (spec §5). This differs from the
+  // mount-time attach, which honors `skipAttach` to avoid a double-replay of a
+  // just-resumed session (the manager already owns that replay path).
   const prevConnRef = useRef(conn.state)
   useEffect(() => {
     const prev = prevConnRef.current
