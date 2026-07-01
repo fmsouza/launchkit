@@ -226,6 +226,7 @@ export const createAppContext = (
   const harnessDir = paths.harnessDir
   const runtimeFile = paths.runtimeFile
   const dataDir = paths.dataDir
+  const uploadsDir = paths.uploadsDir
 
   // A fresh install has no data directory yet. Create it BEFORE opening the SQLite DB — otherwise
   // `new Database(dbFile)` throws ("unable to open database file") on the missing parent, which
@@ -233,6 +234,10 @@ export const createAppContext = (
   // their first write, which is too late for the db opened here). This is the only startup step that
   // needs the dir to pre-exist.
   deps.ensureDir(dataDir)
+  // The uploads dir is a sibling of dataDir; the real FsUploadStore (apps/desktop) also mkdirs
+  // lazily on first save, but doing it here makes the dir observable from `paths.uploadsDir`
+  // immediately and removes a class of "ENOTDIR" races if two saves arrive concurrently.
+  deps.ensureDir(uploadsDir)
 
   // Defense-in-depth secret registry (spec §6): fed at the secret chokepoints (resolved/written
   // apiKeys via the wrapped secrets store; the minted per-run proxy key below) and read lazily by
@@ -683,8 +688,9 @@ export const createAppContext = (
     dataAdmin,
     driverRegistry,
     log,
-    paths: { configFile, dbFile, harnessDir, dataDir },
+    paths: { configFile, dbFile, harnessDir, dataDir, uploadsDir },
     legacyDirs,
+    uploadStore: deps.createUploadStore({ uploadsDir }),
     // Runner extension points (typed + documented on AppContext; the CLI never reads these).
     sessionSink,
     runStore,

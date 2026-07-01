@@ -32,7 +32,21 @@ export type {
   CreateAppContextDeps,
   ProviderTestResult,
 } from "@spectrum/runtime-core"
-export { createAppContext, realDeps } from "@spectrum/runtime-core"
+export { createAppContext } from "@spectrum/runtime-core"
+import { realDeps as runtimeCoreRealDeps } from "@spectrum/runtime-core"
+import { createFsUploadStore } from "./upload-store-fs"
+
+/**
+ * Desktop-flavored `realDeps`: the shared runtime-core wiring with the real fs-backed
+ * `createUploadStore` (`createFsUploadStore` over `paths.uploadsDir`) so the GUI can
+ * actually persist user-picked attachments. Headless consumers (CLI) keep the runtime-core
+ * default (in-memory stub) and never see this.
+ */
+export const realDeps = {
+  ...runtimeCoreRealDeps,
+  createUploadStore: ({ uploadsDir }: { readonly uploadsDir: string }) =>
+    createFsUploadStore({ uploadsDir }),
+} as const
 
 import { rmSync } from "node:fs"
 import { homedir } from "node:os"

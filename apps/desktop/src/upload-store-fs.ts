@@ -1,20 +1,9 @@
 import { createHash } from "node:crypto"
-import {
-  copyFile,
-  mkdir,
-  readFile,
-  readdir,
-  stat,
-} from "node:fs/promises"
+import { copyFile, mkdir, readFile, readdir, stat } from "node:fs/promises"
 import { join } from "node:path"
 import type { AttachmentRef } from "@spectrum/agent-events"
 import { inferKind } from "@spectrum/agent-events"
-import type { Result } from "@spectrum/utils"
-import type {
-  StoredUpload,
-  UploadError,
-  UploadStore,
-} from "./upload-store"
+import type { UploadError, UploadStore } from "@spectrum/runtime-core"
 
 const err = (kind: UploadError["kind"], detail: string): UploadError => ({
   kind,
@@ -33,7 +22,9 @@ export type FsUploadStoreDeps = {
 export const createFsUploadStore = (deps: FsUploadStoreDeps): UploadStore => {
   const { uploadsDir } = deps
 
-  const ensureDir = (): Promise<void> => mkdir(uploadsDir, { recursive: true })
+  const ensureDir = async (): Promise<void> => {
+    await mkdir(uploadsDir, { recursive: true })
+  }
 
   const findPathForId = async (id: string): Promise<string | null> => {
     try {
@@ -46,12 +37,25 @@ export const createFsUploadStore = (deps: FsUploadStoreDeps): UploadStore => {
   }
 
   return {
-    async save({ sourcePath, mime, displayName, maxBytes }) {
+    async save({
+      sourcePath,
+      mime,
+      displayName,
+      maxBytes,
+    }: {
+      sourcePath: string
+      mime: string
+      displayName: string
+      maxBytes: number
+    }) {
       try {
         await ensureDir()
         const st = await stat(sourcePath)
         if (st.size > maxBytes) {
-          return { ok: false, error: err("too-large", `${st.size} > ${maxBytes}`) }
+          return {
+            ok: false,
+            error: err("too-large", `${st.size} > ${maxBytes}`),
+          }
         }
         const data = await readFile(sourcePath)
         const id = createHash("sha256").update(data).digest("hex")
@@ -90,7 +94,7 @@ export const createFsUploadStore = (deps: FsUploadStoreDeps): UploadStore => {
       }
     },
 
-    async readBase64(id) {
+    async readBase64(id: string) {
       const path = await findPathForId(id)
       if (path === null) return { ok: false, error: err("not-found", id) }
       try {
@@ -104,13 +108,13 @@ export const createFsUploadStore = (deps: FsUploadStoreDeps): UploadStore => {
       }
     },
 
-    async pathOf(id) {
+    async pathOf(id: string) {
       const path = await findPathForId(id)
       if (path === null) return { ok: false, error: err("not-found", id) }
       return { ok: true, value: path }
     },
 
-    async exists(id) {
+    async exists(id: string) {
       return (await findPathForId(id)) !== null
     },
 

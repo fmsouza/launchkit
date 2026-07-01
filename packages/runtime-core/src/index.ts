@@ -2,6 +2,7 @@ export type { AppContext, ProviderTestResult } from "./app-context"
 export type { CreateAppContextDeps } from "./deps"
 export { realDeps } from "./deps"
 export { createAppContext } from "./create-app-context"
+export type { StoredUpload, UploadError, UploadStore } from "./upload-store"
 export {
   buildFakeAppContextDeps,
   realAdapterDefaults,

@@ -189,6 +189,12 @@ export const buildFakeAppContextDeps = (
       (record("createOpencodeDriver") as never),
     createDataAdmin:
       overrides.createDataAdmin ?? (record("createDataAdmin") as never),
+    createUploadStore:
+      overrides.createUploadStore ??
+      (((args: { readonly uploadsDir: string }) => {
+        calls.createUploadStore = [args]
+        return { __stub: "createUploadStore" }
+      }) as never),
     demoHarnessEnabled: overrides.demoHarnessEnabled ?? false,
     genProxyKey: overrides.genProxyKey ?? (() => "fixed-test-key"),
     readBuildChannel: overrides.readBuildChannel ?? (() => undefined),

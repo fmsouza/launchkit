@@ -1,5 +1,5 @@
-import type { Result } from "@spectrum/utils"
 import type { AttachmentRef } from "@spectrum/agent-events"
+import type { Result } from "@spectrum/utils"
 
 export type StoredUpload = {
   readonly ref: AttachmentRef
