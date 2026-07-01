@@ -8,6 +8,8 @@ import type {
 } from "@spectrum/agent-events"
 import type { ModelId, SessionId } from "@spectrum/types"
 
+export type ConnectionState = "connecting" | "connected" | "reconnecting"
+
 /**
  * Transport-agnostic runner client (twin of `terminalClient`). Encodes outbound
  * runner commands to `RunnerInbound` messages (handed to the injected `send`)
@@ -43,6 +45,16 @@ export interface RunnerClient {
   connectionLost(): void
   /** Subscribe to transport-loss notifications. Returns an unsubscribe fn. */
   onConnectionLost(cb: () => void): () => void
+  /** Push the current transport connection state (transport → client). */
+  reportConnectionState(state: ConnectionState): void
+  /** Subscribe to connection-state changes. Returns an unsubscribe fn. */
+  onConnectionState(cb: (state: ConnectionState) => void): () => void
+  /** The latest connection state (starts "connecting"). */
+  connectionState(): ConnectionState
+  /** Wall-clock ms of the most recent inbound frame (0 until the transport overrides). */
+  getLastFrameMs(): number
+  /** Force the transport to drop and re-establish the socket (no-op for the pure client). */
+  reconnect(): void
 }
 
 export const createRunnerClient = (
@@ -57,6 +69,8 @@ export const createRunnerClient = (
     (id: SessionId, resumeToken: string) => void
   >()
   const connectionLostListeners = new Set<() => void>()
+  const connectionStateListeners = new Set<(s: ConnectionState) => void>()
+  let currentConnectionState: ConnectionState = "connecting"
 
   type Dispatcher = (message: RunnerOutbound) => void
   const dispatchers: Map<RunnerOutbound["type"], Dispatcher> = new Map([
@@ -150,5 +164,18 @@ export const createRunnerClient = (
         connectionLostListeners.delete(cb)
       }
     },
+    reportConnectionState: (state) => {
+      currentConnectionState = state
+      for (const cb of connectionStateListeners) cb(state)
+    },
+    onConnectionState: (cb) => {
+      connectionStateListeners.add(cb)
+      return () => {
+        connectionStateListeners.delete(cb)
+      }
+    },
+    connectionState: () => currentConnectionState,
+    getLastFrameMs: () => 0,
+    reconnect: () => {},
   }
 }

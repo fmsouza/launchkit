@@ -208,4 +208,28 @@ describe("createRunnerClient", () => {
       { type: "run-set-thinking-effort", id: "sess-1", effort: "high" },
     ])
   })
+
+  it("starts in the connecting state", () => {
+    const c = createRunnerClient(() => {})
+    expect(c.connectionState()).toBe("connecting")
+  })
+
+  it("fans out reported connection-state to subscribers and updates connectionState()", () => {
+    const c = createRunnerClient(() => {})
+    const seen: string[] = []
+    const off = c.onConnectionState((s) => seen.push(s))
+    c.reportConnectionState("reconnecting")
+    c.reportConnectionState("connected")
+    expect(seen).toEqual(["reconnecting", "connected"])
+    expect(c.connectionState()).toBe("connected")
+    off()
+    c.reportConnectionState("reconnecting")
+    expect(seen).toEqual(["reconnecting", "connected"])
+  })
+
+  it("defaults getLastFrameMs to 0 and reconnect to a no-op", () => {
+    const c = createRunnerClient(() => {})
+    expect(c.getLastFrameMs()).toBe(0)
+    expect(() => c.reconnect()).not.toThrow()
+  })
 })

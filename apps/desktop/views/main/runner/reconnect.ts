@@ -1,5 +1,5 @@
-/** Connection-state string union (re-exported from runnerClient in Task 2; kept local-compatible here). */
-export type ConnectionState = "connecting" | "connected" | "reconnecting"
+import type { ConnectionState } from "./runnerClient"
+export type { ConnectionState } from "./runnerClient"
 
 /**
  * Capped exponential backoff with a floor. Deterministic (no jitter — runner-socket
