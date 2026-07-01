@@ -111,6 +111,8 @@ export type RunViewProps = {
   readonly onPickAttachments?: () => void
   /** Remove a staged attachment (clicks the chip's X). */
   readonly onRemoveAttachment?: (id: string) => void
+  /** Files dropped onto the composer (staged like picked files). */
+  readonly onDropFiles?: (files: readonly File[]) => void
   /** Optional terminal controller (threaded from `RunDetail`'s `useTerminal` call). */
   readonly terminal?: TerminalController
 }
@@ -165,6 +167,7 @@ export const RunView = ({
   attachmentThumbnails,
   onPickAttachments,
   onRemoveAttachment,
+  onDropFiles,
   terminal,
 }: RunViewProps): ReactElement => {
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -261,6 +264,7 @@ export const RunView = ({
           {...(onPickAttachments === undefined ? {} : { onPickAttachments })}
           {...(onRemoveAttachment === undefined ? {} : { onRemoveAttachment })}
           {...(onOpenAttachment === undefined ? {} : { onOpenAttachment })}
+          {...(onDropFiles === undefined ? {} : { onDropFiles })}
         />
         {terminal && (terminal.paneOpen || terminal.tabs.length > 0) ? (
           // Keep the pane MOUNTED whenever the pane is open OR has live tabs, and
