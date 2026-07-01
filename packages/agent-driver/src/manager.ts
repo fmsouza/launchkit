@@ -1,4 +1,5 @@
 import type {
+  AttachmentRefWithBytes,
   CanonicalEvent,
   PermissionMode,
   StoredEvent,
@@ -250,15 +251,26 @@ export const createRunManager = (deps: RunManagerDeps): RunManager => {
   // when the resume completes. This serializes "two rapid sends" into ONE resume.
   const resuming = new Map<
     SessionId,
-    Array<{ text: string; clientSendId?: string }>
+    Array<{
+      text: string
+      attachments?: readonly AttachmentRefWithBytes[]
+      clientSendId?: string
+    }>
   >()
 
   const resumeAndSend = (
     id: SessionId,
     text: string,
     clientSendId?: string,
+    attachments?: readonly AttachmentRefWithBytes[],
   ): void => {
-    const turn = clientSendId !== undefined ? { text, clientSendId } : { text }
+    const turn: {
+      text: string
+      attachments?: readonly AttachmentRefWithBytes[]
+      clientSendId?: string
+    } = { text }
+    if (attachments !== undefined) turn.attachments = attachments
+    if (clientSendId !== undefined) turn.clientSendId = clientSendId
     const queued = resuming.get(id)
     if (queued !== undefined) {
       queued.push(turn)
@@ -384,7 +396,12 @@ export const createRunManager = (deps: RunManagerDeps): RunManager => {
       // No live session — for run-send, lazily auto-resume; for run-interrupt,
       // drop any queued resume sends so a pending resume does not fire afterward.
       if (message.type === "run-send") {
-        resumeAndSend(message.id, message.text, message.clientSendId)
+        resumeAndSend(
+          message.id,
+          message.text,
+          message.clientSendId,
+          message.attachments,
+        )
       } else if (message.type === "run-interrupt") {
         resuming.delete(message.id)
       }
@@ -396,11 +413,15 @@ export const createRunManager = (deps: RunManagerDeps): RunManager => {
     // the normal persist+forward path.
     switch (message.type) {
       case "run-send":
-        agent.send(
-          message.clientSendId !== undefined
-            ? { text: message.text, clientSendId: message.clientSendId }
-            : { text: message.text },
-        )
+        agent.send({
+          text: message.text,
+          ...(message.attachments !== undefined
+            ? { attachments: [...message.attachments] }
+            : {}),
+          ...(message.clientSendId !== undefined
+            ? { clientSendId: message.clientSendId }
+            : {}),
+        })
         return
       case "run-approve":
         agent.respondApproval(message.requestId, message.decision)
