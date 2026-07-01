@@ -47,6 +47,7 @@ export {
   ThinkingEffortSchema,
   type ThinkingEffort,
 } from "./thinking-effort"
+export * from "./attachment"
 // Re-export the canonical-model id so downstream packages (agent-driver, ui, apps/desktop)
 // import RunnerId from a single place — the canonical-model package — per shared-contracts C3.
 export { RunnerIdSchema, type RunnerId } from "@spectrum/types"
