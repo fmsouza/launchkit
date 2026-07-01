@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test"
 import type { RunnerId } from "@spectrum/types"
+import type { AttachmentCapabilities, AttachmentRef } from "./attachment"
 import type { CanonicalEvent } from "./events"
 import {
   type QuestionItem,
@@ -833,5 +834,45 @@ describe("reduce — idempotent re-emit (double-replay safety)", () => {
     const items = state.runners.get(rid("root"))?.items ?? []
     expect(items).toHaveLength(1)
     expect(items[0]).toMatchObject({ kind: "question", requestId: "q1" })
+  })
+})
+
+describe("reduce — attachments", () => {
+  it("folds a user text-delta with attachments into a MessageItem carrying attachments", () => {
+    const ref: AttachmentRef = {
+      id: "h1",
+      mime: "image/png",
+      displayName: "p.png",
+      kind: "image",
+      bytes: 10,
+    }
+    const state = fold([
+      started("root"),
+      {
+        type: "text-delta",
+        runnerId: rid("root"),
+        messageId: "m1",
+        text: "look",
+        role: "user",
+        attachments: [ref],
+      },
+    ])
+    const runner = state.runners.get(rid("root"))
+    expect(runner).toBeDefined()
+    const msg = runner?.items.find((i) => i.kind === "message") as
+      | { attachments?: readonly AttachmentRef[] }
+      | undefined
+    expect(msg?.attachments).toEqual([ref])
+  })
+
+  it("runner-started supportedAttachments is folded onto RunnerState", () => {
+    const caps: AttachmentCapabilities = {
+      image: true,
+      pdf: true,
+      binary: false,
+    }
+    const state = fold([started("root", { supportedAttachments: caps })])
+    const runner = state.runners.get(rid("root"))
+    expect(runner?.supportedAttachments).toEqual(caps)
   })
 })

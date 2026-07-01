@@ -1,4 +1,5 @@
 import type { RunnerId } from "@spectrum/types"
+import type { AttachmentCapabilities, AttachmentRef } from "./attachment"
 import type {
   ApprovalDecision,
   ApprovalTarget,
@@ -21,6 +22,8 @@ export type MessageItem = {
   tone?: "error"
   /** Correlation id from the originating `run-send`; lets the renderer reconcile its outbox entry. */
   clientSendId?: string
+  /** Attachments on this user turn (refs only — no bytes). */
+  attachments?: readonly AttachmentRef[]
 }
 export type ReasoningItem = {
   kind: "reasoning"
@@ -75,6 +78,7 @@ export type RunnerState = {
   items: TimelineItem[]
   usage?: Usage
   supportedModes?: readonly PermissionMode[]
+  supportedAttachments?: AttachmentCapabilities
   error?: string
 }
 export type RunState = {
@@ -127,6 +131,8 @@ export const reduce = (state: RunState, event: CanonicalEvent): RunState => {
       const agentType = event.agentType ?? existing?.agentType
       const parentRunnerId = event.parentRunnerId ?? existing?.parentRunnerId
       const supportedModes = event.supportedModes ?? existing?.supportedModes
+      const supportedAttachments =
+        event.supportedAttachments ?? existing?.supportedAttachments
       const runner: RunnerState = {
         id: event.runnerId,
         status: "running",
@@ -135,6 +141,7 @@ export const reduce = (state: RunState, event: CanonicalEvent): RunState => {
         ...(agentType !== undefined ? { agentType } : {}),
         ...(title !== undefined ? { title } : {}),
         ...(supportedModes !== undefined ? { supportedModes } : {}),
+        ...(supportedAttachments !== undefined ? { supportedAttachments } : {}),
       }
       let next = withRunner(state, runner)
       if (event.parentRunnerId === undefined) {
@@ -187,6 +194,9 @@ export const reduce = (state: RunState, event: CanonicalEvent): RunState => {
               text: event.text,
               ...(event.clientSendId !== undefined
                 ? { clientSendId: event.clientSendId }
+                : {}),
+              ...(event.attachments !== undefined
+                ? { attachments: [...event.attachments] }
                 : {}),
             },
           ]
