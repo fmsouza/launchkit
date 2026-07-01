@@ -1273,6 +1273,64 @@ describe("RunDetail (media-upload wiring)", () => {
     cleanup()
   })
 
+  it("toasts when an attachment's file is missing at send time", async () => {
+    // Cover the send-time missing-file path: when the user attaches a file,
+    // then it disappears from disk, then clicks Send, `resolveForSend` drops
+    // the ref silently, `handleSend` notices `withBytes.length < pendingBefore`
+    // and toasts "File no longer available" — and no send is dispatched.
+    const runner = makeRichFakeRunner()
+    const pending: AttachmentRef = ref({ id: "sha_send_gone" })
+    const client = createFakeIpcClient({
+      pickUploads: async () => ({
+        ok: true,
+        value: { uploads: [pending], rejected: [] },
+      }),
+      readUploadThumbnail: async () => ({
+        ok: true,
+        value: { dataUrl: "data:image/png;base64,AAAA" },
+      }),
+      readUploadDataUrl: async () => ({
+        ok: true,
+        value: { missing: true },
+      }),
+    })
+    renderWithToasts(
+      <RunDetail mode="live" sessionId={id} runnerClient={runner} />,
+      client,
+    )
+    runner.push(
+      stored(0, {
+        type: "runner-started",
+        runnerId: "run_root" as never,
+        supportedAttachments: { image: true, pdf: false, binary: false },
+      }),
+    )
+    await waitFor(() => screen.getByRole("button", { name: "Attach files" }))
+    // Pick a file — chip renders using the thumbnail dataUrl.
+    fireEvent.click(screen.getByRole("button", { name: "Attach files" }))
+    await waitFor(() => expect(client.calls.pickUploads).toHaveLength(1))
+    // Type text and send. `readUploadDataUrl` returns { missing: true }, so
+    // `resolveForSend` drops the ref, `handleSend` toasts, and no send lands.
+    fireEvent.change(screen.getByRole("textbox"), {
+      target: { value: "with missing image" },
+    })
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }))
+    await waitFor(() => expect(client.calls.readUploadDataUrl).toHaveLength(1))
+    await waitFor(() =>
+      expect(screen.getByText(/no longer available/i)).toBeInTheDocument(),
+    )
+    // The send was dropped — the ref resolved to nothing, so the send was
+    // dispatched with text only and no `attachments` field.
+    await waitFor(() => expect(runner.richSends).toHaveLength(1))
+    const sent = runner.richSends[0]
+    expect(sent?.text).toBe("with missing image")
+    expect(sent?.id).toBe(id)
+    expect(
+      (sent?.turn as { attachments?: unknown[] }).attachments,
+    ).toBeUndefined()
+    cleanup()
+  })
+
   it("opens a PDF attachment via openUploadExternal", async () => {
     const runner = makeFakeRunner()
     const pdfRef: AttachmentRef = {
