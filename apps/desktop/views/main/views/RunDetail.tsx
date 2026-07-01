@@ -351,7 +351,12 @@ const LiveRunDetail = ({
       text,
       ...(withBytes.length > 0 ? { attachments: withBytes } : {}),
     }
-    enqueueSend(sessionId, { clientSendId, text, status: "sending" })
+    enqueueSend(sessionId, {
+      clientSendId,
+      text,
+      status: "sending",
+      ...(withBytes.length > 0 ? { attachments: uploads.pending } : {}),
+    })
     runnerClient.send(sessionId, sendArgs, clientSendId)
     uploads.clear()
     const t = setTimeout(() => {

@@ -33,6 +33,8 @@ export type ConversationTimelineProps = {
   readonly pending?: readonly {
     readonly clientSendId: string
     readonly text: string
+    /** Attachment refs (no bytes — the dataUrl is send-only). */
+    readonly attachments?: readonly AttachmentRef[]
     readonly status: "sending" | "failed"
   }[]
   /** Re-dispatch a prompt (failed pending send, or the last errored turn). */
@@ -172,6 +174,9 @@ export const ConversationTimeline = ({
           text={p.text}
           author="user"
           status={p.status}
+          {...(p.attachments === undefined
+            ? {}
+            : { attachments: p.attachments })}
           {...(p.status === "failed" && onResend !== undefined
             ? {
                 onResend: () =>
@@ -185,6 +190,9 @@ export const ConversationTimeline = ({
               }
             : {})}
           {...(onOpenLink === undefined ? {} : { onOpenLink })}
+          {...(onOpenAttachment === undefined
+            ? {}
+            : { onOpenAttachment })}
         />
       ))}
       {runner.usage === undefined ? null : <UsageFooter usage={runner.usage} />}

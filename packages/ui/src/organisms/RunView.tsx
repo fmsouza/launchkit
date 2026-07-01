@@ -61,6 +61,8 @@ export type RunViewProps = {
   readonly pending?: readonly {
     readonly clientSendId: string
     readonly text: string
+    /** Attachment refs (no bytes — the dataUrl is send-only). */
+    readonly attachments?: readonly AttachmentRef[]
     readonly status: "sending" | "failed"
   }[]
   /** Re-dispatch a prompt (failed pending send, or the last errored turn). Hidden while busy. */
