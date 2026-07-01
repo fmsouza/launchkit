@@ -165,10 +165,15 @@ export interface OpencodeClient {
     prompt(args: {
       readonly path: { readonly id: string }
       readonly body: {
-        readonly parts: ReadonlyArray<{
-          readonly type: "text"
-          readonly text: string
-        }>
+        readonly parts: ReadonlyArray<
+          | { readonly type: "text"; readonly text: string }
+          | {
+              readonly type: "file"
+              readonly mime: string
+              readonly url: string
+              readonly filename?: string
+            }
+        >
         /** OpenCode agent to invoke (e.g. "plan"). Accepted by SDK SessionPromptData.body.agent. */
         readonly agent?: string
       }

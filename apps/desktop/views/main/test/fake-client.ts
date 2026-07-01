@@ -51,6 +51,10 @@ const METHOD_NAMES = [
   "setUpdateChannel",
   "testProviderDraft",
   "listProviderModelsDraft",
+  "pickUploads",
+  "readUploadThumbnail",
+  "readUploadDataUrl",
+  "openUploadExternal",
 ] as const satisfies ReadonlyArray<keyof IpcClient>
 
 /**

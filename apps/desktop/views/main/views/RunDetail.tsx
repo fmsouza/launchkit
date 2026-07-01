@@ -1,4 +1,8 @@
 import {
+  type AttachmentCapabilities,
+  type AttachmentKind,
+  type AttachmentRef,
+  type AttachmentRefWithBytes,
   type CanonicalEvent,
   type MessageItem,
   type RunState,
@@ -6,8 +10,14 @@ import {
   reduce,
 } from "@spectrum/agent-events"
 import type { HarnessId, ModelId, ModelRoute, SessionId } from "@spectrum/types"
-import { EmptyState, RunView, Spinner } from "@spectrum/ui"
-import { type ReactElement, useEffect, useRef, useState } from "react"
+import { EmptyState, Lightbox, RunView, Spinner } from "@spectrum/ui"
+import {
+  type ReactElement,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react"
 import { useStore } from "zustand"
 import { useIpcClient } from "../IpcClientContext"
 import {
@@ -15,7 +25,9 @@ import {
   useComposerModeModel,
 } from "../hooks/useComposerModeModel"
 import { useElapsedSeconds } from "../hooks/useElapsedSeconds"
+import { useNotifications } from "../hooks/useNotifications"
 import { useTerminal } from "../hooks/useTerminal"
+import { useUploads } from "../hooks/useUploads"
 import type { RunnerClient } from "../runner/runnerClient"
 import { useStores } from "../stores/createStores"
 import { pendingToRender } from "../stores/outbox"
@@ -186,6 +198,54 @@ const LiveRunDetail = ({
     ipcClient: client,
   })
 
+  // Notifications + lightbox state. The page owns the open resolver and the
+  // lightbox; `useUploads` defers to it (lightbox vs external-app dispatch).
+  const { notify } = useNotifications()
+  const [lightbox, setLightbox] = useState<
+    | {
+        readonly open: true
+        readonly title: string
+        readonly kind: AttachmentKind
+        readonly dataUrl: string
+      }
+    | { readonly open: false }
+  >({ open: false })
+
+  const openAttachment = useCallback(
+    async (ref: AttachmentRef, _dataUrl: string | null): Promise<void> => {
+      // The hook doesn't pass a pre-resolved dataUrl — it just hands the ref
+      // back to the page. We always re-read on open (lightbox / external-open
+      // both need fresh bytes; the thumbnail is for the chip preview only).
+      if (ref.kind === "image" || ref.kind === "text") {
+        const r = await client.readUploadDataUrl({ id: ref.id, mime: ref.mime })
+        if (r.ok && r.value.missing === true) {
+          notify({ tone: "warning", message: "File no longer available" })
+          return
+        }
+        if (r.ok && r.value.dataUrl !== undefined) {
+          setLightbox({
+            open: true,
+            title: ref.displayName,
+            kind: ref.kind,
+            dataUrl: r.value.dataUrl,
+          })
+        }
+        return
+      }
+      // pdf / binary → external viewer
+      const r = await client.openUploadExternal({ id: ref.id })
+      if (
+        r.ok &&
+        r.value !== null &&
+        "missing" in r.value &&
+        r.value.missing === true
+      ) {
+        notify({ tone: "warning", message: "File no longer available" })
+      }
+    },
+    [client, notify],
+  )
+
   // Register the per-session listener and attach once. The store accumulates the
   // RunState; this effect owns the only socket coupling on the page. `skipAttach`
   // suppresses the attach for the resumed session — the manager replays the backlog
@@ -263,10 +323,42 @@ const LiveRunDetail = ({
     }
   }
 
-  const handleSend = (text: string): void => {
+  // Page owns the pending list, picker call, lightbox state, and open resolver.
+  // `uploads.open` defers back to `openAttachment` (it knows lightbox vs external).
+  // `root` is set above; the hook accepts `undefined` until `runner-started` lands.
+  const supportedAttachments: AttachmentCapabilities | undefined =
+    root?.supportedAttachments
+  const uploads = useUploads(supportedAttachments, openAttachment, notify)
+
+  const handleSend = async (turn: {
+    readonly text: string
+    readonly attachments?: readonly AttachmentRef[]
+  }): Promise<void> => {
+    const text = turn.text
     const clientSendId = crypto.randomUUID()
-    enqueueSend(sessionId, { clientSendId, text, status: "sending" })
-    runnerClient.send(sessionId, text, clientSendId)
+    // Resolve dataUrls for the WebSocket Turn. `useUploads.resolveForSend`
+    // silently drops refs whose dataUrl can't be read (file gone from disk) —
+    // surface a toast so the user knows one of their attachments was dropped.
+    const withBytes: AttachmentRefWithBytes[] = await uploads.resolveForSend()
+    const pendingBefore = uploads.pending.length
+    if (withBytes.length < pendingBefore) {
+      notify({ tone: "warning", message: "File no longer available" })
+    }
+    const sendArgs: {
+      readonly text: string
+      readonly attachments?: AttachmentRefWithBytes[]
+    } = {
+      text,
+      ...(withBytes.length > 0 ? { attachments: withBytes } : {}),
+    }
+    enqueueSend(sessionId, {
+      clientSendId,
+      text,
+      status: "sending",
+      ...(withBytes.length > 0 ? { attachments: uploads.pending } : {}),
+    })
+    runnerClient.send(sessionId, sendArgs, clientSendId)
+    uploads.clear()
     const t = setTimeout(() => {
       markSendFailed(sessionId, clientSendId)
       timers.current.delete(clientSendId)
@@ -293,7 +385,7 @@ const LiveRunDetail = ({
       }
       removeSend(sessionId, entry.clientSendId)
     }
-    handleSend(entry.text)
+    handleSend({ text: entry.text })
   }
 
   const handleCancel = (entry: {
@@ -327,43 +419,64 @@ const LiveRunDetail = ({
   const breadcrumb = [root.title ?? "main", openRunner?.title ?? "sub-runner"]
 
   return (
-    <RunView
-      root={root}
-      runners={state.runners}
-      {...(openRunner === undefined ? {} : { openRunner })}
-      subBreadcrumb={breadcrumb}
-      onOpenSubRunner={(rid) => openSub(sessionId, rid)}
-      onCloseSub={() => closeSub(sessionId)}
-      onSend={handleSend}
-      onResend={handleResend}
-      onCancel={handleCancel}
-      {...(dismissedErrorId === undefined ? {} : { dismissedErrorId })}
-      {...(prefill === undefined
-        ? {}
-        : { prefillText: prefill.text, prefillKey: prefill.key })}
-      pending={pending}
-      onDecide={(requestId, decision) =>
-        runnerClient.approve(sessionId, requestId, decision)
-      }
-      onAnswer={(requestId, answer) =>
-        runnerClient.answer(sessionId, requestId, answer)
-      }
-      onInterrupt={handleInterrupt}
-      busy={busy}
-      {...(elapsedSeconds === undefined ? {} : { elapsedSeconds })}
-      mode={mode}
-      onModeChange={onModeChange}
-      model={model}
-      {...(models === undefined ? {} : { models })}
-      {...(providerNames === undefined ? {} : { providerNames })}
-      onModelChange={onModelChange}
-      effort={effort}
-      onEffortChange={onEffortChange}
-      onOpenLink={(url) => {
-        void client.openExternalUrl({ url })
-      }}
-      {...(terminal === undefined ? {} : { terminal })}
-    />
+    <>
+      <RunView
+        root={root}
+        runners={state.runners}
+        {...(openRunner === undefined ? {} : { openRunner })}
+        subBreadcrumb={breadcrumb}
+        onOpenSubRunner={(rid) => openSub(sessionId, rid)}
+        onCloseSub={() => closeSub(sessionId)}
+        onSend={handleSend}
+        onResend={handleResend}
+        onCancel={handleCancel}
+        {...(dismissedErrorId === undefined ? {} : { dismissedErrorId })}
+        {...(prefill === undefined
+          ? {}
+          : { prefillText: prefill.text, prefillKey: prefill.key })}
+        pending={pending}
+        onDecide={(requestId, decision) =>
+          runnerClient.approve(sessionId, requestId, decision)
+        }
+        onAnswer={(requestId, answer) =>
+          runnerClient.answer(sessionId, requestId, answer)
+        }
+        onInterrupt={handleInterrupt}
+        busy={busy}
+        {...(elapsedSeconds === undefined ? {} : { elapsedSeconds })}
+        mode={mode}
+        onModeChange={onModeChange}
+        model={model}
+        {...(models === undefined ? {} : { models })}
+        {...(providerNames === undefined ? {} : { providerNames })}
+        onModelChange={onModelChange}
+        effort={effort}
+        onEffortChange={onEffortChange}
+        onOpenLink={(url) => {
+          void client.openExternalUrl({ url })
+        }}
+        onOpenAttachment={(ref) => {
+          void openAttachment(ref, null)
+        }}
+        {...(terminal === undefined ? {} : { terminal })}
+        {...(supportedAttachments === undefined
+          ? {}
+          : { attachmentCapabilities: supportedAttachments })}
+        pendingAttachments={uploads.pending}
+        attachmentThumbnails={uploads.thumbnails}
+        onPickAttachments={() => {
+          void uploads.pick()
+        }}
+        onRemoveAttachment={uploads.remove}
+      />
+      <Lightbox
+        open={lightbox.open}
+        title={lightbox.open ? lightbox.title : ""}
+        kind={lightbox.open ? lightbox.kind : "image"}
+        {...(lightbox.open ? { dataUrl: lightbox.dataUrl } : {})}
+        onClose={() => setLightbox({ open: false })}
+      />
+    </>
   )
 }
 
@@ -408,6 +521,52 @@ const ReplayRunDetail = ({
       undefined, // no socket in replay; mode/model forward to the live session on resume-send
     )
 
+  // Replay-mode attachment open: history chips can be reopened (the file is
+  // still in `uploads/`), so the same open resolver applies. Replay has no
+  // composer / no pending state, so we don't need `useUploads` here — only
+  // the page-level resolver that reads the file and dispatches.
+  const { notify: replayNotify } = useNotifications()
+  const [replayLightbox, setReplayLightbox] = useState<
+    | {
+        readonly open: true
+        readonly title: string
+        readonly kind: AttachmentKind
+        readonly dataUrl: string
+      }
+    | { readonly open: false }
+  >({ open: false })
+
+  const replayOpenAttachment = useCallback(
+    async (ref: AttachmentRef, _dataUrl: string | null): Promise<void> => {
+      if (ref.kind === "image" || ref.kind === "text") {
+        const r = await client.readUploadDataUrl({ id: ref.id, mime: ref.mime })
+        if (r.ok && r.value.missing === true) {
+          replayNotify({ tone: "warning", message: "File no longer available" })
+          return
+        }
+        if (r.ok && r.value.dataUrl !== undefined) {
+          setReplayLightbox({
+            open: true,
+            title: ref.displayName,
+            kind: ref.kind,
+            dataUrl: r.value.dataUrl,
+          })
+        }
+        return
+      }
+      const r = await client.openUploadExternal({ id: ref.id })
+      if (
+        r.ok &&
+        r.value !== null &&
+        "missing" in r.value &&
+        r.value.missing === true
+      ) {
+        replayNotify({ tone: "warning", message: "File no longer available" })
+      }
+    },
+    [client, replayNotify],
+  )
+
   if (folded === undefined) return <Spinner label="Loading conversation" />
   const { state } = folded
   // seed already applied via the hook's effect
@@ -430,35 +589,47 @@ const ReplayRunDetail = ({
   // Replay-mode send → the page adds the session to `openSessionIds` and asks the
   // manager to resume+send. The page-level `onResumeSend` is the bridge; if it's
   // absent (e.g. a test harness) the composer stays inert via the fallback handler.
-  const handleSend = (text: string): void => {
-    onResumeSend?.(text)
+  const handleSend = (turn: { text: string }): void => {
+    onResumeSend?.(turn.text)
   }
 
   return (
-    <RunView
-      root={root}
-      runners={state.runners}
-      {...(openRunner === undefined ? {} : { openRunner })}
-      subBreadcrumb={breadcrumb}
-      onOpenSubRunner={(rid) => setOpenSubId(rid)}
-      onCloseSub={() => setOpenSubId(undefined)}
-      onSend={handleSend}
-      onDecide={() => {}}
-      onAnswer={() => {}}
-      inert
-      composerDisabled={onResumeSend === undefined}
-      mode={mode}
-      onModeChange={onModeChange}
-      model={model}
-      {...(models === undefined ? {} : { models })}
-      {...(providerNames === undefined ? {} : { providerNames })}
-      onModelChange={onModelChange}
-      effort={effort}
-      onEffortChange={onEffortChange}
-      onOpenLink={(url) => {
-        void client.openExternalUrl({ url })
-      }}
-    />
+    <>
+      <RunView
+        root={root}
+        runners={state.runners}
+        {...(openRunner === undefined ? {} : { openRunner })}
+        subBreadcrumb={breadcrumb}
+        onOpenSubRunner={(rid) => setOpenSubId(rid)}
+        onCloseSub={() => setOpenSubId(undefined)}
+        onSend={handleSend}
+        onDecide={() => {}}
+        onAnswer={() => {}}
+        inert
+        composerDisabled={onResumeSend === undefined}
+        mode={mode}
+        onModeChange={onModeChange}
+        model={model}
+        {...(models === undefined ? {} : { models })}
+        {...(providerNames === undefined ? {} : { providerNames })}
+        onModelChange={onModelChange}
+        effort={effort}
+        onEffortChange={onEffortChange}
+        onOpenLink={(url) => {
+          void client.openExternalUrl({ url })
+        }}
+        onOpenAttachment={(ref) => {
+          void replayOpenAttachment(ref, null)
+        }}
+      />
+      <Lightbox
+        open={replayLightbox.open}
+        title={replayLightbox.open ? replayLightbox.title : ""}
+        kind={replayLightbox.open ? replayLightbox.kind : "image"}
+        {...(replayLightbox.open ? { dataUrl: replayLightbox.dataUrl } : {})}
+        onClose={() => setReplayLightbox({ open: false })}
+      />
+    </>
   )
 }
 

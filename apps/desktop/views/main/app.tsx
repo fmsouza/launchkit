@@ -324,7 +324,7 @@ const AppInner = ({
       return next
     })
     openSession(sessionId)
-    runnerClient.send(sessionId, text)
+    runnerClient.send(sessionId, { text })
   }
 
   // Garbage-collect the sticky `skipAttach` flag: when a session is no longer

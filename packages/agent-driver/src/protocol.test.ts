@@ -175,4 +175,51 @@ describe("decodeRunnerInbound", () => {
       })
     }
   })
+
+  it("decodeRunnerInbound accepts run-send with attachments", () => {
+    const decoded = decodeRunnerInbound({
+      type: "run-send",
+      id: "s1",
+      text: "hi",
+      attachments: [
+        {
+          id: "h1",
+          mime: "image/png",
+          displayName: "p.png",
+          kind: "image",
+          bytes: 4,
+          dataUrl: "data:image/png;base64,AAAA",
+        },
+      ],
+      clientSendId: "c1",
+    })
+    expect(decoded.ok).toBe(true)
+  })
+
+  it("decodeRunnerInbound accepts run-send without attachments", () => {
+    const decoded = decodeRunnerInbound({
+      type: "run-send",
+      id: "s1",
+      text: "hi",
+    })
+    expect(decoded.ok).toBe(true)
+  })
+
+  it("decodeRunnerInbound rejects run-send with a malformed attachment (missing dataUrl)", () => {
+    const decoded = decodeRunnerInbound({
+      type: "run-send",
+      id: "s1",
+      text: "hi",
+      attachments: [
+        {
+          id: "h1",
+          mime: "image/png",
+          displayName: "p.png",
+          kind: "image",
+          bytes: 4,
+        },
+      ],
+    })
+    expect(decoded.ok).toBe(false)
+  })
 })

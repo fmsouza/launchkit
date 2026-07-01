@@ -91,6 +91,10 @@ const makeFakeDeps = (): {
       deleteSession: () => ok(undefined),
       deleteProject: () => ok(undefined),
     })) as never,
+    createUploadStore: ((args: { readonly uploadsDir: string }) => {
+      calls.createUploadStore = [args]
+      return { __stub: "createUploadStore" }
+    }) as never,
     demoHarnessEnabled: false,
     readBuildChannel: () => undefined,
   }
@@ -239,8 +243,10 @@ describe("createAppContext wiring", () => {
   it("creates the data directory before opening the database (fresh install)", () => {
     const { deps, calls } = makeFakeDeps()
     const order: string[] = []
+    const ensureDirs: string[] = []
     const ensureDir = ((dir: string) => {
       order.push("ensureDir")
+      ensureDirs.push(dir)
       calls.ensureDir = [dir]
     }) as never
     const createSqliteClient = ((path: string) => {
@@ -256,8 +262,11 @@ describe("createAppContext wiring", () => {
       env: {},
     })
     // The data dir is created (recursively) before the db open, or a fresh install
-    // (no dir yet) throws on `new Database(path)` and the proxy never starts.
-    expect(calls.ensureDir?.[0]).toBe(expected.dataDir)
+    // (no dir yet) throws on `new Database(path)` and the proxy never starts. Task 8 also
+    // ensures the uploads dir (sibling of dataDir) so it's observable from `paths.uploadsDir`
+    // immediately; that ensure happens AFTER the dataDir one but still before the db open.
+    expect(ensureDirs[0]).toBe(expected.dataDir)
+    expect(ensureDirs).toContain(expected.uploadsDir)
     expect(order.indexOf("ensureDir")).toBeGreaterThanOrEqual(0)
     expect(order.indexOf("ensureDir")).toBeLessThan(order.indexOf("db"))
   })

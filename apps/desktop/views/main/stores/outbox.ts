@@ -1,8 +1,12 @@
+import type { AttachmentRef } from "@spectrum/agent-events"
+
 /** Durable outbox entry: a user send persisted before dispatch so a crash can't lose it. */
 export type OutboxStatus = "sending" | "failed"
 export type OutboxEntry = {
   readonly clientSendId: string
   readonly text: string
+  /** Attachment refs (no bytes — the dataUrl is send-only). */
+  readonly attachments?: readonly AttachmentRef[]
   readonly status: OutboxStatus
 }
 

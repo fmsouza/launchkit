@@ -9,6 +9,7 @@ export interface AppPaths {
   readonly harnessDir: string
   readonly runtimeFile: string
   readonly secretsDir: string
+  readonly uploadsDir: string
 }
 
 export interface ResolveAppPathsInput {
@@ -84,5 +85,6 @@ export const resolveAppPaths = (input: ResolveAppPathsInput): AppPaths => {
     harnessDir: p.join(dataDir, "harnesses"),
     runtimeFile: p.join(dataDir, "runtime.json"),
     secretsDir: p.join(dataDir, "secrets"),
+    uploadsDir: p.join(dataDir, "uploads"),
   }
 }

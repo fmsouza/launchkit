@@ -1,3 +1,4 @@
+import type { AttachmentRefWithBytes } from "@spectrum/agent-events"
 import type { ServerNotification } from "./bindings/ServerNotification"
 import type { ServerRequest } from "./bindings/ServerRequest"
 import type { CommandExecutionApprovalDecision } from "./bindings/v2/CommandExecutionApprovalDecision"
@@ -61,4 +62,21 @@ export const textInput = (
   type: "text",
   text,
   text_elements: [],
+})
+
+/**
+ * Build a Codex `UserInput` image arm from a send-path attachment.
+ *
+ * TODO(manual-smoke): the `codex app-server` v2 image arm MAY reject `data:`
+ * URLs at runtime (no unit-test coverage — the test transport is fake). When
+ * we next run a Codex session in a real GUI build, attach an image and confirm
+ * the driver accepts the `data:image/...;base64,...` URL end-to-end. If the
+ * server rejects it, the fix will be to upload bytes to a temporary file and
+ * pass a `file://` URL (or whatever the app-server v2 actually accepts).
+ */
+export const imageInput = (
+  ref: AttachmentRefWithBytes,
+): { type: "image"; url: string } => ({
+  type: "image",
+  url: ref.dataUrl,
 })

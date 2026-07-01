@@ -1,5 +1,5 @@
 import type { AgentStartInput } from "@spectrum/agent-driver"
-import type { ApprovalTarget } from "@spectrum/agent-events"
+import type { ApprovalTarget, AttachmentRef } from "@spectrum/agent-events"
 import type {
   AdapterCtx,
   AdapterHandle,
@@ -43,6 +43,20 @@ const approvalTarget = (
   kind: e.payload.kind ?? "command",
   detail: e.payload.detail,
 })
+
+/**
+ * OpenClaw's transport only takes plain text, so a Turn with attachments degrades
+ * to a text-only note: each attachment appends `[attachment: <displayName>]`. The
+ * capability gate upstream hides the picker for OpenClaw, so this is a safety net.
+ */
+const appendAttachmentNote = (
+  text: string,
+  refs: readonly AttachmentRef[],
+): string => {
+  if (refs.length === 0) return text
+  const notes = refs.map((r) => `[attachment: ${r.displayName}]`).join(" ")
+  return `${text}\n${notes}`
+}
 
 /**
  * The OpenClaw adapter. `start` connects to the Gateway, starts a run for the initial prompt, drains the
@@ -92,7 +106,14 @@ export const createOpenclawAdapter = (
     })()
 
     return {
-      send: (text) => transport.send({ sessionKey, text }),
+      // Task 6: OpenClaw's transport is text-only; attachment metadata degrades to a
+      // "[attachment: name]" note appended to the text. The capability gate upstream
+      // hides the picker for OpenClaw, so this is a safety net only.
+      send: (turn) =>
+        transport.send({
+          sessionKey,
+          text: appendAttachmentNote(turn.text, turn.attachments ?? []),
+        }),
       interrupt: () => run.cancel(),
       close: () => {
         run.close()
@@ -103,4 +124,8 @@ export const createOpenclawAdapter = (
       setThinkingEffort: () => {},
     }
   },
+  // OpenClaw has no native attachment support today; declare all-false so the
+  // upstream capability gate hides the picker. The text-note fallback above
+  // remains as a safety net for defensive calls.
+  supportedAttachments: { image: false, pdf: false, binary: false },
 })

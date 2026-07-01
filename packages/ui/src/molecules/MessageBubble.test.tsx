@@ -92,6 +92,43 @@ describe("MessageBubble", () => {
   })
 })
 
+describe("MessageBubble attachments", () => {
+  const ref = {
+    id: "h1",
+    mime: "image/png",
+    displayName: "p.png",
+    kind: "image" as const,
+    bytes: 1,
+  }
+
+  it("renders a read-only attachment tray when attachments are present", () => {
+    const { container } = render(
+      <MessageBubble author="user" text="look" attachments={[ref]} />,
+    )
+    expect(container.querySelectorAll(".lk-attachment-chip")).toHaveLength(1)
+    // read-only: no remove overlay
+    expect(container.querySelector('[data-testid="chip-remove"]')).toBeNull()
+  })
+
+  it("calls onOpenAttachment when a chip is clicked", () => {
+    let opened: unknown = null
+    const { container } = render(
+      <MessageBubble
+        author="user"
+        text="look"
+        attachments={[ref]}
+        onOpenAttachment={(r) => {
+          opened = r
+        }}
+      />,
+    )
+    fireEvent.click(
+      container.querySelector('[data-testid="chip"]') as HTMLElement,
+    )
+    expect(opened).not.toBeNull()
+  })
+})
+
 describe("MessageBubble failed state", () => {
   it("renders Resend and Cancel when failed and fires the callbacks", () => {
     let resent = 0

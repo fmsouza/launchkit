@@ -1,11 +1,13 @@
 import {
   ApprovalDecisionSchema,
+  AttachmentRefWithBytesSchema,
   PermissionModeSchema,
   QuestionAnswerSchema,
   ThinkingEffortSchema,
 } from "@spectrum/agent-events"
 import type {
   ApprovalDecision,
+  AttachmentRefWithBytes,
   PermissionMode,
   QuestionAnswer,
   StoredEvent,
@@ -45,6 +47,7 @@ export type RunnerInbound =
       readonly id: SessionId
       readonly text: string
       readonly clientSendId?: string | undefined
+      readonly attachments?: readonly AttachmentRefWithBytes[] | undefined
     }
   | {
       readonly type: "run-approve"
@@ -82,6 +85,7 @@ const InboundSchema = z.discriminatedUnion("type", [
     id: SessionIdSchema,
     text: z.string(),
     clientSendId: z.string().optional(),
+    attachments: z.array(AttachmentRefWithBytesSchema).optional(),
   }),
   z.object({
     type: z.literal("run-approve"),
