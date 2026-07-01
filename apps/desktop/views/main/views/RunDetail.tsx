@@ -10,7 +10,7 @@ import {
   reduce,
 } from "@spectrum/agent-events"
 import type { HarnessId, ModelId, ModelRoute, SessionId } from "@spectrum/types"
-import { EmptyState, Lightbox, RunView, Spinner } from "@spectrum/ui"
+import { Button, EmptyState, Lightbox, RunView, Spinner } from "@spectrum/ui"
 import {
   type ReactElement,
   useCallback,
@@ -26,6 +26,7 @@ import {
 } from "../hooks/useComposerModeModel"
 import { useElapsedSeconds } from "../hooks/useElapsedSeconds"
 import { useNotifications } from "../hooks/useNotifications"
+import { useStartWatchdog } from "../hooks/useStartWatchdog"
 import { useTerminal } from "../hooks/useTerminal"
 import { useUploads } from "../hooks/useUploads"
 import type { RunnerClient } from "../runner/runnerClient"
@@ -104,6 +105,11 @@ export type RunDetailProps = {
    * never spawn a PTY keep passing.
    */
   readonly terminalClient?: TerminalClient
+  /** Overrides the start-watchdog delays (defaults 3000/15000ms). Test-only. */
+  readonly startWatchdog?: {
+    readonly reattachDelayMs?: number
+    readonly failDelayMs?: number
+  }
 }
 
 /**
@@ -134,6 +140,7 @@ const LiveRunDetail = ({
   providerNames,
   skipAttach = false,
   terminalClient,
+  startWatchdog,
 }: {
   readonly sessionId: SessionId
   readonly runnerClient: RunnerClient
@@ -147,6 +154,11 @@ const LiveRunDetail = ({
    */
   readonly skipAttach?: boolean
   readonly terminalClient?: TerminalClient
+  /** Overrides the start-watchdog delays (defaults 3000/15000ms). Test-only. */
+  readonly startWatchdog?: {
+    readonly reattachDelayMs?: number
+    readonly failDelayMs?: number
+  }
 }): ReactElement => {
   const client = useIpcClient()
   const store = useStores().runView
@@ -157,6 +169,7 @@ const LiveRunDetail = ({
   const applyEvent = useStore(store, (s) => s.applyEvent)
   const openSub = useStore(store, (s) => s.openSub)
   const closeSub = useStore(store, (s) => s.closeSub)
+  const resetRun = useStore(store, (s) => s.reset)
 
   const outbox = useStores().outbox
   const outboxEntries = useStore(
@@ -265,6 +278,20 @@ const LiveRunDetail = ({
     state.rootRunnerId === undefined
       ? undefined
       : state.runners.get(state.rootRunnerId)
+
+  const { failed: startFailed, retry: retryStart } = useStartWatchdog({
+    active: root === undefined,
+    reattach: () => {
+      resetRun(sessionId)
+      runnerClient.attach(sessionId)
+    },
+    ...(startWatchdog?.reattachDelayMs === undefined
+      ? {}
+      : { reattachDelayMs: startWatchdog.reattachDelayMs }),
+    ...(startWatchdog?.failDelayMs === undefined
+      ? {}
+      : { failDelayMs: startWatchdog.failDelayMs }),
+  })
 
   // Compute the set of clientSendIds that have landed in the reduced timeline
   // (safe before the root guard: empty set when root is not yet present).
@@ -410,7 +437,17 @@ const LiveRunDetail = ({
   }
 
   if (root === undefined)
-    return (
+    return startFailed ? (
+      <div className="lk-start-failed">
+        <EmptyState
+          title="Couldn't start the agent"
+          hint="The run didn't begin. Retry to reconnect and replay it."
+        />
+        <Button variant="secondary" onClick={retryStart}>
+          Retry
+        </Button>
+      </div>
+    ) : (
       <EmptyState title="Starting…" hint="Waiting for the agent to begin." />
     )
 
@@ -649,6 +686,7 @@ export const RunDetail = ({
   onResumeSend,
   skipAttach = false,
   terminalClient,
+  startWatchdog,
 }: RunDetailProps): ReactElement =>
   mode === "live" ? (
     <LiveRunDetail
@@ -659,6 +697,7 @@ export const RunDetail = ({
       {...(providerNames === undefined ? {} : { providerNames })}
       skipAttach={skipAttach}
       {...(terminalClient === undefined ? {} : { terminalClient })}
+      {...(startWatchdog === undefined ? {} : { startWatchdog })}
     />
   ) : (
     <ReplayRunDetail

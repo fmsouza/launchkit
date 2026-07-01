@@ -164,3 +164,44 @@ describe("runViewStore", () => {
     expect(store.getState().thinkingEffortBySession.s1).toBe("off")
   })
 })
+
+const sid2 = "s_1" as SessionId
+const deps2 = {} as never // StoreDeps is unused by runViewStore
+
+describe("runViewStore starting signal", () => {
+  it("markStarting sets the flag and applyEvent clears it once the root runner starts", () => {
+    const store = createRunViewStore(deps2)
+    store.getState().markStarting(sid2)
+    expect(store.getState().startingBySession[sid2]).toBe(true)
+    store.getState().applyEvent(sid2, {
+      type: "runner-started",
+      runnerId: "r_root" as never,
+    })
+    expect(store.getState().startingBySession[sid2]).toBeUndefined()
+    expect(store.getState().byId[sid2]?.rootRunnerId).toBe("r_root")
+  })
+
+  it("applyEvent clears starting on an errored runner-finished (start failure)", () => {
+    const store = createRunViewStore(deps2)
+    store.getState().markStarting(sid2)
+    store.getState().applyEvent(sid2, {
+      type: "runner-finished",
+      runnerId: "r_root" as never,
+      status: "errored",
+      error: "boom",
+    })
+    expect(store.getState().startingBySession[sid2]).toBeUndefined()
+  })
+
+  it("reset drops the starting flag along with the session slice", () => {
+    const store = createRunViewStore(deps2)
+    store.getState().markStarting(sid2)
+    store.getState().applyEvent(sid2, {
+      type: "runner-started",
+      runnerId: "r_root" as never,
+    })
+    store.getState().reset(sid2)
+    expect(store.getState().byId[sid2]).toBeUndefined()
+    expect(store.getState().startingBySession[sid2]).toBeUndefined()
+  })
+})

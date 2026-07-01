@@ -25,19 +25,19 @@ import { useStore } from "zustand"
 import { IpcClientProvider, useIpcClient } from "./IpcClientContext"
 import { LoggerProvider } from "./LoggerContext"
 import { createRealClients } from "./clients"
-import { ConnectionLostOverlay } from "./components/ConnectionLostOverlay"
 import { MountFallback } from "./components/MountFallback"
 import { UpdateBanner } from "./components/UpdateBanner"
-import { useConnectionWatch } from "./hooks/useConnectionWatch"
 import { useHarnesses } from "./hooks/useHarnesses"
 import { useModels } from "./hooks/useModels"
 import { useNotifications } from "./hooks/useNotifications"
 import { useProjects } from "./hooks/useProjects"
 import { useProviders } from "./hooks/useProviders"
 import { useProxyStatus } from "./hooks/useProxyStatus"
+import { useRunnerConnection } from "./hooks/useRunnerConnection"
 import { disposeTerminalSession } from "./hooks/useTerminal"
 import { useUpdate } from "./hooks/useUpdate"
 import { createWebviewLogger } from "./logger"
+import { shouldReattach } from "./runner/reconnect"
 import type { RunnerClient } from "./runner/runnerClient"
 import { StoreProvider, useStores } from "./stores/createStores"
 import { type LocationAdapter, windowLocationAdapter } from "./stores/location"
@@ -104,21 +104,8 @@ const AppInner = ({
   terminalClient,
 }: AppInnerProps): ReactElement => {
   const client = useIpcClient()
-  // After a sleep gap, verify the backend is reachable; if not, self-reload to
-  // re-establish the (non-reconnecting) Electrobun RPC + runner socket. Uses the
-  // cheap getProxyStatus as the liveness ping. Date.now is the wall clock here by
-  // design — the hook keys off real elapsed time, which is exactly the wake signal.
-  const pingBackend = useCallback(
-    () => client.getProxyStatus(undefined).then((r) => r.ok),
-    [client],
-  )
-  const reloadWebview = useCallback(() => window.location.reload(), [])
   const nowMs = useCallback(() => Date.now(), [])
-  const conn = useConnectionWatch({
-    ping: pingBackend,
-    onLost: reloadWebview,
-    now: nowMs,
-  })
+  const conn = useRunnerConnection({ runnerClient, now: nowMs })
   const uiStore = useStores().ui
   const view = useStore(uiStore, (s) => s.view)
   const openSessionIds = useStore(uiStore, (s) => s.openSessionIds)
@@ -160,6 +147,12 @@ const AppInner = ({
   // `LiveRunDetail` is registered yet — defense-in-depth against the
   // race where the manager replays before the webview mounts.
   const applyEvent = useStore(useStores().runView, (s) => s.applyEvent)
+  const resetRun = useStore(useStores().runView, (s) => s.reset)
+  const markStarting = useStore(useStores().runView, (s) => s.markStarting)
+  const startingBySession = useStore(
+    useStores().runView,
+    (s) => s.startingBySession,
+  )
 
   // Prefill the New Session modal with the last launched folder/harness
   // (persisted by a successful launch). Page-level fetch — the modal stays dumb
@@ -265,6 +258,28 @@ const AppInner = ({
     return off
   }, [runnerClient, view, notify, navigate, applyEvent])
 
+  // On a socket RE-connect (not the first connect), the in-memory store may be
+  // missing events emitted during the outage. Reset each open session's slice and
+  // re-attach so the backend replays its backlog onto empty state (the only state
+  // the reducer folds correctly). `shouldReattach` gates this to reconnecting→connected.
+  //
+  // NOTE: `skipAttachIds` is intentionally NOT consulted here. After `reset(id)`
+  // the session's store slice is empty, and the backend agent survives a socket
+  // drop, so a plain `run-attach` replays the persisted backlog onto empty state —
+  // which is always correct on reconnect (spec §5). This differs from the
+  // mount-time attach, which honors `skipAttach` to avoid a double-replay of a
+  // just-resumed session (the manager already owns that replay path).
+  const prevConnRef = useRef(conn.state)
+  useEffect(() => {
+    const prev = prevConnRef.current
+    prevConnRef.current = conn.state
+    if (!shouldReattach(prev, conn.state)) return
+    for (const id of openSessionIds) {
+      resetRun(id)
+      runnerClient.attach(id)
+    }
+  }, [conn.state, openSessionIds, resetRun, runnerClient])
+
   const mode: AppMode = view.kind === "settings" ? "settings" : "sessions"
 
   const onModeChange = (next: AppMode): void =>
@@ -305,6 +320,7 @@ const AppInner = ({
     }
     setLaunchError(undefined)
     const id = r.value.sessionId
+    markStarting(id)
     openSession(id)
     navigate({ kind: "sessions", selectedSessionId: id })
     setModalOpen(false)
@@ -324,6 +340,7 @@ const AppInner = ({
       return next
     })
     openSession(sessionId)
+    markStarting(sessionId)
     runnerClient.send(sessionId, { text })
   }
 
@@ -446,6 +463,9 @@ const AppInner = ({
           ...(terminalClient === undefined ? {} : { terminalClient }),
         })
 
+  const anyStarting = Object.values(startingBySession).some(Boolean)
+  const activity = conn.state !== "connected" || anyStarting
+
   return (
     <>
       <UpdateBanner
@@ -458,7 +478,6 @@ const AppInner = ({
         notifications={notifications.notifications}
         onDismiss={notifications.dismiss}
       />
-      {conn.lost ? <ConnectionLostOverlay /> : null}
       <AppShell
         mode={mode}
         onModeChange={onModeChange}
@@ -466,6 +485,7 @@ const AppInner = ({
         proxyPort={proxy.data?.port}
         master={master}
         detail={detail}
+        activity={activity}
       />
       <NewSessionModal
         open={modalOpen}

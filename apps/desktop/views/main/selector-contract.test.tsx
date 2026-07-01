@@ -89,6 +89,11 @@ const fakeRunnerClient: RunnerClient = {
   onResumeToken: () => () => {},
   connectionLost: () => {},
   onConnectionLost: () => () => {},
+  reportConnectionState: () => {},
+  onConnectionState: () => () => {},
+  connectionState: () => "connected",
+  getLastFrameMs: () => 0,
+  reconnect: () => {},
 } as unknown as RunnerClient
 
 // ---------------------------------------------------------------------------
@@ -382,6 +387,11 @@ const isDocumentedGap = (s: string): boolean => {
   if (s === 'span[role="status"][aria-busy="true"]') return true
   // FormField error — requires a server-side validation failure propagated to the form
   if (s === ".lk-field__error") return true
+  // Start-failed error state — LiveRunDetail renders `.lk-start-failed` (EmptyState +
+  // Retry) only after the start watchdog's fail timer elapses with the root runner still
+  // absent. No contract state renders a stuck-start conversation (sessions here are
+  // either not launched or resolve immediately). Verified by RunDetail.test.tsx.
+  if (s === ".lk-start-failed") return true
   // Tooltip bubble — only present in the DOM while the trigger is hovered/focused
   // (open state). No rendered app state hovers the rail tooltip; the bubble's
   // appearance is verified by Tooltip.test.tsx. The .lk-tooltip wrapper IS checked.

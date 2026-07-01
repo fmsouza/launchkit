@@ -3,12 +3,32 @@ import { type IpcClient, createIpcClient } from "@spectrum/ipc"
 import { type TerminalInbound, isTerminalOutbound } from "@spectrum/pty"
 import { Electroview, type RPCSchema } from "electrobun/view"
 import { type ElectrobunRpc, createElectrobunTransport } from "./ipc-client"
+import { backoffDelay } from "./runner/reconnect"
 import { type RunnerClient, createRunnerClient } from "./runner/runnerClient"
 import {
   type TerminalClient,
   createTerminalClient,
 } from "./terminal/terminalClient"
 import { type UpdateClient, createUpdateClient } from "./update/updateClient"
+
+/** The minimal WebSocket surface the runner transport uses (fake-able in tests). */
+export type WebSocketLike = {
+  readyState: number
+  send(data: string): void
+  close(): void
+  addEventListener(type: "message", cb: (e: { data?: unknown }) => void): void
+  addEventListener(type: "open" | "close" | "error", cb: () => void): void
+}
+
+export type WsRunnerDeps = {
+  readonly createSocket?: (url: string) => WebSocketLike
+  readonly setTimer?: (
+    fn: () => void,
+    ms: number,
+  ) => ReturnType<typeof setTimeout>
+  readonly clearTimer?: (h: ReturnType<typeof setTimeout>) => void
+  readonly now?: () => number
+}
 
 /** The Electroview only carries the IPC requests channel now (run events run over a WebSocket). */
 type EmptySchema = {
@@ -17,39 +37,117 @@ type EmptySchema = {
 }
 
 /**
- * Build a `RunnerClient` over a dedicated loopback WebSocket (served by the bun
- * side — see apps/desktop/src/gui/runner-socket.ts): inbound `RunnerOutbound`
- * frames are dispatched; outbound `RunnerInbound` frames are JSON-sent (buffered
- * until open). Plain JSON — no base64.
+ * Build a self-reconnecting `RunnerClient` over the loopback runner WebSocket.
+ * Auto-reconnects on close/error with capped backoff, tracks the time of the last
+ * inbound frame (for liveness), and reports connection-state transitions so the UI
+ * can show a discreet reconnecting indicator. Outbound frames buffer until open and
+ * flush on every (re)connect.
  */
-const createWsRunnerClient = (url: string): RunnerClient => {
-  const ws = new WebSocket(url)
+export const createWsRunnerClient = (
+  url: string,
+  deps: WsRunnerDeps = {},
+): RunnerClient => {
+  const createSocket =
+    deps.createSocket ??
+    ((u: string): WebSocketLike => new WebSocket(u) as unknown as WebSocketLike)
+  const setTimer = deps.setTimer ?? ((fn, ms) => setTimeout(fn, ms))
+  const clearTimer = deps.clearTimer ?? ((h) => clearTimeout(h))
+  const now = deps.now ?? ((): number => Date.now())
+
   const outbox: RunnerInbound[] = []
-  const send = (message: RunnerInbound): void => {
-    if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(message))
+  let ws: WebSocketLike | undefined
+  let generation = 0
+  let attempts = 0
+  let everConnected = false
+  let lastFrameAt = now()
+  let reconnectTimer: ReturnType<typeof setTimeout> | undefined
+
+  const rawSend = (message: RunnerInbound): void => {
+    if (ws !== undefined && ws.readyState === WebSocket.OPEN)
+      ws.send(JSON.stringify(message))
     else outbox.push(message)
   }
-  const client = createRunnerClient(send)
-  ws.addEventListener("open", () => {
+  const client = createRunnerClient(rawSend)
+
+  const flush = (socket: WebSocketLike): void => {
     while (outbox.length > 0) {
       const next = outbox.shift()
-      if (next !== undefined) ws.send(JSON.stringify(next))
+      if (next !== undefined) socket.send(JSON.stringify(next))
     }
-  })
-  ws.addEventListener("message", (event: MessageEvent) => {
-    if (typeof event.data !== "string") return
-    let parsed: unknown
-    try {
-      parsed = JSON.parse(event.data)
-    } catch {
-      return
+  }
+
+  const scheduleReconnect = (): void => {
+    if (reconnectTimer !== undefined) return
+    const delay = backoffDelay(attempts++)
+    reconnectTimer = setTimer(() => {
+      reconnectTimer = undefined
+      connect()
+    }, delay)
+  }
+
+  const connect = (): void => {
+    const gen = ++generation
+    const socket = createSocket(url)
+    ws = socket
+    client.reportConnectionState(everConnected ? "reconnecting" : "connecting")
+
+    socket.addEventListener("open", () => {
+      if (gen !== generation) return
+      attempts = 0
+      everConnected = true
+      if (reconnectTimer !== undefined) {
+        clearTimer(reconnectTimer)
+        reconnectTimer = undefined
+      }
+      client.reportConnectionState("connected")
+      flush(socket)
+    })
+    socket.addEventListener("message", (event: { data?: unknown }) => {
+      if (gen !== generation) return
+      if (typeof event.data !== "string") return
+      lastFrameAt = now()
+      let parsed: unknown
+      try {
+        parsed = JSON.parse(event.data)
+      } catch {
+        return
+      }
+      client.dispatch(parsed as RunnerOutbound)
+    })
+    const onDrop = (): void => {
+      if (gen !== generation) return
+      client.connectionLost()
+      client.reportConnectionState("reconnecting")
+      scheduleReconnect()
     }
-    client.dispatch(parsed as RunnerOutbound)
-  })
-  const onLost = (): void => client.connectionLost()
-  ws.addEventListener("error", onLost)
-  ws.addEventListener("close", onLost)
-  return client
+    socket.addEventListener("close", onDrop)
+    socket.addEventListener("error", onDrop)
+  }
+
+  // Transport-backed overrides of the pure client's defaults.
+  const transportClient: RunnerClient = {
+    ...client,
+    getLastFrameMs: () => lastFrameAt,
+    reconnect: () => {
+      attempts = 0
+      if (reconnectTimer !== undefined) {
+        clearTimer(reconnectTimer)
+        reconnectTimer = undefined
+      }
+      // Invalidate the current generation BEFORE closing so the synchronous
+      // close event (e.g. FakeSocket) is already stale-guarded.
+      generation++
+      try {
+        ws?.close()
+      } catch {
+        // closing an already-dead socket is fine; the gen guard ignores its events
+      }
+      connect()
+    },
+  }
+
+  connect()
+  return transportClient
 }
 
 /**

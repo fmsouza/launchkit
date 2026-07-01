@@ -505,6 +505,39 @@ describe("RunDetail (live)", () => {
     expect(screen.queryByText("hellohello")).not.toBeInTheDocument()
     cleanup()
   })
+
+  it("shows an error with Retry when a live run stays stuck on Starting", async () => {
+    jest.useFakeTimers()
+    try {
+      const attaches: string[] = []
+      const base = makeFakeRunner()
+      const runner: typeof base = {
+        ...base,
+        attach: (sid) => attaches.push(sid),
+      }
+      renderWithProviders(
+        <RunDetail
+          mode="live"
+          sessionId={id}
+          runnerClient={runner}
+          startWatchdog={{ reattachDelayMs: 5, failDelayMs: 15 }}
+        />,
+        createFakeIpcClient({}),
+      )
+      // No runner-started is ever delivered → stays on Starting → watchdog fires.
+      jest.advanceTimersByTime(20)
+      expect(
+        await screen.findByText("Couldn't start the agent"),
+      ).toBeInTheDocument()
+      const retry = screen.getByRole("button", { name: "Retry" })
+      fireEvent.click(retry)
+      // Retry re-attaches (reset + attach).
+      expect(attaches.length).toBeGreaterThanOrEqual(1)
+    } finally {
+      jest.useRealTimers()
+      cleanup()
+    }
+  })
 })
 
 describe("RunDetail (replay)", () => {

@@ -96,6 +96,11 @@ const fakeRunnerClient: RunnerClient = {
   onResumeToken: () => () => {},
   connectionLost: () => {},
   onConnectionLost: () => () => {},
+  reportConnectionState: () => {},
+  onConnectionState: () => () => {},
+  connectionState: () => "connected",
+  getLastFrameMs: () => 0,
+  reconnect: () => {},
 } as unknown as RunnerClient
 
 const fakeUpdateClient = createUpdateClient()
@@ -967,6 +972,120 @@ describe("App — skipAttach is sticky across resume (no double-replay)", () => 
     // (Previously, the first live event cleared skipAttachIds, causing
     // LiveRunDetail's effect to re-run with skipAttach=false → attach.)
     expect(attachCount).toBe(0)
+  })
+})
+
+describe("App — reconnect re-attach effect", () => {
+  it("re-issues attach for every open session when the socket transitions reconnecting→connected", async () => {
+    // Build a runner client with working connection-state fan-out (from
+    // createRunnerClient) and a recordable attach. Spreading createRunnerClient
+    // gives us reportConnectionState/onConnectionState so the transition flows
+    // through useRunnerConnection → conn.state → the effect in app.tsx.
+    const attachedIds: string[] = []
+    const innerClient = createRunnerClient(() => {})
+    const runnerClient: RunnerClient = {
+      ...innerClient,
+      attach: (id: SessionId) => {
+        attachedIds.push(String(id))
+      },
+    }
+
+    // Provide a harness so the new-session modal can launch a session and add it
+    // to openSessionIds (the only mount-time path to get a live open session).
+    const client = createFakeIpcClient({
+      ...baseStubs,
+      getHarnesses: async () => ({
+        ok: true as const,
+        value: [
+          {
+            id: "claude",
+            name: "Claude Code",
+            command: "claude",
+            apiFormat: "anthropic",
+            envTemplate: {},
+            builtIn: true,
+          },
+        ],
+      }),
+      launchHarness: async () => ({
+        ok: true as const,
+        value: { sessionId: "s_launched" as SessionId },
+      }),
+    })
+    render(
+      <App
+        client={client}
+        runnerClient={runnerClient}
+        updateClient={fakeUpdateClient}
+        initialView="sessions"
+      />,
+    )
+    await waitFor(() => expect(window.location.hash).toBe("#sessions"))
+
+    // Open a new session via the modal so "s_launched" enters openSessionIds.
+    fireEvent.click(await screen.findByRole("button", { name: /new session/i }))
+    await screen.findByRole("button", { name: /launch/i })
+    fireEvent.click(screen.getByRole("button", { name: /launch/i }))
+    await waitFor(() =>
+      expect(window.location.hash).toBe("#sessions/s_launched"),
+    )
+
+    // Snapshot the attach count after mount-time attach (from LiveRunDetail mount).
+    const baselineCount = attachedIds.length
+
+    // Drive reconnecting → connected: the effect must call attach for each open session.
+    await act(async () => {
+      runnerClient.reportConnectionState("reconnecting")
+    })
+    await act(async () => {
+      runnerClient.reportConnectionState("connected")
+    })
+
+    await waitFor(() =>
+      expect(attachedIds.length).toBeGreaterThan(baselineCount),
+    )
+    // The re-attach must have been issued for the one open session.
+    expect(attachedIds.length - baselineCount).toBe(1)
+    expect(attachedIds).toContain("s_launched")
+  })
+
+  it("does NOT trigger an extra re-attach on the first connecting→connected transition when no prior reconnecting state occurred", async () => {
+    // A fresh mount starts with state "connecting". Transitioning straight to
+    // "connected" (first-connect, NOT a reconnect) must NOT trigger the re-attach
+    // loop — shouldReattach gates on prev==="reconnecting".
+    const attachedIds: string[] = []
+    const innerClient = createRunnerClient(() => {})
+    const runnerClient: RunnerClient = {
+      ...innerClient,
+      attach: (id: SessionId) => {
+        attachedIds.push(String(id))
+      },
+    }
+
+    const client = createFakeIpcClient(baseStubs)
+    render(
+      <App
+        client={client}
+        runnerClient={runnerClient}
+        updateClient={fakeUpdateClient}
+        initialView="sessions"
+      />,
+    )
+    await waitFor(() => expect(window.location.hash).toBe("#sessions"))
+
+    // No open sessions, no mount-time attaches.
+    const baselineCount = attachedIds.length
+
+    // Drive connecting → connected (first-connect, NOT a reconnect).
+    await act(async () => {
+      runnerClient.reportConnectionState("connected")
+    })
+
+    // Give any async effect a chance to fire.
+    await waitFor(() => expect(window.location.hash).toBe("#sessions"))
+
+    // No extra attaches beyond the mount baseline.
+    expect(attachedIds.length).toBe(baselineCount)
   })
 })
 

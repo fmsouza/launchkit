@@ -73,4 +73,12 @@ describe("AppShell", () => {
     fireEvent.mouseOver(screen.getByRole("img", { name: /proxy/i }))
     expect(screen.getByRole("tooltip")).toHaveTextContent("4000")
   })
+  it("shows a connection spinner above the proxy dot when activity is true", () => {
+    render(<AppShell {...baseProps} activity />)
+    expect(screen.getByRole("status")).toBeInTheDocument()
+  })
+  it("hides the connection spinner when activity is false", () => {
+    render(<AppShell {...baseProps} activity={false} />)
+    expect(screen.queryByRole("status")).toBeNull()
+  })
 })
