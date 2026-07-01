@@ -16,10 +16,13 @@ export type RunViewStore = {
   readonly openSubBySession: Readonly<Record<string, RunnerId>>
   /** Whether a turn is in flight (drives the typing indicator) — see `nextBusy`. */
   readonly busyBySession: Readonly<Record<string, boolean>>
+  /** Whether a run start is in flight (drives the rail spinner's "starting" half). */
+  readonly startingBySession: Readonly<Record<string, boolean>>
   readonly modeBySession: Readonly<Record<string, PermissionMode>>
   readonly modelBySession: Readonly<Record<string, string>>
   readonly thinkingEffortBySession: Readonly<Record<string, ThinkingEffort>>
   readonly applyEvent: (sessionId: SessionId, event: CanonicalEvent) => void
+  readonly markStarting: (sessionId: SessionId) => void
   readonly reset: (sessionId: SessionId) => void
   readonly openSub: (sessionId: SessionId, runnerId: RunnerId) => void
   readonly closeSub: (sessionId: SessionId) => void
@@ -73,6 +76,7 @@ export const createRunViewStore = (_deps: StoreDeps): StoreApi<RunViewStore> =>
     byId: {},
     openSubBySession: {},
     busyBySession: {},
+    startingBySession: {},
     modeBySession: {},
     modelBySession: {},
     thinkingEffortBySession: {},
@@ -85,16 +89,24 @@ export const createRunViewStore = (_deps: StoreDeps): StoreApi<RunViewStore> =>
         event,
         next,
       )
+      const clearStarting =
+        next.rootRunnerId !== undefined ||
+        (event.type === "runner-finished" && event.status === "errored")
       set((state) => {
         const updated: {
           byId: Readonly<Record<string, RunState>>
           busyBySession: Readonly<Record<string, boolean>>
+          startingBySession?: Readonly<Record<string, boolean>>
           modeBySession?: Readonly<Record<string, PermissionMode>>
           modelBySession?: Readonly<Record<string, string>>
           thinkingEffortBySession?: Readonly<Record<string, ThinkingEffort>>
         } = {
           byId: { ...state.byId, [sessionId]: next },
           busyBySession: { ...state.busyBySession, [sessionId]: busy },
+        }
+        if (clearStarting && state.startingBySession[sessionId] !== undefined) {
+          const { [sessionId]: _drop, ...rest } = state.startingBySession
+          updated.startingBySession = rest
         }
         // Seed the composer mode, model, and thinking-effort from the driver's reported applied
         // values, but only when nothing is set yet — so a benign re-emit of runner-started (claude's
@@ -132,11 +144,19 @@ export const createRunViewStore = (_deps: StoreDeps): StoreApi<RunViewStore> =>
       })
     },
 
+    markStarting: (sessionId) => {
+      set((state) => ({
+        startingBySession: { ...state.startingBySession, [sessionId]: true },
+      }))
+    },
+
     reset: (sessionId) => {
       set((state) => {
         const { [sessionId]: _removed, ...rest } = state.byId
         const { [sessionId]: _sub, ...subRest } = state.openSubBySession
         const { [sessionId]: _busy, ...busyRest } = state.busyBySession
+        const { [sessionId]: _starting, ...startingRest } =
+          state.startingBySession
         const { [sessionId]: _mode, ...modeRest } = state.modeBySession
         const { [sessionId]: _model, ...modelRest } = state.modelBySession
         const { [sessionId]: _eff, ...effRest } = state.thinkingEffortBySession
@@ -144,6 +164,7 @@ export const createRunViewStore = (_deps: StoreDeps): StoreApi<RunViewStore> =>
           byId: rest,
           openSubBySession: subRest,
           busyBySession: busyRest,
+          startingBySession: startingRest,
           modeBySession: modeRest,
           modelBySession: modelRest,
           thinkingEffortBySession: effRest,
