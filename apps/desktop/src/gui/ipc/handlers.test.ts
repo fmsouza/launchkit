@@ -2654,4 +2654,56 @@ describe("createIpcHandlers.openUploadExternal", () => {
     // returns a non-null failure marker so the webview can surface a toast.
     expect(r).toEqual({ opened: false })
   })
+
+  it("accepts a Windows-style absolute path inside ctx.paths.uploadsDir", async () => {
+    // On Windows, uploads live under a drive-letter root like
+    // `C:\Users\me\AppData\Roaming\Spectrum\uploads\sha.png`. The security
+    // check MUST treat drive-letter roots as absolute (the `startsWith("/")`
+    // form was macOS/Linux-only and silently rejected every Windows path).
+    const winUploadsDir =
+      "C:\\Users\\me\\AppData\\Roaming\\Spectrum\\uploads"
+    const winPath = `${winUploadsDir}\\sha_abc.pdf`
+    const openExternalUrlCalls: string[] = []
+    const uploadStore: UploadStore = {
+      save: async () => err({ kind: "io-failed", detail: "unused" }),
+      readBase64: async () => err({ kind: "not-found", detail: "unused" }),
+      pathOf: async () => ok(winPath),
+      exists: async () => true,
+      size: async () => 0,
+    }
+    const { ctx } = makeCtx({ uploadStore })
+    ;(ctx as { paths: { uploadsDir: string } }).paths.uploadsDir = winUploadsDir
+    ;(
+      ctx as { openExternalUrl: (url: string) => Promise<boolean> }
+    ).openExternalUrl = async (url: string) => {
+      openExternalUrlCalls.push(url)
+      return true
+    }
+    const handlers = createIpcHandlers(ctx)
+
+    const r = await handlers.openUploadExternal({ id: "sha_abc" })
+
+    expect(r).toBeNull()
+    expect(openExternalUrlCalls).toEqual([`file://${winPath}`])
+  })
+
+  it("still rejects a Windows-style path that escapes ctx.paths.uploadsDir", async () => {
+    const winUploadsDir =
+      "C:\\Users\\me\\AppData\\Roaming\\Spectrum\\uploads"
+    const winEvilPath = "C:\\Windows\\System32\\drivers\\etc\\hosts"
+    const uploadStore: UploadStore = {
+      save: async () => err({ kind: "io-failed", detail: "unused" }),
+      readBase64: async () => err({ kind: "not-found", detail: "unused" }),
+      pathOf: async () => ok(winEvilPath),
+      exists: async () => true,
+      size: async () => 0,
+    }
+    const { ctx } = makeCtx({ uploadStore })
+    ;(ctx as { paths: { uploadsDir: string } }).paths.uploadsDir = winUploadsDir
+    const handlers = createIpcHandlers(ctx)
+
+    const r = await handlers.openUploadExternal({ id: "sha_evil" })
+
+    expect(r).toEqual({ opened: false })
+  })
 })

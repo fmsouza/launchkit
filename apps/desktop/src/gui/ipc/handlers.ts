@@ -1,4 +1,5 @@
 import { stat } from "node:fs/promises"
+import path from "node:path"
 
 import {
   type AttachmentKind,
@@ -759,17 +760,20 @@ export const createIpcHandlers = (ctx: GuiContext): IpcHandlers => {
     openUploadExternal: async ({ id }) => {
       const r = await ctx.uploadStore.pathOf(id)
       if (!r.ok) return { missing: true }
-      const path = r.value
+      const filePath = r.value
       // SECURITY: the path comes from UploadStore (closed set inside `uploads/`),
-      // but defend in depth — reject anything that somehow escapes. A leading
-      // separator + `uploadsDir` prefix check catches traversal/escape.
-      if (!path.startsWith(ctx.paths.uploadsDir) || !path.startsWith("/")) {
+      // but defend in depth — reject anything that somehow escapes. An
+      // `isAbsolute` check + `uploadsDir` prefix check catches traversal/escape
+      // on every supported platform (POSIX `/...` and Windows `C:\...`).
+      const isAbsolute =
+        path.isAbsolute(filePath) || path.win32.isAbsolute(filePath)
+      if (!filePath.startsWith(ctx.paths.uploadsDir) || !isAbsolute) {
         ctx.log
           .child("uploads")
-          .error("openUploadExternal: path escaped uploadsDir", { id, path })
+          .error("openUploadExternal: path escaped uploadsDir", { id, path: filePath })
         return { opened: false }
       }
-      const opened = await ctx.openExternalUrl(`file://${path}`)
+      const opened = await ctx.openExternalUrl(`file://${filePath}`)
       if (!opened) return fail("could not open upload in default viewer")
       return null
     },
