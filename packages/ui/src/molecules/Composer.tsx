@@ -158,6 +158,12 @@ export const Composer = ({
   const [dragDepth, setDragDepth] = useState(0)
   const canAcceptDrop =
     attachmentsSupported && !disabled && onDropFiles !== undefined
+  // Resync: if the accept-condition flips false mid-drag (e.g. disabled while
+  // a file hovers), the leave/drop handlers bail on the guard and would strand
+  // the highlight — clear it explicitly.
+  useEffect(() => {
+    if (!canAcceptDrop) setDragDepth(0)
+  }, [canAcceptDrop])
   const isFileDrag = (e: DragEvent<HTMLDivElement>): boolean =>
     e.dataTransfer.types.includes("Files")
   const onDragEnter = (e: DragEvent<HTMLDivElement>): void => {

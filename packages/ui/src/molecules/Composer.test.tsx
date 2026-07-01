@@ -385,6 +385,28 @@ describe("Composer", () => {
     cleanup()
   })
 
+  it("clears the drop highlight when the composer becomes disabled mid-drag", () => {
+    const { rerender } = render(
+      <Composer
+        onSend={() => {}}
+        attachmentCapabilities={caps}
+        onDropFiles={() => {}}
+      />,
+    )
+    fireEvent.dragEnter(composerEl(), fileDrag())
+    expect(composerEl()).toHaveClass("lk-composer--drop-active")
+    rerender(
+      <Composer
+        onSend={() => {}}
+        disabled
+        attachmentCapabilities={caps}
+        onDropFiles={() => {}}
+      />,
+    )
+    expect(composerEl()).not.toHaveClass("lk-composer--drop-active")
+    cleanup()
+  })
+
   it("ignores drags that carry no files (e.g. text selections)", () => {
     let calls = 0
     render(
