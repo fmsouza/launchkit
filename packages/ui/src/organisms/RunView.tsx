@@ -1,5 +1,6 @@
 import type {
   ApprovalDecision,
+  AttachmentRef,
   PermissionMode,
   QuestionAnswer,
   RunnerId,
@@ -92,6 +93,8 @@ export type RunViewProps = {
   readonly onEffortChange?: (effort: ThinkingEffort) => void
   /** Open a chat link in the OS browser; threaded to both timelines. */
   readonly onOpenLink?: (url: string) => void
+  /** Open a message attachment (image, file, etc). Threaded to the timeline. */
+  readonly onOpenAttachment?: (ref: AttachmentRef) => void
   /** Optional terminal controller (threaded from `RunDetail`'s `useTerminal` call). */
   readonly terminal?: TerminalController
 }
@@ -140,6 +143,7 @@ export const RunView = ({
   effort,
   onEffortChange,
   onOpenLink,
+  onOpenAttachment,
   terminal,
 }: RunViewProps): ReactElement => {
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -199,6 +203,7 @@ export const RunView = ({
             {...(onCancel !== undefined && !busy ? { onCancel } : {})}
             {...(dismissedErrorId === undefined ? {} : { dismissedErrorId })}
             {...(onOpenLink === undefined ? {} : { onOpenLink })}
+            {...(onOpenAttachment === undefined ? {} : { onOpenAttachment })}
             inert={inert}
           />
           {busy ? (
