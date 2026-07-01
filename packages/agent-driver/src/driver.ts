@@ -1,6 +1,7 @@
 import type { RunnerId } from "@spectrum/agent-events"
 import type {
   ApprovalDecision,
+  AttachmentRefWithBytes,
   CanonicalEvent,
   PermissionMode,
   QuestionAnswer,
@@ -60,6 +61,7 @@ export interface AgentSession {
   onEvent(cb: (e: CanonicalEvent) => void): void
   send(turn: {
     readonly text: string
+    readonly attachments?: readonly AttachmentRefWithBytes[]
     readonly clientSendId?: string
   }): Result<void, DriverError>
   respondApproval(

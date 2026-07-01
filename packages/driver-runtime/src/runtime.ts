@@ -13,6 +13,7 @@ import type {
   RunnerId,
   ThinkingEffort,
 } from "@spectrum/agent-events"
+import { stripDataUrl } from "@spectrum/agent-events"
 import type { ModelId, SessionId } from "@spectrum/types"
 import { type IdGen, type Result, ok } from "@spectrum/utils"
 import type { AdapterCtx, AdapterHandle, DriverAdapter } from "./adapter"
@@ -100,6 +101,9 @@ export const createDriver = (deps: {
         ...(deps.adapter.supportedModes !== undefined
           ? { supportedModes: [...deps.adapter.supportedModes] }
           : {}),
+        ...(deps.adapter.supportedAttachments !== undefined
+          ? { supportedAttachments: deps.adapter.supportedAttachments }
+          : {}),
         ...(input.permissionMode !== undefined
           ? { permissionMode: input.permissionMode }
           : {}),
@@ -147,8 +151,11 @@ export const createDriver = (deps: {
           ...(turn.clientSendId !== undefined
             ? { clientSendId: turn.clientSendId }
             : {}),
+          ...(turn.attachments !== undefined
+            ? { attachments: turn.attachments.map(stripDataUrl) }
+            : {}),
         })
-        runOrQueue((h) => h.send(turn.text))
+        runOrQueue((h) => h.send(turn))
         return ok(undefined)
       },
       respondApproval: (requestId, decision) => {

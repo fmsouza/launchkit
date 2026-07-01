@@ -92,7 +92,8 @@ export const createOpenclawAdapter = (
     })()
 
     return {
-      send: (text) => transport.send({ sessionKey, text }),
+      // OpenClaw does not yet consume attachments (Task 6 will widen the transport); drop them.
+      send: (turn) => transport.send({ sessionKey, text: turn.text }),
       interrupt: () => run.cancel(),
       close: () => {
         run.close()

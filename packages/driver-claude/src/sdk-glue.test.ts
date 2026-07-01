@@ -495,7 +495,7 @@ describe("createClaudeAdapter", () => {
     const fake = makeFakeSdk([])
     const adapter = createClaudeAdapter({ loadSdk: async () => fake.sdk })
     const handle = await adapter.start(input, makeCtx([], []))
-    handle.send("follow up")
+    handle.send({ text: "follow up" })
     await new Promise((r) => setTimeout(r, 10))
     expect(fake.pushedPrompts).toContainEqual({
       type: "user",
@@ -619,7 +619,7 @@ describe("createClaudeAdapter", () => {
     await new Promise((r) => setTimeout(r, 20))
 
     // After restart, send should go to the second query's input stream.
-    handle.send("hi after restart")
+    handle.send({ text: "hi after restart" })
     await new Promise((r) => setTimeout(r, 10))
 
     expect(queries).toHaveLength(2)
@@ -916,7 +916,7 @@ describe("createClaudeAdapter", () => {
       logger,
     })
     const handle = await adapter.start(input, makeCtx([], []))
-    handle.send("hello")
+    handle.send({ text: "hello" })
     const turnEntry = entries.find(
       (e) => e.level === "info" && e.msg === "claude turn -> sdk input",
     )
@@ -988,7 +988,7 @@ describe("createClaudeAdapter", () => {
       responseTimeoutMs: 30000,
     })
     const handle = await adapter.start(input, makeCtx([], []))
-    handle.send("x")
+    handle.send({ text: "x" })
     // Fire the watchdog manually (no real timer)
     capturedCallback?.()
     const warnEntry = entries.find(
@@ -1018,7 +1018,7 @@ describe("createClaudeAdapter", () => {
       setTimer,
     })
     const handle = await adapter.start(input, makeCtx([], []))
-    handle.send("x")
+    handle.send({ text: "x" })
     // Push a message so the pump sees it (arms disarm)
     queries[0]?.pushMsg({ type: "system", subtype: "init", model: "m" })
     await new Promise((r) => setTimeout(r, 10))
@@ -1061,12 +1061,12 @@ describe("createClaudeAdapter", () => {
     const handle = await adapter.start(input, makeCtx([], []))
 
     // Turn 1: send and have the SDK respond — disarms the turn-1 watchdog
-    handle.send("turn 1")
+    handle.send({ text: "turn 1" })
     queries[0]?.pushMsg({ type: "system", subtype: "init", model: "m" })
     await new Promise((r) => setTimeout(r, 10))
 
     // Turn 2: send with NO further messages scripted
-    handle.send("turn 2")
+    handle.send({ text: "turn 2" })
     // Fire the timer that was armed for turn 2
     const turn2Timer = timerCallbacks[timerCallbacks.length - 1]
     turn2Timer?.()
@@ -1098,7 +1098,7 @@ describe("createClaudeAdapter", () => {
       setTimer,
     })
     const handle = await adapter.start(input, makeCtx([], []))
-    handle.send("hello")
+    handle.send({ text: "hello" })
     // Push a message so the pump disarms the watchdog
     queries[0]?.pushMsg({ type: "system", subtype: "init", model: "m" })
     await new Promise((r) => setTimeout(r, 10))
@@ -1287,9 +1287,9 @@ describe("createClaudeAdapter", () => {
     const handle = await adapter.start(input, makeCtx([], []))
 
     // Send three turns rapidly, then interrupt immediately.
-    handle.send("turn-1")
-    handle.send("turn-2")
-    handle.send("turn-3")
+    handle.send({ text: "turn-1" })
+    handle.send({ text: "turn-2" })
+    handle.send({ text: "turn-3" })
     handle.interrupt()
 
     // Wait for any microtasks / async draining that might happen.

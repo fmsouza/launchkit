@@ -245,7 +245,9 @@ export const createOpencodeAdapter = (
     await connectAndRun(input.env, { isInitial: true })
 
     return {
-      send: (text) => {
+      // OpenCode does not yet consume attachments (Task 6 will widen the wire); drop them.
+      send: (incoming) => {
+        const text = incoming.text
         // Build the prompt body against the current mode (so setMode applies even mid-async-restart).
         const promptBody = (
           text: string,

@@ -303,7 +303,9 @@ export const createCodexAdapter = (
 
     let closed = false
     return {
-      send: (text) => {
+      // Codex does not yet consume attachments (Task 6 will widen the wire); drop them.
+      send: (incoming) => {
+        const text = incoming.text
         const turn =
           activeTurnId !== undefined
             ? dispatcher.request(M_TURN_STEER, {

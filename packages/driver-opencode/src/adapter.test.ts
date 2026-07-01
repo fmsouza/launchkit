@@ -383,7 +383,7 @@ describe("createOpencodeAdapter", () => {
   it("handle.send prompts; interrupt aborts; close stops the server", async () => {
     const t = setup()
     const handle = await t.adapter.start(START, t.ctx)
-    handle.send("again")
+    handle.send({ text: "again" })
     handle.interrupt()
     handle.close()
     await new Promise((r) => setTimeout(r, 0))
@@ -430,7 +430,7 @@ describe("createOpencodeAdapter", () => {
       t.startInput({ initialPrompt: "init-plan" }),
       t.ctx,
     )
-    handle.send("go")
+    handle.send({ text: "go" })
     await new Promise((r) => setTimeout(r, 0))
     // Initial prompt carries agent: "plan"
     expect(t.promptBodies).toContainEqual({
@@ -455,7 +455,7 @@ describe("createOpencodeAdapter", () => {
     )
     // Switch to plan
     handle.setMode?.("plan")
-    handle.send("second")
+    handle.send({ text: "second" })
     await new Promise((r) => setTimeout(r, 0))
     // first prompt: no agent
     expect(t.promptBodies[0]).toEqual({
@@ -536,7 +536,7 @@ describe("createOpencodeAdapter", () => {
     const t = setup()
     const handle = await t.adapter.start(START, t.ctx)
     expect(() => handle.setThinkingEffort?.("high")).not.toThrow()
-    handle.send("after-effort")
+    handle.send({ text: "after-effort" })
     await new Promise((r) => setTimeout(r, 0))
     expect(t.prompts).toContainEqual({ id: S_ROOT, text: "after-effort" })
   })

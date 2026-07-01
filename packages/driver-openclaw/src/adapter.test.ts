@@ -184,7 +184,7 @@ describe("createOpenclawAdapter", () => {
   it("handle.send forwards a follow-up turn; interrupt cancels the run; close disconnects", async () => {
     const t = setup()
     const handle = await t.adapter.start(START, t.ctx)
-    handle.send("again")
+    handle.send({ text: "again" })
     handle.interrupt()
     handle.close()
     expect(t.sentText).toBe("again")
@@ -197,7 +197,7 @@ describe("createOpenclawAdapter", () => {
     const t = setup()
     const handle = await t.adapter.start(START, t.ctx)
     expect(() => handle.setThinkingEffort?.("high")).not.toThrow()
-    handle.send("after-effort")
+    handle.send({ text: "after-effort" })
     expect(t.sentText).toBe("after-effort")
   })
 

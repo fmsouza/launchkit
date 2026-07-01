@@ -457,7 +457,9 @@ export const createClaudeAdapter = (deps: {
       current.inputStream.push(input.initialPrompt)
 
     return {
-      send: (text) => {
+      // Claude does not yet consume attachments (Task 6 will widen the wire); drop them.
+      send: (incoming) => {
+        const text = incoming.text
         log?.info("claude turn -> sdk input", { length: text.length })
         current.inputStream.push(text)
         // Re-arm the no-response watchdog on every user turn.

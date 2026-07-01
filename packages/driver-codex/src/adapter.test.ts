@@ -322,7 +322,7 @@ describe("createCodexAdapter.start", () => {
     const handle = await makeAdapter(ft).start(startInput, ctx.ctx)
     ft.fake.outgoing.length = 0
 
-    handle.send("first")
+    handle.send({ text: "first" })
     expect(ft.fake.outgoing).toEqual([
       [
         "request",
@@ -344,7 +344,7 @@ describe("createCodexAdapter.start", () => {
         turn: { id: "tn_active", items: [], status: "inProgress" },
       },
     })
-    handle.send("more")
+    handle.send({ text: "more" })
     expect(ft.fake.outgoing).toEqual([
       [
         "request",
@@ -394,7 +394,7 @@ describe("createCodexAdapter.start", () => {
     const handle = await makeAdapter(ft).start(startInput, ctx.ctx)
     ft.fake.outgoing.length = 0
 
-    handle.send("hello")
+    handle.send({ text: "hello" })
     const turnStart = ft.fake.outgoing.find(([, m]) => m === "turn/start")
     expect((turnStart?.[2] as Record<string, unknown>).approvalPolicy).toBe(
       "untrusted",
@@ -412,7 +412,7 @@ describe("createCodexAdapter.start", () => {
     ft.fake.outgoing.length = 0
 
     handle.setMode?.("bypass")
-    handle.send("go")
+    handle.send({ text: "go" })
     const turnStart = ft.fake.outgoing.find(([, m]) => m === "turn/start")
     expect((turnStart?.[2] as Record<string, unknown>).approvalPolicy).toBe(
       "never",
@@ -430,7 +430,7 @@ describe("createCodexAdapter.start", () => {
     ft.fake.outgoing.length = 0
 
     // First turn/start: uses the initial model from input.modelId.
-    handle.send("first")
+    handle.send({ text: "first" })
     const firstTurn = ft.fake.outgoing.find(([, m]) => m === "turn/start")
     expect((firstTurn?.[2] as Record<string, unknown>).model).toBe("gpt-5")
 
@@ -439,7 +439,7 @@ describe("createCodexAdapter.start", () => {
     ft.fake.outgoing.length = 0
 
     // Next turn/start: carries the new model.
-    handle.send("second")
+    handle.send({ text: "second" })
     const secondTurn = ft.fake.outgoing.find(([, m]) => m === "turn/start")
     expect((secondTurn?.[2] as Record<string, unknown>).model).toBe("mdl_new")
   })
@@ -510,7 +510,7 @@ describe("createCodexAdapter.start", () => {
     )
     ft.fake.outgoing.length = 0
 
-    handle.send("hello")
+    handle.send({ text: "hello" })
     const turnStart = ft.fake.outgoing.find(([, m]) => m === "turn/start")
     expect((turnStart?.[2] as Record<string, unknown>).effort).toBe("high")
   })
@@ -522,7 +522,7 @@ describe("createCodexAdapter.start", () => {
     const handle = await makeAdapter(ft).start(startInput, ctx.ctx)
     ft.fake.outgoing.length = 0
 
-    handle.send("hello")
+    handle.send({ text: "hello" })
     const turnStart = ft.fake.outgoing.find(([, m]) => m === "turn/start")
     expect((turnStart?.[2] as Record<string, unknown>).effort).toBeUndefined()
   })
@@ -535,7 +535,7 @@ describe("createCodexAdapter.start", () => {
     ft.fake.outgoing.length = 0
 
     // Initially no effort.
-    handle.send("first")
+    handle.send({ text: "first" })
     const firstTurn = ft.fake.outgoing.find(([, m]) => m === "turn/start")
     expect((firstTurn?.[2] as Record<string, unknown>).effort).toBeUndefined()
 
@@ -544,7 +544,7 @@ describe("createCodexAdapter.start", () => {
     ft.fake.outgoing.length = 0
 
     // Next turn/start carries the mapped effort ("xhigh").
-    handle.send("second")
+    handle.send({ text: "second" })
     const secondTurn = ft.fake.outgoing.find(([, m]) => m === "turn/start")
     expect((secondTurn?.[2] as Record<string, unknown>).effort).toBe("xhigh")
   })
