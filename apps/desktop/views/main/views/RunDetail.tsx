@@ -267,7 +267,7 @@ const LiveRunDetail = ({
     const text = turn.text
     const clientSendId = crypto.randomUUID()
     enqueueSend(sessionId, { clientSendId, text, status: "sending" })
-    runnerClient.send(sessionId, text, clientSendId)
+    runnerClient.send(sessionId, { text }, clientSendId)
     const t = setTimeout(() => {
       markSendFailed(sessionId, clientSendId)
       timers.current.delete(clientSendId)

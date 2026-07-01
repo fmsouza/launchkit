@@ -37,7 +37,7 @@ const makeFakeRunner = (): RunnerClient & {
     setModes,
     setModels,
     attach: (sid) => attached.push(sid),
-    send: (_sid, text) => sends.push(text),
+    send: (_sid, turn) => sends.push(turn.text),
     approve: () => {},
     interrupt: () => {},
     setMode: (sid, mode) => setModes.push({ id: sid, mode }),
@@ -713,7 +713,7 @@ describe("RunDetail (outbox / optimistic send)", () => {
     globalThis.localStorage?.clear()
   })
 
-  // A fake runner that captures the full 3-arg send signature for clientSendId inspection.
+  // A fake runner that captures the full send signature for clientSendId inspection.
   const makeRichFakeRunner = (): RunnerClient & {
     readonly attached: SessionId[]
     readonly richSends: Array<{
@@ -736,8 +736,8 @@ describe("RunDetail (outbox / optimistic send)", () => {
       attached,
       richSends,
       attach: (sid) => attached.push(sid),
-      send: (sid, text, clientSendId) =>
-        richSends.push({ id: sid, text, clientSendId }),
+      send: (sid, turn, clientSendId) =>
+        richSends.push({ id: sid, text: turn.text, clientSendId }),
       approve: () => {},
       interrupt: () => {},
       setMode: () => {},

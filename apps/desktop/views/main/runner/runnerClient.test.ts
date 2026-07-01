@@ -1,6 +1,10 @@
 import { describe, expect, it } from "bun:test"
 import type { RunnerOutbound } from "@spectrum/agent-driver"
-import type { QuestionAnswer, StoredEvent } from "@spectrum/agent-events"
+import type {
+  AttachmentRefWithBytes,
+  QuestionAnswer,
+  StoredEvent,
+} from "@spectrum/agent-events"
 import { SessionIdSchema } from "@spectrum/types"
 import { createRunnerClient } from "./runnerClient"
 
@@ -29,7 +33,7 @@ describe("createRunnerClient", () => {
   it("sends a run-send message with the turn text", () => {
     const sent: unknown[] = []
     const c = createRunnerClient((m) => sent.push(m))
-    c.send(id, "do it")
+    c.send(id, { text: "do it" })
     expect(sent).toEqual([{ type: "run-send", id, text: "do it" }])
   })
 
@@ -182,10 +186,47 @@ describe("createRunnerClient", () => {
   it("includes clientSendId in the run-send message", () => {
     const sent: unknown[] = []
     const client = createRunnerClient((m) => sent.push(m))
-    client.send(id, "hi", "c1")
+    client.send(id, { text: "hi" }, "c1")
     expect(sent).toEqual([
       { type: "run-send", id, text: "hi", clientSendId: "c1" },
     ])
+  })
+
+  it("send encodes run-send with attachments when present", () => {
+    const sent: unknown[] = []
+    const client = createRunnerClient((m) => sent.push(m))
+    const atts: readonly AttachmentRefWithBytes[] = [
+      {
+        id: "sha_abc",
+        mime: "image/png",
+        displayName: "shot.png",
+        kind: "image",
+        bytes: 12,
+        dataUrl: "data:image/png;base64,AAAA",
+      },
+    ]
+    client.send(id, { text: "see", attachments: atts }, "c1")
+    expect(sent).toEqual([
+      {
+        type: "run-send",
+        id,
+        text: "see",
+        attachments: [...atts],
+        clientSendId: "c1",
+      },
+    ])
+  })
+
+  it("send omits attachments when absent", () => {
+    const sent: unknown[] = []
+    const client = createRunnerClient((m) => sent.push(m))
+    client.send(id, { text: "hi" }, "c1")
+    const frame = sent[0] as Record<string, unknown>
+    expect(frame.type).toBe("run-send")
+    expect(frame.id).toBe(id)
+    expect(frame.text).toBe("hi")
+    expect(frame.clientSendId).toBe("c1")
+    expect("attachments" in frame).toBe(false)
   })
 
   it("notifies onConnectionLost subscribers when the transport drops", () => {

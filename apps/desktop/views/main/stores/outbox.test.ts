@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test"
+import type { AttachmentRef } from "@spectrum/agent-events"
 import {
   type OutboxEntry,
   dropConfirmed,
@@ -17,6 +18,14 @@ const s = (
   text: clientSendId,
   status,
 })
+
+const att: AttachmentRef = {
+  id: "sha_abc",
+  mime: "image/png",
+  displayName: "shot.png",
+  kind: "image",
+  bytes: 12,
+}
 
 describe("outbox helpers", () => {
   it("upsert appends a new entry and replaces an existing one by id", () => {
@@ -56,5 +65,26 @@ describe("outbox helpers", () => {
     expect(
       pendingToRender([s("c1", "sending"), s("c2", "failed")], new Set(["c1"])),
     ).toEqual([s("c2", "failed")])
+  })
+
+  it("upsert preserves attachments on a re-insert", () => {
+    const e1: OutboxEntry = {
+      clientSendId: "c1",
+      text: "see",
+      attachments: [att],
+      status: "sending",
+    }
+    const e2: OutboxEntry = {
+      clientSendId: "c1",
+      text: "see",
+      status: "failed",
+    }
+    const a = upsert([], e1)
+    const b = upsert(a, e2)
+    expect(b).toEqual([e2])
+    // re-insert with the same attachments persists them
+    const c = upsert(b, e1)
+    expect(c).toEqual([e1])
+    expect(c[0]?.attachments).toEqual([att])
   })
 })
