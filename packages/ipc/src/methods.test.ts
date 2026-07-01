@@ -16,6 +16,7 @@ import {
   LaunchHarnessResultSchema,
   PickFolderParamsSchema,
   PickFolderResultSchema,
+  SaveDroppedUploadsParamsSchema,
   SetProviderSecretParamsSchema,
   UpdateHarnessPrefsParamsSchema,
   UpdateModelParamsSchema,
@@ -396,6 +397,7 @@ describe("IpcMethodSchemas", () => {
       "getRunEvents",
       "pickFolder",
       "pickUploads",
+      "saveDroppedUploads",
       "openExternalUrl",
       "openUploadExternal",
       "readUploadDataUrl",
@@ -551,5 +553,30 @@ describe("getProviderCatalog method", () => {
       },
     ])
     expect(r.success).toBe(true)
+  })
+})
+
+describe("SaveDroppedUploadsParamsSchema", () => {
+  it("accepts a dropped-file batch with an empty mime (unknown type)", () => {
+    const parsed = SaveDroppedUploadsParamsSchema.safeParse({
+      files: [{ displayName: "a.png", mime: "", dataBase64: "aGVsbG8=" }],
+      acceptedKinds: ["image"],
+    })
+    expect(parsed.success).toBe(true)
+  })
+
+  it("rejects an empty files array and a missing dataBase64", () => {
+    expect(
+      SaveDroppedUploadsParamsSchema.safeParse({
+        files: [],
+        acceptedKinds: ["image"],
+      }).success,
+    ).toBe(false)
+    expect(
+      SaveDroppedUploadsParamsSchema.safeParse({
+        files: [{ displayName: "a.png", mime: "image/png", dataBase64: "" }],
+        acceptedKinds: ["image"],
+      }).success,
+    ).toBe(false)
   })
 })

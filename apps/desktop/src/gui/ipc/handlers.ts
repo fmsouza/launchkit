@@ -686,6 +686,20 @@ export const createIpcHandlers = (ctx: GuiContext): IpcHandlers => {
       })
     },
 
+    saveDroppedUploads: async (params) =>
+      ingestUploads({
+        sources: params.files.map((f) => ({
+          kind: "bytes" as const,
+          displayName: f.displayName,
+          ...(f.mime === "" ? {} : { mime: f.mime }),
+          // Transport encoding (base64) is decoded at this boundary; the store sees bytes.
+          data: new Uint8Array(Buffer.from(f.dataBase64, "base64")),
+        })),
+        acceptedKinds: params.acceptedKinds,
+        store: ctx.uploadStore,
+        log: ctx.log.child("uploads"),
+      }),
+
     readUploadThumbnail: async ({ id, mime }) => {
       const exists = await ctx.uploadStore.exists(id)
       if (!exists) return { missing: true }

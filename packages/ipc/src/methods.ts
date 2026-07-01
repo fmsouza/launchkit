@@ -348,6 +348,33 @@ export const PickUploadsResultSchema = z
   .strict()
 
 /**
+ * Persist files DROPPED onto the composer (drag-and-drop). Dropped webview
+ * `File`s carry bytes only — no native path — so the webview ships each
+ * file's base64 and the handler runs them through the same canonical ingest
+ * as `pickUploads` (kind filter, shared size cap, content-addressed store).
+ * The result shape is `pickUploads`' shape so the webview applies ONE
+ * post-ingest path for both entry points.
+ */
+export const SaveDroppedUploadsParamsSchema = z
+  .object({
+    files: z
+      .array(
+        z
+          .object({
+            displayName: z.string().min(1),
+            /** Browser-reported MIME; "" (unknown) → the handler infers from the extension. */
+            mime: z.string(),
+            dataBase64: z.string().min(1),
+          })
+          .strict(),
+      )
+      .min(1),
+    acceptedKinds: z.array(AttachmentKindSchema),
+  })
+  .strict()
+export const SaveDroppedUploadsResultSchema = PickUploadsResultSchema
+
+/**
  * Build a `data:<mime>;base64,...` URL for a stored upload's thumbnail bytes
  * (full image data — the renderer is responsible for sizing). The `mime` is
  * required: it comes from the `AttachmentRef` the caller already has, and
@@ -680,6 +707,10 @@ export const IpcMethodSchemas = {
   pickUploads: {
     params: PickUploadsParamsSchema,
     result: PickUploadsResultSchema,
+  },
+  saveDroppedUploads: {
+    params: SaveDroppedUploadsParamsSchema,
+    result: SaveDroppedUploadsResultSchema,
   },
   readUploadThumbnail: {
     params: ReadUploadThumbnailParamsSchema,

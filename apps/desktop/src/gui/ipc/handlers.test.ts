@@ -149,6 +149,12 @@ const makeCtx = (
     displayName: string
     maxBytes: number
   }>
+  uploadSaveBytesInputs: Array<{
+    data: Uint8Array
+    mime: string
+    displayName: string
+    maxBytes: number
+  }>
 } => {
   const saves: Config[] = []
   const secretSets: string[] = []
@@ -172,6 +178,12 @@ const makeCtx = (
     displayName: string
     maxBytes: number
   }> = []
+  const uploadSaveBytesInputs: Array<{
+    data: Uint8Array
+    mime: string
+    displayName: string
+    maxBytes: number
+  }> = []
   /**
    * A recording fake UploadStore whose `save` mints a deterministic ref and
    * whose other methods default to "missing" so a test that only cares about
@@ -190,7 +202,17 @@ const makeCtx = (
       }
       return ok({ ref, path: `/tmp/uploads/${ref.id}` })
     },
-    saveBytes: async () => err({ kind: "io-failed", detail: "stub" }),
+    saveBytes: async (params) => {
+      uploadSaveBytesInputs.push(params)
+      const ref: AttachmentRef = {
+        id: `sha_${params.displayName}`,
+        mime: params.mime,
+        displayName: params.displayName,
+        kind: mimeToKind(params.mime),
+        bytes: params.data.byteLength,
+      }
+      return ok({ ref, path: `/tmp/uploads/${ref.id}` })
+    },
     readBase64: async () => err({ kind: "not-found", detail: "stub" }),
     pathOf: async () => err({ kind: "not-found", detail: "stub" }),
     exists: async () => false,
@@ -409,6 +431,7 @@ const makeCtx = (
       return pickFilesCallsArr.length
     },
     uploadSaveInputs,
+    uploadSaveBytesInputs,
   }
 }
 
@@ -2508,6 +2531,61 @@ describe("createIpcHandlers.pickUploads", () => {
 
     expect(r.uploads).toHaveLength(1)
     expect("rejected" in r).toBe(false)
+  })
+})
+
+describe("createIpcHandlers.saveDroppedUploads", () => {
+  it("saves dropped bytes via ctx.uploadStore.saveBytes and rejects unsupported kinds", async () => {
+    const { ctx, uploadSaveBytesInputs } = makeCtx({})
+    const handlers = createIpcHandlers(ctx)
+
+    const r = await handlers.saveDroppedUploads({
+      files: [
+        {
+          displayName: "a.png",
+          mime: "image/png",
+          dataBase64: Buffer.from("img").toString("base64"),
+        },
+        {
+          displayName: "b.pdf",
+          mime: "application/pdf",
+          dataBase64: Buffer.from("pdf").toString("base64"),
+        },
+      ],
+      acceptedKinds: ["image"],
+    })
+
+    expect(r.uploads).toHaveLength(1)
+    expect(r.uploads[0]?.displayName).toBe("a.png")
+    expect(r.rejected).toEqual([
+      { displayName: "b.pdf", reason: "unsupported-kind" },
+    ])
+    expect(uploadSaveBytesInputs).toEqual([
+      {
+        data: new Uint8Array(Buffer.from("img")),
+        mime: "image/png",
+        displayName: "a.png",
+        maxBytes: 10 * 1024 * 1024,
+      },
+    ])
+  })
+
+  it("falls back to the extension-inferred mime when a dropped file reports an empty mime", async () => {
+    const { ctx, uploadSaveBytesInputs } = makeCtx({})
+    const handlers = createIpcHandlers(ctx)
+
+    await handlers.saveDroppedUploads({
+      files: [
+        {
+          displayName: "shot.png",
+          mime: "",
+          dataBase64: Buffer.from("x").toString("base64"),
+        },
+      ],
+      acceptedKinds: ["image"],
+    })
+
+    expect(uploadSaveBytesInputs[0]?.mime).toBe("image/png")
   })
 })
 
