@@ -2,6 +2,7 @@ import type { AgentStartInput } from "@spectrum/agent-driver"
 import type {
   ApprovalDecision,
   ApprovalTarget,
+  AttachmentRefWithBytes,
   ThinkingEffort,
 } from "@spectrum/agent-events"
 import type {
@@ -53,6 +54,43 @@ export interface SdkUserInput {
   readonly type: "user"
   readonly message: { readonly role: "user"; readonly content: string }
   readonly parent_tool_use_id: null
+}
+
+/** A minimal `ContentBlockParam` shape (the SDK's full type is vendored externally;
+ * we construct only the blocks we emit). Keep this local and structural. */
+type ImageBlock = {
+  type: "image"
+  source: { type: "base64"; media_type: string; data: string }
+}
+type DocumentBlock = {
+  type: "document"
+  source: { type: "base64"; media_type: string; data: string }
+}
+type TextBlock = { type: "text"; text: string }
+
+const parseDataUrl = (
+  dataUrl: string,
+): { mediaType: string; base64: string } => {
+  // "data:<mediaType>;base64,<data>"
+  const m = dataUrl.match(/^data:([^;]+);base64,(.*)$/)
+  if (m === null) throw new Error(`malformed data url`)
+  return { mediaType: m[1] ?? "", base64: m[2] ?? "" }
+}
+
+const toClaudeBlock = (
+  ref: AttachmentRefWithBytes,
+): ImageBlock | DocumentBlock => {
+  const { mediaType, base64 } = parseDataUrl(ref.dataUrl)
+  if (ref.kind === "pdf") {
+    return {
+      type: "document",
+      source: { type: "base64", media_type: mediaType, data: base64 },
+    }
+  }
+  return {
+    type: "image",
+    source: { type: "base64", media_type: mediaType, data: base64 },
+  }
 }
 
 /** A tool-permission result in the SDK's `PermissionResult` shape. */
@@ -144,7 +182,10 @@ const targetFor = (
 /** A queue-backed async generator the caller pushes user turns into; `end()` closes the stream. */
 const makeInputStream = (): {
   stream: AsyncGenerator<SdkUserInput>
-  push: (text: string) => void
+  push: (turn: {
+    readonly text: string
+    readonly attachments?: readonly AttachmentRefWithBytes[]
+  }) => void
   drain: () => void
   end: () => void
 } => {
@@ -167,10 +208,20 @@ const makeInputStream = (): {
   })()
   return {
     stream,
-    push: (text) => {
+    push: (turn) => {
+      const blocks: Array<TextBlock | ImageBlock | DocumentBlock> = [
+        { type: "text", text: turn.text },
+      ]
+      for (const a of turn.attachments ?? []) blocks.push(toClaudeBlock(a))
       queue.push({
         type: "user",
-        message: { role: "user", content: text },
+        message: {
+          role: "user",
+          // SDK MessageParam.content accepts string | ContentBlockParam[]; the local
+          // SdkUserInput type hardcodes `content: string` (stale), so cast the blocks
+          // through `unknown` to bridge the local type without loosening it broadly.
+          content: blocks as unknown as string,
+        },
         parent_tool_use_id: null,
       })
       wake?.()
@@ -208,6 +259,9 @@ export const createClaudeAdapter = (deps: {
   responseTimeoutMs?: number
 }): DriverAdapter => ({
   supportedModes: CLAUDE_SUPPORTED_MODES,
+  // Claude accepts all three kinds as native content blocks: image (base64) for
+  // images, document (base64) for PDFs, and any binary via the document block.
+  supportedAttachments: { image: true, pdf: true, binary: true },
   start: async (
     input: AgentStartInput,
     ctx: AdapterCtx,
@@ -454,14 +508,15 @@ export const createClaudeAdapter = (deps: {
     // Seed the first turn from initialPrompt so the live session has something to do.
     // The prompt queue is drained asynchronously so pushing after launch() is safe.
     if (input.initialPrompt !== undefined)
-      current.inputStream.push(input.initialPrompt)
+      current.inputStream.push({ text: input.initialPrompt })
 
     return {
-      // Claude does not yet consume attachments (Task 6 will widen the wire); drop them.
-      send: (incoming) => {
-        const text = incoming.text
-        log?.info("claude turn -> sdk input", { length: text.length })
-        current.inputStream.push(text)
+      // Task 6: build native content blocks (text + image/document base64) from
+      // the turn + its attachments. The capability gate upstream prevents
+      // unsupported kinds from ever arriving here.
+      send: (turn) => {
+        log?.info("claude turn -> sdk input", { length: turn.text.length })
+        current.inputStream.push(turn)
         // Re-arm the no-response watchdog on every user turn.
         // Cancel any still-pending timer from a prior turn first.
         disarmWatchdog()
