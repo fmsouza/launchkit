@@ -1227,3 +1227,16 @@
   padding: var(--sp-space-1) 0;
   flex: 0 0 auto;
 }
+
+.lk-lightbox__image {
+  max-width: 90vw;
+  max-height: 90vh;
+  object-fit: contain;
+}
+.lk-lightbox__text {
+  max-width: 80vw;
+  max-height: 70vh;
+  overflow: auto;
+  white-space: pre-wrap;
+  font-family: var(--sp-font-mono, monospace);
+}
