@@ -19,6 +19,17 @@ export interface UploadStore {
     displayName: string
     maxBytes: number
   }): Promise<Result<StoredUpload, UploadError>>
+  /**
+   * Persist in-memory bytes (the drag-and-drop path — dropped webview Files
+   * carry no native path). Same content-addressing, dedup, and size-cap
+   * semantics as `save`.
+   */
+  saveBytes(params: {
+    data: Uint8Array
+    mime: string
+    displayName: string
+    maxBytes: number
+  }): Promise<Result<StoredUpload, UploadError>>
   readBase64(id: string): Promise<Result<string, UploadError>>
   pathOf(id: string): Promise<Result<string, UploadError>>
   exists(id: string): Promise<boolean>

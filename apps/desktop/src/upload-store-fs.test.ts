@@ -95,4 +95,42 @@ describe("createFsUploadStore", () => {
     const store = createFsUploadStore({ uploadsDir: join(dir, "up") })
     expect(await store.exists("nope")).toBe(false)
   })
+
+  it("saveBytes stores content under the same sha256 id and path as save", async () => {
+    const src = join(dir, "src.png")
+    writeFileSync(src, Buffer.from("same-bytes"))
+    const store = createFsUploadStore({ uploadsDir: join(dir, "up") })
+    const viaPath = await store.save({
+      sourcePath: src,
+      mime: "image/png",
+      displayName: "photo.png",
+      maxBytes: 1e7,
+    })
+    const viaBytes = await store.saveBytes({
+      data: new Uint8Array(Buffer.from("same-bytes")),
+      mime: "image/png",
+      displayName: "photo.png",
+      maxBytes: 1e7,
+    })
+    expect(viaPath.ok).toBe(true)
+    expect(viaBytes.ok).toBe(true)
+    if (viaPath.ok && viaBytes.ok) {
+      expect(viaBytes.value.ref.id).toBe(viaPath.value.ref.id)
+      expect(viaBytes.value.path).toBe(viaPath.value.path)
+      expect(viaBytes.value.ref.kind).toBe("image")
+      expect(viaBytes.value.ref.bytes).toBe(10)
+    }
+  })
+
+  it("saveBytes rejects content larger than maxBytes with too-large", async () => {
+    const store = createFsUploadStore({ uploadsDir: join(dir, "up") })
+    const res = await store.saveBytes({
+      data: new Uint8Array(11),
+      mime: "image/png",
+      displayName: "big.png",
+      maxBytes: 10,
+    })
+    expect(res.ok).toBe(false)
+    if (!res.ok) expect(res.error.kind).toBe("too-large")
+  })
 })

@@ -190,6 +190,7 @@ const makeCtx = (
       }
       return ok({ ref, path: `/tmp/uploads/${ref.id}` })
     },
+    saveBytes: async () => err({ kind: "io-failed", detail: "stub" }),
     readBase64: async () => err({ kind: "not-found", detail: "stub" }),
     pathOf: async () => err({ kind: "not-found", detail: "stub" }),
     exists: async () => false,
@@ -2514,6 +2515,7 @@ describe("createIpcHandlers.readUploadThumbnail", () => {
   it("builds a data:<mime>;base64,<base64> URL from uploadStore.readBase64", async () => {
     const uploadStore: UploadStore = {
       save: async () => err({ kind: "io-failed", detail: "unused" }),
+      saveBytes: async () => err({ kind: "io-failed", detail: "stub" }),
       readBase64: async () => ok("aGVsbG8="),
       pathOf: async () => err({ kind: "not-found", detail: "unused" }),
       exists: async () => true,
@@ -2533,6 +2535,7 @@ describe("createIpcHandlers.readUploadThumbnail", () => {
   it("returns { missing: true } when uploadStore.exists is false", async () => {
     const uploadStore: UploadStore = {
       save: async () => err({ kind: "io-failed", detail: "unused" }),
+      saveBytes: async () => err({ kind: "io-failed", detail: "stub" }),
       readBase64: async () => err({ kind: "not-found", detail: "unused" }),
       pathOf: async () => err({ kind: "not-found", detail: "unused" }),
       exists: async () => false,
@@ -2554,6 +2557,7 @@ describe("createIpcHandlers.readUploadDataUrl", () => {
   it("builds a data:<mime>;base64,<base64> URL from uploadStore.readBase64", async () => {
     const uploadStore: UploadStore = {
       save: async () => err({ kind: "io-failed", detail: "unused" }),
+      saveBytes: async () => err({ kind: "io-failed", detail: "stub" }),
       readBase64: async () => ok("aGVsbG8="),
       pathOf: async () => err({ kind: "not-found", detail: "unused" }),
       exists: async () => true,
@@ -2573,6 +2577,7 @@ describe("createIpcHandlers.readUploadDataUrl", () => {
   it("returns { missing: true } when uploadStore.exists is false", async () => {
     const uploadStore: UploadStore = {
       save: async () => err({ kind: "io-failed", detail: "unused" }),
+      saveBytes: async () => err({ kind: "io-failed", detail: "stub" }),
       readBase64: async () => err({ kind: "not-found", detail: "unused" }),
       pathOf: async () => err({ kind: "not-found", detail: "unused" }),
       exists: async () => false,

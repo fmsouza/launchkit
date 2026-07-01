@@ -130,6 +130,8 @@ const defaultSecretPassphrase = async (): Promise<string | null> =>
  */
 const defaultCreateUploadStore = (): UploadStore => ({
   save: async () => err({ kind: "io-failed", detail: "no upload store wired" }),
+  saveBytes: async () =>
+    err({ kind: "io-failed", detail: "no upload store wired" }),
   readBase64: async () =>
     err({ kind: "not-found", detail: "no upload store wired" }),
   pathOf: async () =>
