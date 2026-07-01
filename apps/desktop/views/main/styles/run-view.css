@@ -1215,6 +1215,7 @@
 .lk-attachment-chip__remove-overlay::before {
   content: "\2715";
 }
-.lk-attachment-chip:hover .lk-attachment-chip__remove-overlay {
+.lk-attachment-chip:hover .lk-attachment-chip__remove-overlay,
+.lk-attachment-chip__remove-overlay:focus-visible {
   opacity: 1;
 }
