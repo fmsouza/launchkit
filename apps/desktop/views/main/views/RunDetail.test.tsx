@@ -1455,4 +1455,46 @@ describe("RunDetail (media-upload wiring)", () => {
     )
     cleanup()
   })
+
+  it("stages files dropped on the composer via saveDroppedUploads", async () => {
+    const runner = makeFakeRunner()
+    const staged: AttachmentRef = ref({ id: "sha_drop" })
+    const client = createFakeIpcClient({
+      saveDroppedUploads: async () => ({
+        ok: true,
+        value: { uploads: [staged] },
+      }),
+      readUploadThumbnail: async () => ({
+        ok: true,
+        value: { dataUrl: "data:image/png;base64,AAAA" },
+      }),
+    })
+    renderWithProviders(
+      <RunDetail mode="live" sessionId={id} runnerClient={runner} />,
+      client,
+    )
+    runner.push(
+      stored(0, {
+        type: "runner-started",
+        runnerId: "run_root" as never,
+        supportedAttachments: { image: true, pdf: false, binary: false },
+      }),
+    )
+    await waitFor(() => screen.getByRole("button", { name: "Attach files" }))
+    const composer = document.querySelector(".lk-composer")
+    expect(composer).not.toBeNull()
+    fireEvent.drop(composer as Element, {
+      dataTransfer: {
+        types: ["Files"],
+        files: [new File(["hello"], "a.png", { type: "image/png" })],
+        dropEffect: "none",
+      },
+    })
+    await waitFor(() => expect(client.calls.saveDroppedUploads).toHaveLength(1))
+    // The staged chip renders in the attachment tray (`ref` defaults displayName to shot.png).
+    await waitFor(() =>
+      expect(screen.getByText("shot.png")).toBeInTheDocument(),
+    )
+    cleanup()
+  })
 })

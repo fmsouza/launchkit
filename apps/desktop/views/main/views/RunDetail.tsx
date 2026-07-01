@@ -505,6 +505,9 @@ const LiveRunDetail = ({
           void uploads.pick()
         }}
         onRemoveAttachment={uploads.remove}
+        onDropFiles={(files) => {
+          void uploads.addFiles(files)
+        }}
       />
       <Lightbox
         open={lightbox.open}
