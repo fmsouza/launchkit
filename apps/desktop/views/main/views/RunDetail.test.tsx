@@ -1,6 +1,10 @@
 import { beforeEach, describe, expect, it, jest, mock } from "bun:test"
 import type { RunnerOutbound } from "@spectrum/agent-driver"
-import type { CanonicalEvent, StoredEvent } from "@spectrum/agent-events"
+import type {
+  AttachmentRef,
+  CanonicalEvent,
+  StoredEvent,
+} from "@spectrum/agent-events"
 import {
   type HarnessId,
   type ModelId,
@@ -10,6 +14,7 @@ import {
 } from "@spectrum/types"
 import { cleanup, fireEvent, screen, waitFor } from "@testing-library/react"
 import type { RunnerClient } from "../runner/runnerClient"
+import { Toasts } from "../test/Toasts"
 import { createFakeIpcClient } from "../test/fake-client"
 import { renderWithProviders } from "../test/renderWithProviders"
 import { RunDetail, SEND_ACK_TIMEOUT_MS } from "./RunDetail"
@@ -69,6 +74,57 @@ const stored = (seq: number, event: CanonicalEvent): StoredEvent => ({
   event,
 })
 
+// A fake runner that captures the full send signature for clientSendId inspection.
+const makeRichFakeRunner = (): RunnerClient & {
+  readonly attached: SessionId[]
+  readonly richSends: Array<{
+    id: SessionId
+    text: string
+    clientSendId: string | undefined
+    turn: unknown
+  }>
+  push: (event: StoredEvent) => void
+  connectionLost: () => void
+} => {
+  let listener: ((event: StoredEvent) => void) | undefined
+  const connectionLostListeners = new Set<() => void>()
+  const attached: SessionId[] = []
+  const richSends: Array<{
+    id: SessionId
+    text: string
+    clientSendId: string | undefined
+    turn: unknown
+  }> = []
+  return {
+    attached,
+    richSends,
+    attach: (sid) => attached.push(sid),
+    send: (sid, turn, clientSendId) =>
+      richSends.push({ id: sid, text: turn.text, clientSendId, turn }),
+    approve: () => {},
+    interrupt: () => {},
+    setMode: () => {},
+    setModel: () => {},
+    dispatch: (_m: RunnerOutbound) => {},
+    onEvent: (_sid, cb) => {
+      listener = cb
+    },
+    onAny: () => () => {},
+    onSessionRenamed: () => () => {},
+    onResumeToken: () => () => {},
+    onConnectionLost: (cb) => {
+      connectionLostListeners.add(cb)
+      return () => {
+        connectionLostListeners.delete(cb)
+      }
+    },
+    connectionLost: () => {
+      for (const cb of connectionLostListeners) cb()
+    },
+    push: (event) => listener?.(event),
+  }
+}
+
 describe("RunDetail (live)", () => {
   beforeEach(() => {
     // Clear localStorage so outbox hydration never loads entries from prior tests.
@@ -120,7 +176,7 @@ describe("RunDetail (live)", () => {
     await waitFor(() => screen.getByRole("button", { name: "Send message" }))
     fireEvent.change(screen.getByRole("textbox"), { target: { value: "go" } })
     fireEvent.click(screen.getByRole("button", { name: "Send message" }))
-    expect(runner.sends).toEqual(["go"])
+    await waitFor(() => expect(runner.sends).toEqual(["go"]))
     cleanup()
   })
 
@@ -389,7 +445,7 @@ describe("RunDetail (live)", () => {
       ).toBeInTheDocument(),
     )
     fireEvent.click(screen.getByRole("button", { name: /resend/i }))
-    expect(runner.sends).toEqual(["fix the bug"])
+    await waitFor(() => expect(runner.sends).toEqual(["fix the bug"]))
     cleanup()
   })
 
@@ -713,55 +769,6 @@ describe("RunDetail (outbox / optimistic send)", () => {
     globalThis.localStorage?.clear()
   })
 
-  // A fake runner that captures the full send signature for clientSendId inspection.
-  const makeRichFakeRunner = (): RunnerClient & {
-    readonly attached: SessionId[]
-    readonly richSends: Array<{
-      id: SessionId
-      text: string
-      clientSendId: string | undefined
-    }>
-    push: (event: StoredEvent) => void
-    connectionLost: () => void
-  } => {
-    let listener: ((event: StoredEvent) => void) | undefined
-    const connectionLostListeners = new Set<() => void>()
-    const attached: SessionId[] = []
-    const richSends: Array<{
-      id: SessionId
-      text: string
-      clientSendId: string | undefined
-    }> = []
-    return {
-      attached,
-      richSends,
-      attach: (sid) => attached.push(sid),
-      send: (sid, turn, clientSendId) =>
-        richSends.push({ id: sid, text: turn.text, clientSendId }),
-      approve: () => {},
-      interrupt: () => {},
-      setMode: () => {},
-      setModel: () => {},
-      dispatch: (_m: RunnerOutbound) => {},
-      onEvent: (_sid, cb) => {
-        listener = cb
-      },
-      onAny: () => () => {},
-      onSessionRenamed: () => () => {},
-      onResumeToken: () => () => {},
-      onConnectionLost: (cb) => {
-        connectionLostListeners.add(cb)
-        return () => {
-          connectionLostListeners.delete(cb)
-        }
-      },
-      connectionLost: () => {
-        for (const cb of connectionLostListeners) cb()
-      },
-      push: (event) => listener?.(event),
-    }
-  }
-
   it("enqueues an optimistic sending bubble and sends with a clientSendId", async () => {
     const runner = makeRichFakeRunner()
     renderWithProviders(
@@ -781,7 +788,7 @@ describe("RunDetail (outbox / optimistic send)", () => {
     fireEvent.click(screen.getByRole("button", { name: "Send message" }))
 
     // send() was called once with a uuid clientSendId.
-    expect(runner.richSends).toHaveLength(1)
+    await waitFor(() => expect(runner.richSends).toHaveLength(1))
     expect(runner.richSends[0]?.text).toBe("hello")
     expect(runner.richSends[0]?.id).toBe(id)
     expect(typeof runner.richSends[0]?.clientSendId).toBe("string")
@@ -1076,6 +1083,285 @@ describe("RunDetail (outbox / optimistic send)", () => {
       expect(userBubbles).toHaveLength(1)
     })
 
+    cleanup()
+  })
+})
+
+describe("RunDetail (media-upload wiring)", () => {
+  beforeEach(() => {
+    globalThis.localStorage?.clear()
+  })
+
+  const ref = (over: Partial<AttachmentRef> = {}): AttachmentRef => ({
+    id: "sha_abc",
+    mime: "image/png",
+    displayName: "shot.png",
+    kind: "image",
+    bytes: 12,
+    ...over,
+  })
+
+  // Toast-rendering probe lives in the same provider tree so we can assert
+  // on the `notify({ tone, message })` calls from `openAttachment` /
+  // `handleSend`.
+  const renderWithToasts = (
+    ui: Parameters<typeof renderWithProviders>[0],
+    client: Parameters<typeof renderWithProviders>[1],
+  ): ReturnType<typeof renderWithProviders> =>
+    renderWithProviders(
+      <>
+        {ui}
+        <Toasts />
+      </>,
+      client,
+    )
+
+  it("renders the attach button when the runner reports supportedAttachments.image", async () => {
+    const runner = makeFakeRunner()
+    renderWithProviders(
+      <RunDetail mode="live" sessionId={id} runnerClient={runner} />,
+      createFakeIpcClient({}),
+    )
+    runner.push(
+      stored(0, {
+        type: "runner-started",
+        runnerId: "run_root" as never,
+        supportedAttachments: { image: true, pdf: false, binary: false },
+      }),
+    )
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Attach files" }),
+      ).toBeInTheDocument(),
+    )
+    cleanup()
+  })
+
+  it("picks attachments, then sends with the dataUrls over the runner socket", async () => {
+    const runner = makeRichFakeRunner()
+    const pending: AttachmentRef = ref({ id: "sha1" })
+    const client = createFakeIpcClient({
+      pickUploads: async () => ({
+        ok: true,
+        value: { uploads: [pending], rejected: [] },
+      }),
+      readUploadThumbnail: async () => ({
+        ok: true,
+        value: { dataUrl: "data:image/png;base64,AAAA" },
+      }),
+      readUploadDataUrl: async () => ({
+        ok: true,
+        value: { dataUrl: "data:image/png;base64,BBBB" },
+      }),
+    })
+    renderWithProviders(
+      <RunDetail mode="live" sessionId={id} runnerClient={runner} />,
+      client,
+    )
+    runner.push(
+      stored(0, {
+        type: "runner-started",
+        runnerId: "run_root" as never,
+        supportedAttachments: { image: true, pdf: false, binary: false },
+      }),
+    )
+    await waitFor(() => screen.getByRole("button", { name: "Attach files" }))
+    // Click attach — the hook calls pickUploads.
+    fireEvent.click(screen.getByRole("button", { name: "Attach files" }))
+    await waitFor(() => expect(client.calls.pickUploads).toHaveLength(1))
+    // Type + send.
+    fireEvent.change(screen.getByRole("textbox"), {
+      target: { value: "with image" },
+    })
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }))
+    // Send should have resolved the dataUrl and dispatched an attachment.
+    await waitFor(() => expect(client.calls.readUploadDataUrl).toHaveLength(1))
+    await waitFor(() => expect(runner.richSends).toHaveLength(1))
+    const sent = runner.richSends[0]
+    expect(sent?.text).toBe("with image")
+    expect(sent?.id).toBe(id)
+    expect(sent?.clientSendId).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+    )
+    expect((sent?.turn as { attachments: unknown[] }).attachments).toEqual([
+      { ...pending, dataUrl: "data:image/png;base64,BBBB" },
+    ])
+    cleanup()
+  })
+
+  it("opens an image attachment in the lightbox via readUploadDataUrl", async () => {
+    const runner = makeFakeRunner()
+    const pending: AttachmentRef = ref({ id: "sha_img" })
+    const client = createFakeIpcClient({
+      pickUploads: async () => ({
+        ok: true,
+        value: { uploads: [pending], rejected: [] },
+      }),
+      readUploadThumbnail: async () => ({
+        ok: true,
+        value: { dataUrl: "data:image/png;base64,AAAA" },
+      }),
+      readUploadDataUrl: async () => ({
+        ok: true,
+        value: { dataUrl: "data:image/png;base64,CCCC" },
+      }),
+    })
+    renderWithProviders(
+      <RunDetail mode="live" sessionId={id} runnerClient={runner} />,
+      client,
+    )
+    runner.push(
+      stored(0, {
+        type: "runner-started",
+        runnerId: "run_root" as never,
+        supportedAttachments: { image: true, pdf: false, binary: false },
+      }),
+    )
+    await waitFor(() => screen.getByRole("button", { name: "Attach files" }))
+    fireEvent.click(screen.getByRole("button", { name: "Attach files" }))
+    await waitFor(() => expect(client.calls.pickUploads).toHaveLength(1))
+    // Click the chip body (data-testid comes from the chip; we use a stable role+name).
+    const chipButton = await screen.findByRole("button", {
+      name: /attachment: shot\.png/i,
+    })
+    fireEvent.click(chipButton)
+    await waitFor(() => expect(client.calls.readUploadDataUrl).toHaveLength(1))
+    // The lightbox should be open with the image.
+    await waitFor(() => expect(screen.getByRole("dialog")).toBeInTheDocument())
+    cleanup()
+  })
+
+  it("toasts when an image attachment's file is missing on reopen", async () => {
+    const runner = makeFakeRunner()
+    const pending: AttachmentRef = ref({ id: "sha_gone" })
+    const client = createFakeIpcClient({
+      pickUploads: async () => ({
+        ok: true,
+        value: { uploads: [pending], rejected: [] },
+      }),
+      readUploadThumbnail: async () => ({
+        ok: true,
+        value: { dataUrl: "data:image/png;base64,AAAA" },
+      }),
+      readUploadDataUrl: async () => ({
+        ok: true,
+        value: { missing: true },
+      }),
+    })
+    renderWithToasts(
+      <RunDetail mode="live" sessionId={id} runnerClient={runner} />,
+      client,
+    )
+    runner.push(
+      stored(0, {
+        type: "runner-started",
+        runnerId: "run_root" as never,
+        supportedAttachments: { image: true, pdf: false, binary: false },
+      }),
+    )
+    await waitFor(() => screen.getByRole("button", { name: "Attach files" }))
+    fireEvent.click(screen.getByRole("button", { name: "Attach files" }))
+    await waitFor(() => expect(client.calls.pickUploads).toHaveLength(1))
+    const chipButton = await screen.findByRole("button", {
+      name: /attachment: shot\.png/i,
+    })
+    fireEvent.click(chipButton)
+    await waitFor(() => expect(client.calls.readUploadDataUrl).toHaveLength(1))
+    await waitFor(() =>
+      expect(screen.getByText(/no longer available/i)).toBeInTheDocument(),
+    )
+    cleanup()
+  })
+
+  it("opens a PDF attachment via openUploadExternal", async () => {
+    const runner = makeFakeRunner()
+    const pdfRef: AttachmentRef = {
+      id: "sha_pdf",
+      mime: "application/pdf",
+      displayName: "doc.pdf",
+      kind: "pdf",
+      bytes: 99,
+    }
+    const client = createFakeIpcClient({
+      pickUploads: async () => ({
+        ok: true,
+        value: { uploads: [pdfRef], rejected: [] },
+      }),
+      readUploadThumbnail: async () => ({
+        ok: true,
+        value: { dataUrl: "data:application/pdf;base64,AAAA" },
+      }),
+      openUploadExternal: async () => ({ ok: true, value: null }),
+    })
+    renderWithProviders(
+      <RunDetail mode="live" sessionId={id} runnerClient={runner} />,
+      client,
+    )
+    runner.push(
+      stored(0, {
+        type: "runner-started",
+        runnerId: "run_root" as never,
+        supportedAttachments: { image: false, pdf: true, binary: false },
+      }),
+    )
+    await waitFor(() => screen.getByRole("button", { name: "Attach files" }))
+    fireEvent.click(screen.getByRole("button", { name: "Attach files" }))
+    await waitFor(() => expect(client.calls.pickUploads).toHaveLength(1))
+    const chipButton = await screen.findByRole("button", {
+      name: /attachment: doc\.pdf/i,
+    })
+    fireEvent.click(chipButton)
+    await waitFor(() => expect(client.calls.openUploadExternal).toHaveLength(1))
+    // No lightbox for external-open.
+    expect(screen.queryByRole("dialog")).toBeNull()
+    cleanup()
+  })
+
+  it("toasts when a PDF attachment's file is missing on reopen", async () => {
+    const runner = makeFakeRunner()
+    const pdfRef: AttachmentRef = {
+      id: "sha_pdf_gone",
+      mime: "application/pdf",
+      displayName: "gone.pdf",
+      kind: "pdf",
+      bytes: 99,
+    }
+    const client = createFakeIpcClient({
+      pickUploads: async () => ({
+        ok: true,
+        value: { uploads: [pdfRef], rejected: [] },
+      }),
+      readUploadThumbnail: async () => ({
+        ok: true,
+        value: { dataUrl: "data:application/pdf;base64,AAAA" },
+      }),
+      openUploadExternal: async () => ({
+        ok: true,
+        value: { missing: true },
+      }),
+    })
+    renderWithToasts(
+      <RunDetail mode="live" sessionId={id} runnerClient={runner} />,
+      client,
+    )
+    runner.push(
+      stored(0, {
+        type: "runner-started",
+        runnerId: "run_root" as never,
+        supportedAttachments: { image: false, pdf: true, binary: false },
+      }),
+    )
+    await waitFor(() => screen.getByRole("button", { name: "Attach files" }))
+    fireEvent.click(screen.getByRole("button", { name: "Attach files" }))
+    await waitFor(() => expect(client.calls.pickUploads).toHaveLength(1))
+    const chipButton = await screen.findByRole("button", {
+      name: /attachment: gone\.pdf/i,
+    })
+    fireEvent.click(chipButton)
+    await waitFor(() => expect(client.calls.openUploadExternal).toHaveLength(1))
+    await waitFor(() =>
+      expect(screen.getByText(/no longer available/i)).toBeInTheDocument(),
+    )
     cleanup()
   })
 })

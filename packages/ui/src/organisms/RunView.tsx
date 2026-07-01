@@ -1,5 +1,6 @@
 import type {
   ApprovalDecision,
+  AttachmentCapabilities,
   AttachmentRef,
   PermissionMode,
   QuestionAnswer,
@@ -50,7 +51,10 @@ export type RunViewProps = {
   readonly subBreadcrumb: readonly string[]
   readonly onOpenSubRunner: (id: RunnerId) => void
   readonly onCloseSub: () => void
-  readonly onSend: (turn: { text: string }) => void
+  readonly onSend: (turn: {
+    readonly text: string
+    readonly attachments?: readonly AttachmentRef[]
+  }) => void
   readonly onDecide: (requestId: string, decision: ApprovalDecision) => void
   readonly onAnswer: (requestId: string, answer: QuestionAnswer) => void
   /** Optimistic / failed sends not yet reconciled (forwarded to the timeline). */
@@ -95,6 +99,16 @@ export type RunViewProps = {
   readonly onOpenLink?: (url: string) => void
   /** Open a message attachment (image, file, etc). Threaded to the timeline. */
   readonly onOpenAttachment?: (ref: AttachmentRef) => void
+  /** What kinds of attachments the active model accepts. Drives the attach button visibility. */
+  readonly attachmentCapabilities?: AttachmentCapabilities
+  /** Files the user has staged for the next send. */
+  readonly pendingAttachments?: readonly AttachmentRef[]
+  /** Optional pre-rendered thumbnails keyed by `AttachmentRef.id`. */
+  readonly attachmentThumbnails?: ReadonlyMap<string, string>
+  /** Triggered when the user clicks the paperclip (opens the native picker). */
+  readonly onPickAttachments?: () => void
+  /** Remove a staged attachment (clicks the chip's X). */
+  readonly onRemoveAttachment?: (id: string) => void
   /** Optional terminal controller (threaded from `RunDetail`'s `useTerminal` call). */
   readonly terminal?: TerminalController
 }
@@ -144,6 +158,11 @@ export const RunView = ({
   onEffortChange,
   onOpenLink,
   onOpenAttachment,
+  attachmentCapabilities,
+  pendingAttachments,
+  attachmentThumbnails,
+  onPickAttachments,
+  onRemoveAttachment,
   terminal,
 }: RunViewProps): ReactElement => {
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -230,6 +249,16 @@ export const RunView = ({
           {...(onModelChange === undefined ? {} : { onModelChange })}
           {...(effort === undefined ? {} : { effort })}
           {...(onEffortChange === undefined ? {} : { onEffortChange })}
+          {...(attachmentCapabilities === undefined
+            ? {}
+            : { attachmentCapabilities })}
+          {...(pendingAttachments === undefined ? {} : { pendingAttachments })}
+          {...(attachmentThumbnails === undefined
+            ? {}
+            : { attachmentThumbnails })}
+          {...(onPickAttachments === undefined ? {} : { onPickAttachments })}
+          {...(onRemoveAttachment === undefined ? {} : { onRemoveAttachment })}
+          {...(onOpenAttachment === undefined ? {} : { onOpenAttachment })}
         />
         {terminal && (terminal.paneOpen || terminal.tabs.length > 0) ? (
           // Keep the pane MOUNTED whenever the pane is open OR has live tabs, and
