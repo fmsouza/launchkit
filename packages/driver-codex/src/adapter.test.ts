@@ -580,4 +580,93 @@ describe("createCodexAdapter.start", () => {
     })
     expect(reported).toEqual(["thread-9"])
   })
+
+  // --- Task 6: per-harness attachment support ---------------------------------------------
+
+  it("send builds turn/start input with text + image input from a Turn with attachments", async () => {
+    const ft = makeFakeTransport()
+    ft.fake.setResult("thread/start", { thread: { id: "th_1" } })
+    const ctx = makeCtx()
+    const handle = await makeAdapter(ft).start(startInput, ctx.ctx)
+    ft.fake.outgoing.length = 0
+
+    handle.send({
+      text: "look",
+      attachments: [
+        {
+          id: "h1",
+          mime: "image/png",
+          displayName: "p.png",
+          kind: "image",
+          bytes: 4,
+          dataUrl: "data:image/png;base64,AAAA",
+        },
+      ],
+    })
+    expect(ft.fake.outgoing).toEqual([
+      [
+        "request",
+        "turn/start",
+        {
+          threadId: "th_1",
+          input: [
+            { type: "text", text: "look", text_elements: [] },
+            { type: "image", url: "data:image/png;base64,AAAA" },
+          ],
+          model: "gpt-5",
+          approvalPolicy: "untrusted",
+        },
+      ],
+    ])
+  })
+
+  it("send skips a non-image attachment defensively and forwards only the image", async () => {
+    const ft = makeFakeTransport()
+    ft.fake.setResult("thread/start", { thread: { id: "th_1" } })
+    const ctx = makeCtx()
+    const handle = await makeAdapter(ft).start(startInput, ctx.ctx)
+    ft.fake.outgoing.length = 0
+
+    handle.send({
+      text: "look",
+      attachments: [
+        {
+          id: "h_pdf",
+          mime: "application/pdf",
+          displayName: "d.pdf",
+          kind: "pdf",
+          bytes: 4,
+          dataUrl: "data:application/pdf;base64,QkJC",
+        },
+        {
+          id: "h_img",
+          mime: "image/png",
+          displayName: "p.png",
+          kind: "image",
+          bytes: 4,
+          dataUrl: "data:image/png;base64,AAAA",
+        },
+      ],
+    })
+    const turnStart = ft.fake.outgoing.find(([, m]) => m === "turn/start")
+    const input = (turnStart?.[2] as { input: unknown[] }).input
+    // PDF is skipped (capability gate should have prevented it; we just drop it).
+    // Image is forwarded.
+    expect(input).toEqual([
+      { type: "text", text: "look", text_elements: [] },
+      { type: "image", url: "data:image/png;base64,AAAA" },
+    ])
+  })
+
+  it("supportedAttachments is { image: true, pdf: false, binary: false }", () => {
+    const adapter = createCodexAdapter({
+      idGen: createSequentialIdGen(),
+      createTransport: makeFakeTransport().factory,
+    })
+    expect(adapter.supportedAttachments).toEqual({
+      image: true,
+      pdf: false,
+      binary: false,
+    })
+  })
 })

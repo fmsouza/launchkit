@@ -1,3 +1,4 @@
+import type { AttachmentRefWithBytes } from "@spectrum/agent-events"
 import type { ServerNotification } from "./bindings/ServerNotification"
 import type { ServerRequest } from "./bindings/ServerRequest"
 import type { CommandExecutionApprovalDecision } from "./bindings/v2/CommandExecutionApprovalDecision"
@@ -61,4 +62,12 @@ export const textInput = (
   type: "text",
   text,
   text_elements: [],
+})
+
+/** Build a Codex `UserInput` image arm from a send-path attachment. */
+export const imageInput = (
+  ref: AttachmentRefWithBytes,
+): { type: "image"; url: string } => ({
+  type: "image",
+  url: ref.dataUrl,
 })
