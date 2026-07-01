@@ -56,7 +56,10 @@ export const AppShell = ({
         <div className="lk-rail-status">
           {activity ? <Spinner label="Connecting…" /> : null}
           <Tooltip label={proxyLabel}>
-            <StatusDot status={proxyRunning ? "on" : "off"} label={proxyLabel} />
+            <StatusDot
+              status={proxyRunning ? "on" : "off"}
+              label={proxyLabel}
+            />
           </Tooltip>
         </div>
       </nav>

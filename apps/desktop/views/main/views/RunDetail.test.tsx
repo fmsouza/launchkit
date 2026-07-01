@@ -470,7 +470,9 @@ describe("RunDetail (live)", () => {
       )
       // No runner-started is ever delivered → stays on Starting → watchdog fires.
       jest.advanceTimersByTime(20)
-      expect(await screen.findByText("Couldn't start the agent")).toBeInTheDocument()
+      expect(
+        await screen.findByText("Couldn't start the agent"),
+      ).toBeInTheDocument()
       const retry = screen.getByRole("button", { name: "Retry" })
       fireEvent.click(retry)
       // Retry re-attaches (reset + attach).

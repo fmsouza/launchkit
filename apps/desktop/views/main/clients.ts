@@ -3,8 +3,8 @@ import { type IpcClient, createIpcClient } from "@spectrum/ipc"
 import { type TerminalInbound, isTerminalOutbound } from "@spectrum/pty"
 import { Electroview, type RPCSchema } from "electrobun/view"
 import { type ElectrobunRpc, createElectrobunTransport } from "./ipc-client"
-import { type RunnerClient, createRunnerClient } from "./runner/runnerClient"
 import { backoffDelay } from "./runner/reconnect"
+import { type RunnerClient, createRunnerClient } from "./runner/runnerClient"
 import {
   type TerminalClient,
   createTerminalClient,
@@ -22,7 +22,10 @@ export type WebSocketLike = {
 
 export type WsRunnerDeps = {
   readonly createSocket?: (url: string) => WebSocketLike
-  readonly setTimer?: (fn: () => void, ms: number) => ReturnType<typeof setTimeout>
+  readonly setTimer?: (
+    fn: () => void,
+    ms: number,
+  ) => ReturnType<typeof setTimeout>
   readonly clearTimer?: (h: ReturnType<typeof setTimeout>) => void
   readonly now?: () => number
 }
@@ -56,7 +59,6 @@ export const createWsRunnerClient = (
   let generation = 0
   let attempts = 0
   let everConnected = false
-  let disposed = false
   let lastFrameAt = now()
   let reconnectTimer: ReturnType<typeof setTimeout> | undefined
 
@@ -75,7 +77,7 @@ export const createWsRunnerClient = (
   }
 
   const scheduleReconnect = (): void => {
-    if (disposed || reconnectTimer !== undefined) return
+    if (reconnectTimer !== undefined) return
     const delay = backoffDelay(attempts++)
     reconnectTimer = setTimer(() => {
       reconnectTimer = undefined
@@ -127,7 +129,6 @@ export const createWsRunnerClient = (
     ...client,
     getLastFrameMs: () => lastFrameAt,
     reconnect: () => {
-      if (disposed) return
       attempts = 0
       if (reconnectTimer !== undefined) {
         clearTimer(reconnectTimer)

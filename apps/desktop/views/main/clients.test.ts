@@ -10,7 +10,9 @@ class FakeSocket {
   sent: string[] = []
   private cbs: { [k: string]: Array<(e: { data?: unknown }) => void> } = {}
   addEventListener(type: string, cb: (e: { data?: unknown }) => void): void {
-    ;(this.cbs[type] ??= []).push(cb)
+    const list = this.cbs[type] ?? []
+    this.cbs[type] = list
+    list.push(cb)
   }
   send(data: string): void {
     this.sent.push(data)
@@ -98,7 +100,12 @@ describe("createWsRunnerClient", () => {
       data: JSON.stringify({
         type: "runner-event",
         id: "s_1",
-        event: { seq: 0, sessionId: "s_1", ts: "t", event: { type: "annotation", runnerId: "r" } },
+        event: {
+          seq: 0,
+          sessionId: "s_1",
+          ts: "t",
+          event: { type: "annotation", runnerId: "r" },
+        },
       }),
     })
     expect(h.client.getLastFrameMs()).toBe(5_000)

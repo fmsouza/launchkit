@@ -15,9 +15,9 @@ import {
   useComposerModeModel,
 } from "../hooks/useComposerModeModel"
 import { useElapsedSeconds } from "../hooks/useElapsedSeconds"
+import { useStartWatchdog } from "../hooks/useStartWatchdog"
 import { useTerminal } from "../hooks/useTerminal"
 import type { RunnerClient } from "../runner/runnerClient"
-import { useStartWatchdog } from "../hooks/useStartWatchdog"
 import { useStores } from "../stores/createStores"
 import { pendingToRender } from "../stores/outbox"
 import type { OutboxEntry } from "../stores/outbox"
@@ -94,7 +94,10 @@ export type RunDetailProps = {
    */
   readonly terminalClient?: TerminalClient
   /** Overrides the start-watchdog delays (defaults 3000/15000ms). Test-only. */
-  readonly startWatchdog?: { readonly reattachDelayMs?: number; readonly failDelayMs?: number }
+  readonly startWatchdog?: {
+    readonly reattachDelayMs?: number
+    readonly failDelayMs?: number
+  }
 }
 
 /**
@@ -140,7 +143,10 @@ const LiveRunDetail = ({
   readonly skipAttach?: boolean
   readonly terminalClient?: TerminalClient
   /** Overrides the start-watchdog delays (defaults 3000/15000ms). Test-only. */
-  readonly startWatchdog?: { readonly reattachDelayMs?: number; readonly failDelayMs?: number }
+  readonly startWatchdog?: {
+    readonly reattachDelayMs?: number
+    readonly failDelayMs?: number
+  }
 }): ReactElement => {
   const client = useIpcClient()
   const store = useStores().runView

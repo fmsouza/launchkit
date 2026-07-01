@@ -23,6 +23,7 @@ export const useStartWatchdog = (deps: {
   const reattachRef = useRef(reattach)
   reattachRef.current = reattach
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: rearm is a nonce that intentionally re-runs the effect to re-arm the watchdog timers
   useEffect(() => {
     if (!active) {
       setFailed(false)
