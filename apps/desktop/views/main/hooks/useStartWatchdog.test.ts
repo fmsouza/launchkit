@@ -64,4 +64,19 @@ describe("useStartWatchdog", () => {
     expect(result.current.failed).toBe(false)
     expect(reattaches).toBeGreaterThanOrEqual(2) // scheduled reattach + manual retry
   })
+
+  it("re-arms the fail timer on retry so a still-stuck start fails again", async () => {
+    const { result } = renderHook(() =>
+      useStartWatchdog({
+        active: true, // never resolves — root never arrives
+        reattach: () => {},
+        reattachDelayMs: 10_000, // keep the reattach timer out of the way
+        failDelayMs: 15,
+      }),
+    )
+    await waitFor(() => expect(result.current.failed).toBe(true))
+    act(() => result.current.retry())
+    expect(result.current.failed).toBe(false) // cleared immediately
+    await waitFor(() => expect(result.current.failed).toBe(true)) // re-armed → fails again
+  })
 })

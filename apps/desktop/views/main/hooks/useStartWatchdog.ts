@@ -5,7 +5,8 @@ import { useCallback, useEffect, useRef, useState } from "react"
  * (a started session whose root runner has not appeared): re-attach once after
  * `reattachDelayMs` (self-heals a lost attach/replay); if still active at
  * `failDelayMs`, surface `failed` so the caller can show an error + Retry.
- * `retry()` re-attaches immediately and restarts the clock.
+ * `retry()` re-attaches immediately AND restarts the clock, so a still-stuck
+ * start fails again rather than hanging silently after a failed retry.
  */
 export const useStartWatchdog = (deps: {
   readonly active: boolean
@@ -17,6 +18,8 @@ export const useStartWatchdog = (deps: {
   const reattachDelayMs = deps.reattachDelayMs ?? 3000
   const failDelayMs = deps.failDelayMs ?? 15000
   const [failed, setFailed] = useState(false)
+  // Bumped by retry() to re-arm the timers (the effect re-runs on change).
+  const [rearm, setRearm] = useState(0)
   const reattachRef = useRef(reattach)
   reattachRef.current = reattach
 
@@ -31,11 +34,12 @@ export const useStartWatchdog = (deps: {
       clearTimeout(t1)
       clearTimeout(t2)
     }
-  }, [active, reattachDelayMs, failDelayMs])
+  }, [active, reattachDelayMs, failDelayMs, rearm])
 
   const retry = useCallback(() => {
     setFailed(false)
     reattachRef.current()
+    setRearm((n) => n + 1)
   }, [])
 
   return { failed, retry }
