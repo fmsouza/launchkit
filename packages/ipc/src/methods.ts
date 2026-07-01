@@ -329,6 +329,21 @@ export const PickUploadsResultSchema = z
           .strict(),
       )
       .optional(),
+    /**
+     * Per-file IO failures the picker couldn't save (the file was unreadable,
+     * too large, etc.). The caller surfaces each as a toast so the user knows
+     * the file wasn't attached — silently dropping it would be confusing.
+     */
+    errors: z
+      .array(
+        z
+          .object({
+            displayName: z.string(),
+            reason: z.enum(["io-failed", "too-large"]),
+          })
+          .strict(),
+      )
+      .optional(),
   })
   .strict()
 

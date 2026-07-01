@@ -711,6 +711,10 @@ export const createIpcHandlers = (ctx: GuiContext): IpcHandlers => {
       const acceptedKinds = new Set<AttachmentKind>(params.acceptedKinds)
       const uploads: AttachmentRef[] = []
       const rejected: { displayName: string; reason: "unsupported-kind" }[] = []
+      const errors: {
+        displayName: string
+        reason: "io-failed" | "too-large"
+      }[] = []
       for (const p of paths) {
         if (p.trim() === "") continue
         const displayName = p.split("/").pop() ?? p
@@ -729,16 +733,28 @@ export const createIpcHandlers = (ctx: GuiContext): IpcHandlers => {
         if (res.ok) {
           uploads.push(res.value.ref)
         } else {
-          // An IO error is user-actionable: surface a toast so the user
-          // knows the file wasn't attached. (See docs/01-conventions/notifications.md.)
+          // An IO error is user-actionable: return it so the webview can toast
+          // the user that the file wasn't attached. (See docs/01-conventions/notifications.md.)
           ctx.log.child("uploads").error("upload save failed", {
             displayName,
             kind: res.error.kind,
             detail: res.error.detail,
           })
+          if (res.error.kind === "too-large") {
+            errors.push({ displayName, reason: "too-large" })
+          } else {
+            errors.push({ displayName, reason: "io-failed" })
+          }
         }
       }
-      return rejected.length === 0 ? { uploads } : { uploads, rejected }
+      const out: {
+        uploads: AttachmentRef[]
+        rejected?: { displayName: string; reason: "unsupported-kind" }[]
+        errors?: { displayName: string; reason: "io-failed" | "too-large" }[]
+      } = { uploads }
+      if (rejected.length > 0) out.rejected = rejected
+      if (errors.length > 0) out.errors = errors
+      return out
     },
 
     readUploadThumbnail: async ({ id, mime }) => {
@@ -770,7 +786,10 @@ export const createIpcHandlers = (ctx: GuiContext): IpcHandlers => {
       if (!filePath.startsWith(ctx.paths.uploadsDir) || !isAbsolute) {
         ctx.log
           .child("uploads")
-          .error("openUploadExternal: path escaped uploadsDir", { id, path: filePath })
+          .error("openUploadExternal: path escaped uploadsDir", {
+            id,
+            path: filePath,
+          })
         return { opened: false }
       }
       const opened = await ctx.openExternalUrl(`file://${filePath}`)

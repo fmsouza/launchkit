@@ -328,7 +328,7 @@ const LiveRunDetail = ({
   // `root` is set above; the hook accepts `undefined` until `runner-started` lands.
   const supportedAttachments: AttachmentCapabilities | undefined =
     root?.supportedAttachments
-  const uploads = useUploads(supportedAttachments, openAttachment)
+  const uploads = useUploads(supportedAttachments, openAttachment, notify)
 
   const handleSend = async (turn: {
     readonly text: string

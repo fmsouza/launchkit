@@ -2660,8 +2660,7 @@ describe("createIpcHandlers.openUploadExternal", () => {
     // `C:\Users\me\AppData\Roaming\Spectrum\uploads\sha.png`. The security
     // check MUST treat drive-letter roots as absolute (the `startsWith("/")`
     // form was macOS/Linux-only and silently rejected every Windows path).
-    const winUploadsDir =
-      "C:\\Users\\me\\AppData\\Roaming\\Spectrum\\uploads"
+    const winUploadsDir = "C:\\Users\\me\\AppData\\Roaming\\Spectrum\\uploads"
     const winPath = `${winUploadsDir}\\sha_abc.pdf`
     const openExternalUrlCalls: string[] = []
     const uploadStore: UploadStore = {
@@ -2688,8 +2687,7 @@ describe("createIpcHandlers.openUploadExternal", () => {
   })
 
   it("still rejects a Windows-style path that escapes ctx.paths.uploadsDir", async () => {
-    const winUploadsDir =
-      "C:\\Users\\me\\AppData\\Roaming\\Spectrum\\uploads"
+    const winUploadsDir = "C:\\Users\\me\\AppData\\Roaming\\Spectrum\\uploads"
     const winEvilPath = "C:\\Windows\\System32\\drivers\\etc\\hosts"
     const uploadStore: UploadStore = {
       save: async () => err({ kind: "io-failed", detail: "unused" }),

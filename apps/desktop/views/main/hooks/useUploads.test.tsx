@@ -17,6 +17,8 @@ const ref = (over: Partial<AttachmentRef> = {}): AttachmentRef => ({
   ...over,
 })
 
+const noopNotify = (): void => {}
+
 describe("useUploads", () => {
   beforeEach(() => mock.restore())
   afterEach(() => mock.restore())
@@ -24,7 +26,12 @@ describe("useUploads", () => {
   it("starts with empty pending + thumbnails", () => {
     const client = createFakeIpcClient({})
     const { result } = renderHook(
-      () => useUploads({ image: true, pdf: false, binary: false }, () => {}),
+      () =>
+        useUploads(
+          { image: true, pdf: false, binary: false },
+          () => {},
+          noopNotify,
+        ),
       {
         wrapper: ({ children }) => (
           <IpcClientProvider client={client}>{children}</IpcClientProvider>
@@ -49,7 +56,12 @@ describe("useUploads", () => {
       }),
     })
     const { result } = renderHook(
-      () => useUploads({ image: true, pdf: false, binary: false }, () => {}),
+      () =>
+        useUploads(
+          { image: true, pdf: false, binary: false },
+          () => {},
+          noopNotify,
+        ),
       {
         wrapper: ({ children }) => (
           <IpcClientProvider client={client}>{children}</IpcClientProvider>
@@ -89,7 +101,12 @@ describe("useUploads", () => {
       }),
     })
     const { result } = renderHook(
-      () => useUploads({ image: true, pdf: false, binary: false }, () => {}),
+      () =>
+        useUploads(
+          { image: true, pdf: false, binary: false },
+          () => {},
+          noopNotify,
+        ),
       {
         wrapper: ({ children }) => (
           <IpcClientProvider client={client}>{children}</IpcClientProvider>
@@ -120,7 +137,12 @@ describe("useUploads", () => {
       }),
     })
     const { result } = renderHook(
-      () => useUploads({ image: true, pdf: false, binary: false }, () => {}),
+      () =>
+        useUploads(
+          { image: true, pdf: false, binary: false },
+          () => {},
+          noopNotify,
+        ),
       {
         wrapper: ({ children }) => (
           <IpcClientProvider client={client}>{children}</IpcClientProvider>
@@ -164,7 +186,12 @@ describe("useUploads", () => {
       },
     })
     const { result } = renderHook(
-      () => useUploads({ image: true, pdf: false, binary: false }, () => {}),
+      () =>
+        useUploads(
+          { image: true, pdf: false, binary: false },
+          () => {},
+          noopNotify,
+        ),
       {
         wrapper: ({ children }) => (
           <IpcClientProvider client={client}>{children}</IpcClientProvider>
@@ -194,7 +221,12 @@ describe("useUploads", () => {
     const client = createFakeIpcClient({})
     const r: AttachmentRef = ref({ id: "sha_abc" })
     const { result } = renderHook(
-      () => useUploads({ image: true, pdf: false, binary: false }, onOpen),
+      () =>
+        useUploads(
+          { image: true, pdf: false, binary: false },
+          onOpen,
+          noopNotify,
+        ),
       {
         wrapper: ({ children }) => (
           <IpcClientProvider client={client}>{children}</IpcClientProvider>
@@ -205,5 +237,120 @@ describe("useUploads", () => {
       result.current.open(r)
     })
     expect(seen).toEqual({ id: "sha_abc" })
+  })
+
+  it("emits a warning toast for each rejected entry from pickUploads", async () => {
+    const ref1: AttachmentRef = ref({ id: "sha1" })
+    const client = createFakeIpcClient({
+      pickUploads: async () => ({
+        ok: true,
+        value: {
+          uploads: [ref1],
+          rejected: [{ displayName: "doc.pdf", reason: "unsupported-kind" }],
+        },
+      }),
+      readUploadThumbnail: async () => ({
+        ok: true,
+        value: { dataUrl: "data:image/png;base64,AAAA" },
+      }),
+    })
+    const toasts: Array<{ tone: string; message: string }> = []
+    const notify = (input: { tone: string; message: string }): void => {
+      toasts.push(input)
+    }
+    const { result } = renderHook(
+      () =>
+        useUploads(
+          { image: true, pdf: false, binary: false },
+          () => {},
+          notify,
+        ),
+      {
+        wrapper: ({ children }) => (
+          <IpcClientProvider client={client}>{children}</IpcClientProvider>
+        ),
+      },
+    )
+    await act(async () => {
+      await result.current.pick()
+    })
+    // The accepted image is still staged, AND the user is told about the reject.
+    expect(result.current.pending).toEqual([ref1])
+    expect(toasts).toEqual([
+      { tone: "warning", message: "Couldn't attach doc.pdf" },
+    ])
+  })
+
+  it("emits a warning toast for each IO error returned in the errors field", async () => {
+    const client = createFakeIpcClient({
+      pickUploads: async () => ({
+        ok: true,
+        value: {
+          uploads: [],
+          errors: [
+            { displayName: "big.bin", reason: "too-large" },
+            { displayName: "broken.png", reason: "io-failed" },
+          ],
+        },
+      }),
+    })
+    const toasts: Array<{ tone: string; message: string }> = []
+    const notify = (input: { tone: string; message: string }): void => {
+      toasts.push(input)
+    }
+    const { result } = renderHook(
+      () =>
+        useUploads(
+          { image: true, pdf: false, binary: false },
+          () => {},
+          notify,
+        ),
+      {
+        wrapper: ({ children }) => (
+          <IpcClientProvider client={client}>{children}</IpcClientProvider>
+        ),
+      },
+    )
+    await act(async () => {
+      await result.current.pick()
+    })
+    expect(result.current.pending).toEqual([])
+    expect(toasts).toEqual([
+      { tone: "warning", message: "Couldn't attach big.bin (too large)" },
+      { tone: "warning", message: "Couldn't read broken.png" },
+    ])
+  })
+
+  it("emits a warning toast when the IPC call itself fails", async () => {
+    const client = createFakeIpcClient({
+      pickUploads: async () => ({
+        ok: false,
+        error: { kind: "handler-failed", detail: "boom" },
+      }),
+    })
+    const toasts: Array<{ tone: string; message: string }> = []
+    const notify = (input: { tone: string; message: string }): void => {
+      toasts.push(input)
+    }
+    const { result } = renderHook(
+      () =>
+        useUploads(
+          { image: true, pdf: false, binary: false },
+          () => {},
+          notify,
+        ),
+      {
+        wrapper: ({ children }) => (
+          <IpcClientProvider client={client}>{children}</IpcClientProvider>
+        ),
+      },
+    )
+    await act(async () => {
+      await result.current.pick()
+    })
+    expect(result.current.pending).toEqual([])
+    expect(toasts).toEqual([
+      { tone: "warning", message: "Couldn't open the file picker" },
+    ])
   })
 })

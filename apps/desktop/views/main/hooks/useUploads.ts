@@ -7,6 +7,7 @@ import type {
 import { acceptedMimesFromCapabilities } from "@spectrum/agent-events"
 import { useCallback, useState } from "react"
 import { useIpcClient } from "../IpcClientContext"
+import type { NotificationInput } from "../stores/notifications-model"
 
 export type UseUploads = {
   readonly pending: readonly AttachmentRef[]
@@ -24,11 +25,13 @@ export type UseUploads = {
  * resolves image thumbnails, and produces `AttachmentRefWithBytes[]` on send
  * (the dataUrl is send-only — never persisted). The `onOpen` resolver is
  * page-owned because the page decides lightbox vs external-app dispatch
- * (image/text vs pdf/binary).
+ * (image/text vs pdf/binary). The `notify` callback is page-owned so the
+ * hook never reaches into global state and stays trivially testable.
  */
 export const useUploads = (
   caps: AttachmentCapabilities | undefined,
   onOpen: (ref: AttachmentRef, dataUrl: string | null) => void,
+  notify: (input: NotificationInput) => void,
 ): UseUploads => {
   const ipcClient = useIpcClient()
   const [pending, setPending] = useState<readonly AttachmentRef[]>([])
@@ -42,8 +45,25 @@ export const useUploads = (
     if (caps.pdf) acceptedKinds.push("pdf")
     if (caps.binary) acceptedKinds.push("text", "binary")
     const res = await ipcClient.pickUploads({ acceptedMimes, acceptedKinds })
-    if (!res.ok) return
-    const { uploads } = res.value
+    if (!res.ok) {
+      notify({ tone: "warning", message: "Couldn't open the file picker" })
+      return
+    }
+    const { uploads, rejected, errors } = res.value
+    // Surface per-file failures (rejections + IO errors) as toasts so the user
+    // knows each missing file wasn't attached — see docs/01-conventions/notifications.md.
+    for (const r of rejected ?? []) {
+      notify({ tone: "warning", message: `Couldn't attach ${r.displayName}` })
+    }
+    for (const e of errors ?? []) {
+      notify({
+        tone: "warning",
+        message:
+          e.reason === "too-large"
+            ? `Couldn't attach ${e.displayName} (too large)`
+            : `Couldn't read ${e.displayName}`,
+      })
+    }
     if (uploads.length > 0) setPending((p) => [...p, ...uploads])
     // Resolve thumbnails for image uploads (fire-and-forget per ref).
     for (const u of uploads) {
@@ -53,7 +73,7 @@ export const useUploads = (
         setThumbnails((m) => new Map(m).set(u.id, t.value.dataUrl as string))
       }
     }
-  }, [caps, ipcClient])
+  }, [caps, ipcClient, notify])
 
   const remove = useCallback((id: string) => {
     setPending((p) => p.filter((a) => a.id !== id))

@@ -190,9 +190,7 @@ export const ConversationTimeline = ({
               }
             : {})}
           {...(onOpenLink === undefined ? {} : { onOpenLink })}
-          {...(onOpenAttachment === undefined
-            ? {}
-            : { onOpenAttachment })}
+          {...(onOpenAttachment === undefined ? {} : { onOpenAttachment })}
         />
       ))}
       {runner.usage === undefined ? null : <UsageFooter usage={runner.usage} />}
