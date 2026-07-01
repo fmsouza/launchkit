@@ -225,4 +225,56 @@ describe("createOpenclawAdapter", () => {
       t.emitted.filter((e) => e.type === "approval-requested"),
     ).toHaveLength(1)
   })
+
+  // --- Task 6: per-harness attachment support (text-note fallback) -----------------------
+
+  it("send appends an [attachment: name] note per attachment to the text", async () => {
+    const t = setup()
+    const handle = await t.adapter.start(START, t.ctx)
+    handle.send({
+      text: "look",
+      attachments: [
+        {
+          id: "h1",
+          mime: "image/png",
+          displayName: "p.png",
+          kind: "image",
+          bytes: 4,
+          dataUrl: "data:image/png;base64,AAAA",
+        },
+        {
+          id: "h2",
+          mime: "application/pdf",
+          displayName: "d.pdf",
+          kind: "pdf",
+          bytes: 4,
+          dataUrl: "data:application/pdf;base64,QkJC",
+        },
+      ],
+    })
+    expect(t.sentText).toBe("look\n[attachment: p.png] [attachment: d.pdf]")
+  })
+
+  it("send leaves the text unchanged when there are no attachments", async () => {
+    const t = setup()
+    const handle = await t.adapter.start(START, t.ctx)
+    handle.send({ text: "just text" })
+    expect(t.sentText).toBe("just text")
+  })
+
+  it("supportedAttachments is all-false (text-note fallback only)", () => {
+    const adapter = createOpenclawAdapter({
+      connect: async () =>
+        ({
+          run: () => ({} as never),
+          send: () => undefined,
+          disconnect: () => undefined,
+        }) as never,
+    })
+    expect(adapter.supportedAttachments).toEqual({
+      image: false,
+      pdf: false,
+      binary: false,
+    })
+  })
 })
