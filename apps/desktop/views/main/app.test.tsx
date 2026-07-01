@@ -96,6 +96,11 @@ const fakeRunnerClient: RunnerClient = {
   onResumeToken: () => () => {},
   connectionLost: () => {},
   onConnectionLost: () => () => {},
+  reportConnectionState: () => {},
+  onConnectionState: () => () => {},
+  connectionState: () => "connected",
+  getLastFrameMs: () => 0,
+  reconnect: () => {},
 } as unknown as RunnerClient
 
 const fakeUpdateClient = createUpdateClient()
