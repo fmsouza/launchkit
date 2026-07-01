@@ -367,4 +367,35 @@ describe("ConversationTimeline pending sends", () => {
     expect(calls).toEqual([{ clientSendId: "c1", text: "lost prompt" }])
     cleanup()
   })
+
+  it("renders attachment chips on a pending send when attachments are provided", () => {
+    // The optimistic bubble MUST render the user's staged attachments
+    // immediately (not wait for the backend text-delta echo), so the user
+    // never sees a one-frame flicker with text-only chips popping in later.
+    const att = {
+      id: "sha_abc",
+      mime: "image/png",
+      displayName: "shot.png",
+      kind: "image" as const,
+      bytes: 12,
+    }
+    const { container } = render(
+      <ConversationTimeline
+        runner={baseRunner}
+        {...noop}
+        pending={[
+          {
+            clientSendId: "c1",
+            text: "see this",
+            attachments: [att],
+            status: "sending",
+          },
+        ]}
+      />,
+    )
+    // The pending bubble is the message bubble; the tray renders the chip.
+    expect(container.querySelector(".lk-attachment-tray")).not.toBeNull()
+    expect(screen.getByText("shot.png")).toBeInTheDocument()
+    cleanup()
+  })
 })

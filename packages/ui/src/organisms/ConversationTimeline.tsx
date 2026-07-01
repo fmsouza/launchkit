@@ -1,6 +1,7 @@
 import { isTaskTool } from "@spectrum/agent-events"
 import type {
   ApprovalDecision,
+  AttachmentRef,
   MessageItem,
   QuestionAnswer,
   RunnerId,
@@ -26,10 +27,14 @@ export type ConversationTimelineProps = {
   readonly inert?: boolean
   /** Open a chat link in the OS browser; threaded to each `MessageBubble`. */
   readonly onOpenLink?: (url: string) => void
+  /** Open a message attachment (image, file, etc). Threaded to user-bubble trays. */
+  readonly onOpenAttachment?: (ref: AttachmentRef) => void
   /** Optimistic / failed sends not yet reconciled with the backend echo. Rendered after the feed. */
   readonly pending?: readonly {
     readonly clientSendId: string
     readonly text: string
+    /** Attachment refs (no bytes — the dataUrl is send-only). */
+    readonly attachments?: readonly AttachmentRef[]
     readonly status: "sending" | "failed"
   }[]
   /** Re-dispatch a prompt (failed pending send, or the last errored turn). */
@@ -48,6 +53,7 @@ export const ConversationTimeline = ({
   onAnswer,
   inert = false,
   onOpenLink,
+  onOpenAttachment,
   pending,
   onResend,
   onCancel,
@@ -86,6 +92,9 @@ export const ConversationTimeline = ({
                 key={`m-${item.messageId}`}
                 text={item.text}
                 author={item.role}
+                {...(item.attachments === undefined
+                  ? {}
+                  : { attachments: item.attachments })}
                 {...(item.tone !== undefined ? { tone: item.tone } : {})}
                 {...(isLastError && onResend !== undefined
                   ? { onResend: () => onResend({ text: lastUserPrompt }) }
@@ -94,6 +103,9 @@ export const ConversationTimeline = ({
                   ? { onCancel: () => onCancel({ text: lastUserPrompt }) }
                   : {})}
                 {...(onOpenLink === undefined ? {} : { onOpenLink })}
+                {...(onOpenAttachment === undefined
+                  ? {}
+                  : { onOpenAttachment })}
               />
             )
           }
@@ -162,6 +174,9 @@ export const ConversationTimeline = ({
           text={p.text}
           author="user"
           status={p.status}
+          {...(p.attachments === undefined
+            ? {}
+            : { attachments: p.attachments })}
           {...(p.status === "failed" && onResend !== undefined
             ? {
                 onResend: () =>
@@ -175,6 +190,7 @@ export const ConversationTimeline = ({
               }
             : {})}
           {...(onOpenLink === undefined ? {} : { onOpenLink })}
+          {...(onOpenAttachment === undefined ? {} : { onOpenAttachment })}
         />
       ))}
       {runner.usage === undefined ? null : <UsageFooter usage={runner.usage} />}

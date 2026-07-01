@@ -34,12 +34,13 @@ import {
   createSecretStore,
 } from "@spectrum/secrets"
 import { createSessionStore } from "@spectrum/sessions"
-import { createCryptoIdGen, createSystemClock } from "@spectrum/utils"
+import { createCryptoIdGen, createSystemClock, err } from "@spectrum/utils"
 import { migrateProductionToCanary } from "./migrate-canary-data"
 import {
   migrateLaunchkitToSpectrum,
   migrateLegacyMacosConfig,
 } from "./migrate-legacy-config"
+import type { UploadStore } from "./upload-store"
 
 // `import type` for the Platform constructor type (used via `Platform` directly, not `typeof`).
 import type { Platform } from "@spectrum/platform"
@@ -94,6 +95,15 @@ export interface CreateAppContextDeps {
   readonly demoHarnessEnabled: boolean
   readonly genProxyKey: () => string
   /**
+   * Construct the content-addressed upload store over the resolved `uploadsDir`. The desktop
+   * binary overrides this with `createFsUploadStore` (Task 8). The default is an in-memory
+   * stub (every save returns `io-failed`) so the CLI / tests can build a context without a
+   * writable uploads dir.
+   */
+  readonly createUploadStore: (deps: {
+    readonly uploadsDir: string
+  }) => UploadStore
+  /**
    * Read the bundled `version.json` channel ("dev" | "stable" | "canary") that pins the
    * app environment. Returns undefined when no bundle is present (CLI binary, tests), in
    * which case the ambient SPECTRUM_ENV is used. Effect: reads a file relative to cwd.
@@ -111,6 +121,22 @@ const defaultGenProxyKey = (): string => {
 /** Headless passphrase source for the encrypted-file fallback (GUI prompt is a future addition). */
 const defaultSecretPassphrase = async (): Promise<string | null> =>
   process.env.SPECTRUM_SECRET_PASSPHRASE ?? null
+
+/**
+ * Default upload-store factory: an in-memory stub that fails every save with `io-failed`.
+ * The desktop binary overrides this with `createFsUploadStore` (Task 8) in `composition.ts`.
+ * Headless consumers (CLI, tests) keep the stub so `createAppContext` is constructable
+ * without a writable uploads dir.
+ */
+const defaultCreateUploadStore = (): UploadStore => ({
+  save: async () => err({ kind: "io-failed", detail: "no upload store wired" }),
+  readBase64: async () =>
+    err({ kind: "not-found", detail: "no upload store wired" }),
+  pathOf: async () =>
+    err({ kind: "not-found", detail: "no upload store wired" }),
+  exists: async () => false,
+  size: async () => 0,
+})
 
 /** The real constructors, used when `createAppContext()` is called with no argument. */
 export const realDeps: CreateAppContextDeps = {
@@ -153,6 +179,7 @@ export const realDeps: CreateAppContextDeps = {
   createDataAdmin,
   demoHarnessEnabled: process.env.SPECTRUM_DEMO_HARNESS === "1",
   genProxyKey: defaultGenProxyKey,
+  createUploadStore: defaultCreateUploadStore,
   // The host shell (Electrobun bundle) runs the Bun process with cwd =
   // <bundle>/Contents/MacOS, so the app's version.json sits at
   // ../Resources/version.json (same path the GUI updater adapter uses).

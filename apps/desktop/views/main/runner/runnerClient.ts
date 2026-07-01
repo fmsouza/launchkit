@@ -1,6 +1,7 @@
 import type { RunnerInbound, RunnerOutbound } from "@spectrum/agent-driver"
 import type {
   ApprovalDecision,
+  AttachmentRefWithBytes,
   PermissionMode,
   QuestionAnswer,
   StoredEvent,
@@ -18,7 +19,11 @@ export type ConnectionState = "connecting" | "connected" | "reconnecting"
  */
 export interface RunnerClient {
   attach(id: SessionId): void
-  send(id: SessionId, text: string, clientSendId?: string): void
+  send(
+    id: SessionId,
+    turn: { text: string; attachments?: readonly AttachmentRefWithBytes[] },
+    clientSendId?: string,
+  ): void
   approve(id: SessionId, requestId: string, decision: ApprovalDecision): void
   answer(id: SessionId, requestId: string, answer: QuestionAnswer): void
   interrupt(id: SessionId): void
@@ -103,11 +108,14 @@ export const createRunnerClient = (
     attach: (id) => {
       send({ type: "run-attach", id })
     },
-    send: (id, text, clientSendId) => {
+    send: (id, turn, clientSendId) => {
       send({
         type: "run-send",
         id,
-        text,
+        text: turn.text,
+        ...(turn.attachments !== undefined
+          ? { attachments: [...turn.attachments] }
+          : {}),
         ...(clientSendId !== undefined ? { clientSendId } : {}),
       })
     },

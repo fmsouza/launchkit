@@ -1,5 +1,5 @@
 import { createAppContext } from "@spectrum/runtime-core"
-import { createGuiContext } from "./composition"
+import { createGuiContext, realDeps } from "./composition"
 import { buildRealDeps, main } from "./main"
 
 // Electrobun bun-process entrypoint. Bundled to `bun/index.js`, which the Electrobun launcher
@@ -10,5 +10,5 @@ import { buildRealDeps, main } from "./main"
 // Single-purpose GUI: straight to startProxy + openWindow. argv is ignored (no CLI branch).
 await main(
   process.argv,
-  buildRealDeps(() => createGuiContext(createAppContext())),
+  buildRealDeps(() => createGuiContext(createAppContext(realDeps))),
 )

@@ -85,6 +85,31 @@ describe("createElectrobunTransport", () => {
     expect(result).toEqual(settled)
   }, 1000)
 
+  it("does NOT time out pickUploads under the 5s default (interactive native multi-file dialog)", async () => {
+    const { promise, resolve } = deferred<unknown>()
+    const rpc = {
+      request: {
+        pickUploads: (_: unknown) => promise,
+      },
+    }
+    // No `timeouts` override → the transport falls back to its built-in
+    // DEFAULT_METHOD_TIMEOUT_MS table. pickUploads must be Infinity there.
+    const transport = createElectrobunTransport(rpc, {
+      defaultTimeoutMs: 20,
+    })
+    const settled = { ok: true, value: { uploads: [], rejected: [] } }
+    setTimeout(() => resolve(settled), 60)
+    const result = await withTimeout(
+      transport.send("pickUploads", {
+        acceptedMimes: [],
+        acceptedKinds: [],
+      }),
+      400,
+      "test guard",
+    )
+    expect(result).toEqual(settled)
+  }, 1000)
+
   it("does NOT time out checkForUpdate under the 5s default (cold native engine import + network check needs longer)", async () => {
     const { promise, resolve } = deferred<unknown>()
     const rpc = {

@@ -5,7 +5,7 @@ import { Composer, growTextareaHeight, resolveMaxHeightPx } from "./Composer"
 
 describe("Composer", () => {
   it("calls onSend with the typed text when Send is clicked", () => {
-    let sent: string | undefined
+    let sent: { text: string; attachments?: readonly unknown[] } | undefined
     render(
       <Composer
         onSend={(t) => {
@@ -17,7 +17,7 @@ describe("Composer", () => {
       target: { value: "do the thing" },
     })
     fireEvent.click(screen.getByRole("button", { name: "Send message" }))
-    expect(sent).toBe("do the thing")
+    expect(sent?.text).toBe("do the thing")
     cleanup()
   })
 
@@ -53,7 +53,7 @@ describe("Composer", () => {
   })
 
   it("sends on Enter and clears the field", () => {
-    let sent: string | undefined
+    let sent: { text: string; attachments?: readonly unknown[] } | undefined
     render(
       <Composer
         onSend={(t) => {
@@ -64,7 +64,7 @@ describe("Composer", () => {
     const box = screen.getByRole("textbox") as HTMLTextAreaElement
     fireEvent.change(box, { target: { value: "ship it" } })
     fireEvent.keyDown(box, { key: "Enter" })
-    expect(sent).toBe("ship it")
+    expect(sent?.text).toBe("ship it")
     expect(box.value).toBe("")
     cleanup()
   })
@@ -227,6 +227,72 @@ describe("Composer", () => {
     expect(textarea.style.height).toMatch(/^\d+(\.\d+)?px$/)
     fireEvent.click(screen.getByRole("button", { name: "Send message" }))
     expect(textarea.style.height).toBe("auto")
+    cleanup()
+  })
+
+  it("hides the attach button when attachmentCapabilities is all-false", () => {
+    const { container } = render(
+      <Composer
+        onSend={() => {}}
+        attachmentCapabilities={{ image: false, pdf: false, binary: false }}
+      />,
+    )
+    expect(container.querySelector('[data-action="attach"]')).toBeNull()
+    cleanup()
+  })
+
+  it("shows the attach button when attachmentCapabilities has image true", () => {
+    const { container } = render(
+      <Composer
+        onSend={() => {}}
+        attachmentCapabilities={{ image: true, pdf: false, binary: false }}
+      />,
+    )
+    expect(container.querySelector('[data-action="attach"]')).toBeTruthy()
+    cleanup()
+  })
+
+  it("calls onPickAttachments when the attach button is clicked", () => {
+    let picked = false
+    const { container } = render(
+      <Composer
+        onSend={() => {}}
+        attachmentCapabilities={{ image: true, pdf: false, binary: false }}
+        onPickAttachments={() => {
+          picked = true
+        }}
+      />,
+    )
+    const btn = container.querySelector('[data-action="attach"]') as HTMLElement
+    fireEvent.click(btn)
+    expect(picked).toBe(true)
+    cleanup()
+  })
+
+  it("onSend receives attachments from pendingAttachments on submit", () => {
+    let received: { text: string; attachments?: readonly unknown[] } | undefined
+    render(
+      <Composer
+        onSend={(turn) => {
+          received = turn
+        }}
+        pendingAttachments={[
+          {
+            id: "h1",
+            mime: "image/png",
+            displayName: "p.png",
+            kind: "image",
+            bytes: 1,
+          },
+        ]}
+      />,
+    )
+    const box = screen.getByRole("textbox") as HTMLTextAreaElement
+    fireEvent.change(box, { target: { value: "hi" } })
+    fireEvent.keyDown(box, { key: "Enter" })
+    expect(received).toBeDefined()
+    expect(received?.text).toBe("hi")
+    expect(received?.attachments).toBeArrayOfSize(1)
     cleanup()
   })
 })

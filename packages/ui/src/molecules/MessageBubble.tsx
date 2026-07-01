@@ -1,6 +1,8 @@
+import type { AttachmentRef } from "@spectrum/agent-events"
 import { type ReactElement, useId } from "react"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
+import { AttachmentTray } from "./AttachmentTray"
 
 export type MessageBubbleProps = {
   readonly text: string
@@ -22,6 +24,10 @@ export type MessageBubbleProps = {
    * navigates in-window. When omitted, links render but do nothing on click.
    */
   readonly onOpenLink?: (url: string) => void
+  /** Read-only attachments carried by this user message. Assistant bubbles never carry attachments. */
+  readonly attachments?: readonly AttachmentRef[]
+  /** Open an attachment (open the file in the OS, open the image in a viewer, etc). */
+  readonly onOpenAttachment?: (ref: AttachmentRef) => void
 }
 
 /**
@@ -37,6 +43,8 @@ export const MessageBubble = ({
   onResend,
   onCancel,
   onOpenLink,
+  attachments,
+  onOpenAttachment,
 }: MessageBubbleProps): ReactElement => {
   const msgId = useId()
   const failed = tone === "error" || status === "failed"
@@ -49,6 +57,16 @@ export const MessageBubble = ({
       {...(status !== undefined ? { "data-status": status } : {})}
       {...(failed ? { role: "alert" } : {})}
     >
+      {author === "user" &&
+      attachments !== undefined &&
+      attachments.length > 0 ? (
+        <AttachmentTray
+          attachments={attachments}
+          {...(onOpenAttachment !== undefined
+            ? { onOpen: onOpenAttachment }
+            : {})}
+        />
+      ) : null}
       <div id={msgId} className="lk-markdown">
         <ReactMarkdown
           remarkPlugins={[remarkGfm]}

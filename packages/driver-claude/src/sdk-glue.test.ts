@@ -495,11 +495,14 @@ describe("createClaudeAdapter", () => {
     const fake = makeFakeSdk([])
     const adapter = createClaudeAdapter({ loadSdk: async () => fake.sdk })
     const handle = await adapter.start(input, makeCtx([], []))
-    handle.send("follow up")
+    handle.send({ text: "follow up" })
     await new Promise((r) => setTimeout(r, 10))
     expect(fake.pushedPrompts).toContainEqual({
       type: "user",
-      message: { role: "user", content: "follow up" },
+      message: {
+        role: "user",
+        content: [{ type: "text", text: "follow up" }],
+      },
       parent_tool_use_id: null,
     })
   })
@@ -619,14 +622,17 @@ describe("createClaudeAdapter", () => {
     await new Promise((r) => setTimeout(r, 20))
 
     // After restart, send should go to the second query's input stream.
-    handle.send("hi after restart")
+    handle.send({ text: "hi after restart" })
     await new Promise((r) => setTimeout(r, 10))
 
     expect(queries).toHaveLength(2)
     const secondPrompts = queries[1]?.pushedPrompts ?? []
     expect(secondPrompts).toContainEqual({
       type: "user",
-      message: { role: "user", content: "hi after restart" },
+      message: {
+        role: "user",
+        content: [{ type: "text", text: "hi after restart" }],
+      },
       parent_tool_use_id: null,
     })
   })
@@ -916,7 +922,7 @@ describe("createClaudeAdapter", () => {
       logger,
     })
     const handle = await adapter.start(input, makeCtx([], []))
-    handle.send("hello")
+    handle.send({ text: "hello" })
     const turnEntry = entries.find(
       (e) => e.level === "info" && e.msg === "claude turn -> sdk input",
     )
@@ -988,7 +994,7 @@ describe("createClaudeAdapter", () => {
       responseTimeoutMs: 30000,
     })
     const handle = await adapter.start(input, makeCtx([], []))
-    handle.send("x")
+    handle.send({ text: "x" })
     // Fire the watchdog manually (no real timer)
     capturedCallback?.()
     const warnEntry = entries.find(
@@ -1018,7 +1024,7 @@ describe("createClaudeAdapter", () => {
       setTimer,
     })
     const handle = await adapter.start(input, makeCtx([], []))
-    handle.send("x")
+    handle.send({ text: "x" })
     // Push a message so the pump sees it (arms disarm)
     queries[0]?.pushMsg({ type: "system", subtype: "init", model: "m" })
     await new Promise((r) => setTimeout(r, 10))
@@ -1061,12 +1067,12 @@ describe("createClaudeAdapter", () => {
     const handle = await adapter.start(input, makeCtx([], []))
 
     // Turn 1: send and have the SDK respond — disarms the turn-1 watchdog
-    handle.send("turn 1")
+    handle.send({ text: "turn 1" })
     queries[0]?.pushMsg({ type: "system", subtype: "init", model: "m" })
     await new Promise((r) => setTimeout(r, 10))
 
     // Turn 2: send with NO further messages scripted
-    handle.send("turn 2")
+    handle.send({ text: "turn 2" })
     // Fire the timer that was armed for turn 2
     const turn2Timer = timerCallbacks[timerCallbacks.length - 1]
     turn2Timer?.()
@@ -1098,7 +1104,7 @@ describe("createClaudeAdapter", () => {
       setTimer,
     })
     const handle = await adapter.start(input, makeCtx([], []))
-    handle.send("hello")
+    handle.send({ text: "hello" })
     // Push a message so the pump disarms the watchdog
     queries[0]?.pushMsg({ type: "system", subtype: "init", model: "m" })
     await new Promise((r) => setTimeout(r, 10))
@@ -1287,9 +1293,9 @@ describe("createClaudeAdapter", () => {
     const handle = await adapter.start(input, makeCtx([], []))
 
     // Send three turns rapidly, then interrupt immediately.
-    handle.send("turn-1")
-    handle.send("turn-2")
-    handle.send("turn-3")
+    handle.send({ text: "turn-1" })
+    handle.send({ text: "turn-2" })
+    handle.send({ text: "turn-3" })
     handle.interrupt()
 
     // Wait for any microtasks / async draining that might happen.
@@ -1298,10 +1304,19 @@ describe("createClaudeAdapter", () => {
     // Collect all text content that the fake query observed from the prompt stream.
     const pulled = (queries[0]?.pushedPrompts ?? []) as Array<{
       type: string
-      message: { role: string; content: string }
+      message: { role: string; content: Array<{ type: string; text?: string }> }
       parent_tool_use_id: null
     }>
-    const pulledTexts = pulled.map((p) => p.message.content)
+    // Join the text from the first text-block of every message so we can look
+    // for the specific turn labels (turn-1, turn-2, turn-3).
+    const pulledTexts = pulled.map(
+      (p) =>
+        p.message.content
+          .map((b) =>
+            b.type === "text" && typeof b.text === "string" ? b.text : "",
+          )
+          .join("") || "",
+    )
 
     // After interrupt the queue must have been drained: turn-2 and turn-3 were still
     // queued when interrupt fired and must NOT have been delivered to the SDK.
@@ -1494,5 +1509,109 @@ describe("createClaudeAdapter", () => {
     expect(queries).toHaveLength(2)
     expect(queries[1]?.options?.thinking).toBeUndefined()
     expect(queries[1]?.options?.resume).toBe("sess_think_off")
+  })
+
+  // --- Task 6: per-harness attachment content blocks --------------------------------------
+
+  it("push builds ContentBlockParam[] with text + image block from a Turn with attachments", async () => {
+    const fake = makeFakeSdk([])
+    const adapter = createClaudeAdapter({ loadSdk: async () => fake.sdk })
+    const handle = await adapter.start(input, makeCtx([], []))
+    handle.send({
+      text: "look",
+      attachments: [
+        {
+          id: "h1",
+          mime: "image/png",
+          displayName: "p.png",
+          kind: "image",
+          bytes: 4,
+          dataUrl: "data:image/png;base64,AAAA",
+        },
+      ],
+    })
+    await new Promise((r) => setTimeout(r, 10))
+    // The pushed SDKUserInput.message.content must be an array (not a string) carrying
+    // a text block first and an image block second.
+    const pushed = fake.pushedPrompts as Array<{
+      type: string
+      message: { role: string; content: unknown }
+      parent_tool_use_id: null
+    }>
+    const last = pushed[pushed.length - 1]
+    expect(last).toBeDefined()
+    const content = last?.message.content
+    expect(Array.isArray(content)).toBe(true)
+    const blocks = content as Array<Record<string, unknown>>
+    expect(blocks[0]).toEqual({ type: "text", text: "look" })
+    expect(blocks[1]).toEqual({
+      type: "image",
+      source: {
+        type: "base64",
+        media_type: "image/png",
+        data: "AAAA",
+      },
+    })
+  })
+
+  it("push builds a document block for a pdf attachment (not image)", async () => {
+    const fake = makeFakeSdk([])
+    const adapter = createClaudeAdapter({ loadSdk: async () => fake.sdk })
+    const handle = await adapter.start(input, makeCtx([], []))
+    handle.send({
+      text: "read",
+      attachments: [
+        {
+          id: "h2",
+          mime: "application/pdf",
+          displayName: "doc.pdf",
+          kind: "pdf",
+          bytes: 4,
+          dataUrl: "data:application/pdf;base64,QkJC",
+        },
+      ],
+    })
+    await new Promise((r) => setTimeout(r, 10))
+    const pushed = fake.pushedPrompts as Array<{
+      message: { content: unknown }
+    }>
+    const last = pushed[pushed.length - 1]
+    const content = last?.message.content as Array<Record<string, unknown>>
+    expect(content[1]).toEqual({
+      type: "document",
+      source: {
+        type: "base64",
+        media_type: "application/pdf",
+        data: "QkJC",
+      },
+    })
+  })
+
+  it("push builds a single text block when there are no attachments", async () => {
+    const fake = makeFakeSdk([])
+    const adapter = createClaudeAdapter({ loadSdk: async () => fake.sdk })
+    const handle = await adapter.start(input, makeCtx([], []))
+    handle.send({ text: "no-attach" })
+    await new Promise((r) => setTimeout(r, 10))
+    const pushed = fake.pushedPrompts as Array<{
+      message: { content: unknown }
+    }>
+    const last = pushed[pushed.length - 1]
+    // The seam cast on `content: string` makes the captured type `string` for the
+    // simple path — but the JSON shape must be the blocks array.
+    const content = last?.message.content
+    const blocks = content as unknown as Array<Record<string, unknown>>
+    expect(blocks).toEqual([{ type: "text", text: "no-attach" }])
+  })
+
+  it("supportedAttachments is { image: true, pdf: true, binary: true }", () => {
+    const adapter = createClaudeAdapter({
+      loadSdk: async () => makeFakeSdk([]).sdk,
+    })
+    expect(adapter.supportedAttachments).toEqual({
+      image: true,
+      pdf: true,
+      binary: true,
+    })
   })
 })

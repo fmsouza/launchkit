@@ -1,5 +1,6 @@
 import { RunnerIdSchema, SessionIdSchema } from "@spectrum/types"
 import { z } from "zod"
+import { AttachmentCapabilitiesSchema, AttachmentRefSchema } from "./attachment"
 import { ThinkingEffortSchema } from "./thinking-effort"
 
 export type Json = unknown
@@ -84,6 +85,7 @@ export const CanonicalEventSchema = z.discriminatedUnion("type", [
       model: z.string().optional(),
       thinkingEffort: ThinkingEffortSchema.optional(),
       supportedModes: z.array(PermissionModeSchema).optional(),
+      supportedAttachments: AttachmentCapabilitiesSchema.optional(),
       permissionMode: PermissionModeSchema.optional(),
     })
     .strict(),
@@ -126,6 +128,9 @@ export const CanonicalEventSchema = z.discriminatedUnion("type", [
       // dispatch. Echoed back here so the renderer can deterministically reconcile the optimistic
       // "sending" bubble against the landed message. Only meaningful for role:"user".
       clientSendId: z.string().optional(),
+      // Refs (no bytes) for attachments on this user turn. Stripped of dataUrl by the runtime
+      // before emit so the persisted log stays small and pure.
+      attachments: z.array(AttachmentRefSchema).optional(),
     })
     .strict(),
   z

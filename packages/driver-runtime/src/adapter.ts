@@ -2,6 +2,8 @@ import type { AgentStartInput } from "@spectrum/agent-driver"
 import type {
   ApprovalDecision,
   ApprovalTarget,
+  AttachmentCapabilities,
+  AttachmentRefWithBytes,
   CanonicalEvent,
   PermissionMode,
   QuestionAnswer,
@@ -13,8 +15,11 @@ import type { ModelId } from "@spectrum/types"
 
 /** A live, mapped handle to a started harness. Methods are fire-and-forget (errors surface as events). */
 export interface AdapterHandle {
-  /** A follow-up user turn. */
-  send(text: string): void
+  /** A follow-up user turn (text + optional attachments with bytes). */
+  send(turn: {
+    readonly text: string
+    readonly attachments?: readonly AttachmentRefWithBytes[]
+  }): void
   /** Stop the current turn (top-level). */
   interrupt(): void
   /** Terminate the process / disconnect the server (idempotent). */
@@ -62,4 +67,6 @@ export interface DriverAdapter {
   start(input: AgentStartInput, ctx: AdapterCtx): Promise<AdapterHandle>
   /** The normalized modes this harness supports; omitted = manual only. */
   readonly supportedModes?: readonly PermissionMode[]
+  /** Attachment kinds this harness can receive as content blocks; omitted = none supported. */
+  readonly supportedAttachments?: AttachmentCapabilities
 }

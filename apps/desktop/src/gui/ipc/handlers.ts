@@ -1,8 +1,12 @@
 import { stat } from "node:fs/promises"
+import path from "node:path"
 
 import {
+  type AttachmentKind,
+  type AttachmentRef,
   PermissionModeSchema,
   ThinkingEffortSchema,
+  inferKind,
 } from "@spectrum/agent-events"
 import type { IpcHandlers, ProviderView } from "@spectrum/ipc"
 import { providerCatalog, validateProviderConfig } from "@spectrum/providers"
@@ -43,6 +47,38 @@ const fsExists = async (path: string): Promise<boolean> => {
     return false
   }
 }
+
+/**
+ * Tiny extension → MIME table for the file-picker path. The native picker's
+ * `acceptedMimes` does the heavy lifting (the OS restricts the dialog to
+ * matching files), but the resulting path may carry a name whose extension
+ * the OS didn't classify. Defaults to `application/octet-stream` so the
+ * resulting `AttachmentRef.mime` is always a non-empty, valid string the
+ * renderer can round-trip.
+ */
+const EXTENSION_MIME: Readonly<Record<string, string>> = {
+  png: "image/png",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  gif: "image/gif",
+  webp: "image/webp",
+  pdf: "application/pdf",
+  txt: "text/plain",
+  md: "text/markdown",
+  json: "application/json",
+}
+const mimeFromExt = (displayName: string): string => {
+  const dot = displayName.lastIndexOf(".")
+  if (dot === -1 || dot === displayName.length - 1) {
+    return "application/octet-stream"
+  }
+  const ext = displayName.slice(dot + 1).toLowerCase()
+  return EXTENSION_MIME[ext] ?? "application/octet-stream"
+}
+
+/** Format a base64 string as a `data:<mime>;base64,...` URL. */
+const toDataUrl = (mime: string, base64: string): string =>
+  `data:${mime};base64,${base64}`
 
 /**
  * Bind the `@spectrum/ipc` contract to the wired subsystems. Each handler is `async` and either
@@ -666,6 +702,98 @@ export const createIpcHandlers = (ctx: GuiContext): IpcHandlers => {
     openExternalUrl: async ({ url }) => {
       const opened = await ctx.openExternalUrl(url)
       if (!opened) return fail("could not open url in default browser")
+      return null
+    },
+
+    // ── Media uploads (file picker → uploads dir → data URL / external open) ──
+    pickUploads: async (params) => {
+      const paths = await ctx.pickFiles()
+      const acceptedKinds = new Set<AttachmentKind>(params.acceptedKinds)
+      const uploads: AttachmentRef[] = []
+      const rejected: { displayName: string; reason: "unsupported-kind" }[] = []
+      const errors: {
+        displayName: string
+        reason: "io-failed" | "too-large"
+      }[] = []
+      for (const p of paths) {
+        if (p.trim() === "") continue
+        const displayName = p.split("/").pop() ?? p
+        const mime = mimeFromExt(displayName)
+        const kind = inferKind(mime, displayName)
+        if (!acceptedKinds.has(kind)) {
+          rejected.push({ displayName, reason: "unsupported-kind" })
+          continue
+        }
+        const res = await ctx.uploadStore.save({
+          sourcePath: p,
+          mime,
+          displayName,
+          maxBytes: 10 * 1024 * 1024,
+        })
+        if (res.ok) {
+          uploads.push(res.value.ref)
+        } else {
+          // An IO error is user-actionable: return it so the webview can toast
+          // the user that the file wasn't attached. (See docs/01-conventions/notifications.md.)
+          ctx.log.child("uploads").error("upload save failed", {
+            displayName,
+            kind: res.error.kind,
+            detail: res.error.detail,
+          })
+          if (res.error.kind === "too-large") {
+            errors.push({ displayName, reason: "too-large" })
+          } else {
+            errors.push({ displayName, reason: "io-failed" })
+          }
+        }
+      }
+      const out: {
+        uploads: AttachmentRef[]
+        rejected?: { displayName: string; reason: "unsupported-kind" }[]
+        errors?: { displayName: string; reason: "io-failed" | "too-large" }[]
+      } = { uploads }
+      if (rejected.length > 0) out.rejected = rejected
+      if (errors.length > 0) out.errors = errors
+      return out
+    },
+
+    readUploadThumbnail: async ({ id, mime }) => {
+      const exists = await ctx.uploadStore.exists(id)
+      if (!exists) return { missing: true }
+      const r = await ctx.uploadStore.readBase64(id)
+      if (!r.ok) return { missing: true }
+      return { dataUrl: toDataUrl(mime, r.value) }
+    },
+
+    readUploadDataUrl: async ({ id, mime }) => {
+      const exists = await ctx.uploadStore.exists(id)
+      if (!exists) return { missing: true }
+      const r = await ctx.uploadStore.readBase64(id)
+      if (!r.ok) return { missing: true }
+      return { dataUrl: toDataUrl(mime, r.value) }
+    },
+
+    openUploadExternal: async ({ id }) => {
+      const r = await ctx.uploadStore.pathOf(id)
+      if (!r.ok) return { missing: true }
+      const filePath = r.value
+      // SECURITY: the path comes from UploadStore (closed set inside `uploads/`),
+      // but defend in depth — reject anything that somehow escapes. An
+      // `isAbsolute` check + `uploadsDir` prefix check catches traversal/escape
+      // on every supported platform (POSIX `/...` and Windows `C:\...`).
+      const isAbsolute =
+        path.isAbsolute(filePath) || path.win32.isAbsolute(filePath)
+      if (!filePath.startsWith(ctx.paths.uploadsDir) || !isAbsolute) {
+        ctx.log
+          .child("uploads")
+          .error("openUploadExternal: path escaped uploadsDir", {
+            id,
+            path: filePath,
+          })
+        return { opened: false }
+      }
+      const opened = await ctx.openExternalUrl(`file://${filePath}`)
+      if (!opened) return fail("could not open upload in default viewer")
       return null
     },
 

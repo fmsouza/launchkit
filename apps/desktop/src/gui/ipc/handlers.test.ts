@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test"
+import type { AttachmentKind, AttachmentRef } from "@spectrum/agent-events"
 import type { StoredEvent } from "@spectrum/agent-events"
 import type { Config } from "@spectrum/config"
 import { defaultConfig } from "@spectrum/config"
@@ -7,6 +8,7 @@ import {
   resolveHarnessLaunch,
 } from "@spectrum/harnesses"
 import { type Logger, createNoopLogger } from "@spectrum/logger"
+import type { UploadStore } from "@spectrum/runtime-core"
 import type {
   HarnessId,
   ModelId,
@@ -121,6 +123,8 @@ const makeCtx = (
      * Defaults to a no-op so existing tests keep their original behavior.
      */
     ensureGuiPathResolved?: () => Promise<void>
+    pickFilesResult?: readonly string[]
+    uploadStore?: UploadStore
   } = {},
 ): {
   ctx: AppContext
@@ -138,6 +142,13 @@ const makeCtx = (
   draftListInputs: unknown[]
   renameSessionCalls: { id: SessionId; name: string }[]
   markUserNamedCalls: SessionId[]
+  pickFilesCalls: number
+  uploadSaveInputs: Array<{
+    sourcePath: string
+    mime: string
+    displayName: string
+    maxBytes: number
+  }>
 } => {
   const saves: Config[] = []
   const secretSets: string[] = []
@@ -154,6 +165,36 @@ const makeCtx = (
   const renameSessionCalls: { id: SessionId; name: string }[] = []
   const markUserNamedCalls: SessionId[] = []
   const resetState = { count: 0 }
+  const pickFilesCallsArr: number[] = []
+  const uploadSaveInputs: Array<{
+    sourcePath: string
+    mime: string
+    displayName: string
+    maxBytes: number
+  }> = []
+  /**
+   * A recording fake UploadStore whose `save` mints a deterministic ref and
+   * whose other methods default to "missing" so a test that only cares about
+   * `save` does not need to stub them. Tests that exercise `readBase64` /
+   * `pathOf` / `exists` override `over.uploadStore`.
+   */
+  const defaultUploadStore = (): UploadStore => ({
+    save: async (params) => {
+      uploadSaveInputs.push(params)
+      const ref: AttachmentRef = {
+        id: `sha_${params.displayName}`,
+        mime: params.mime,
+        displayName: params.displayName,
+        kind: mimeToKind(params.mime),
+        bytes: 0,
+      }
+      return ok({ ref, path: `/tmp/uploads/${ref.id}` })
+    },
+    readBase64: async () => err({ kind: "not-found", detail: "stub" }),
+    pathOf: async () => err({ kind: "not-found", detail: "stub" }),
+    exists: async () => false,
+    size: async () => 0,
+  })
   let current: Config = {
     ...baseConfig(
       over.providers ?? [provider()],
@@ -337,6 +378,11 @@ const makeCtx = (
     // Default to a no-op so existing tests keep their original behavior; the
     // PATH-resolved order test overrides this with an order-recording stub.
     ensureGuiPathResolved: over.ensureGuiPathResolved ?? (async () => {}),
+    pickFiles: async () => {
+      pickFilesCallsArr.push(1)
+      return over.pickFilesResult ?? []
+    },
+    uploadStore: over.uploadStore ?? defaultUploadStore(),
   } as unknown as AppContext
 
   return {
@@ -358,7 +404,18 @@ const makeCtx = (
     draftListInputs,
     renameSessionCalls,
     markUserNamedCalls,
+    get pickFilesCalls() {
+      return pickFilesCallsArr.length
+    },
+    uploadSaveInputs,
   }
+}
+
+const mimeToKind = (mime: string): AttachmentKind => {
+  if (mime.startsWith("image/")) return "image"
+  if (mime === "application/pdf") return "pdf"
+  if (mime.startsWith("text/")) return "text"
+  return "binary"
 }
 
 const sampleSession: Session = {
@@ -2385,5 +2442,266 @@ describe("createIpcHandlers.updateSessionNamingSettings", () => {
     await expect(
       handlers.updateSessionNamingSettings({ sessionNameModelId: null }),
     ).rejects.toThrow()
+  })
+})
+
+// ── D.7 media uploads (pickUploads / readUploadThumbnail / readUploadDataUrl / openUploadExternal) ──
+
+describe("createIpcHandlers.pickUploads", () => {
+  it("saves each picked file via ctx.uploadStore and returns its ref, rejecting unsupported kinds", async () => {
+    const { ctx, uploadSaveInputs } = makeCtx({
+      pickFilesResult: ["/tmp/a.png", "/tmp/b.pdf"],
+    })
+    const handlers = createIpcHandlers(ctx)
+
+    const r = await handlers.pickUploads({
+      acceptedMimes: ["image/png", "application/pdf"],
+      acceptedKinds: ["image"],
+    })
+
+    // The image was saved; the PDF (kind:"pdf") was rejected — only the .png survives.
+    expect(r.uploads).toHaveLength(1)
+    expect(r.uploads[0]?.displayName).toBe("a.png")
+    expect(r.uploads[0]?.kind).toBe("image")
+    expect(r.uploads[0]?.mime).toBe("image/png")
+    expect(r.rejected).toEqual([
+      { displayName: "b.pdf", reason: "unsupported-kind" },
+    ])
+    // The save call carried the image mime derived from the extension.
+    expect(uploadSaveInputs).toEqual([
+      {
+        sourcePath: "/tmp/a.png",
+        mime: "image/png",
+        displayName: "a.png",
+        maxBytes: 10 * 1024 * 1024,
+      },
+    ])
+  })
+
+  it("collects rejected entries for files whose kind is not in acceptedKinds", async () => {
+    const { ctx, uploadSaveInputs } = makeCtx({
+      pickFilesResult: ["/tmp/a.pdf"],
+    })
+    const handlers = createIpcHandlers(ctx)
+
+    const r = await handlers.pickUploads({
+      acceptedMimes: ["application/pdf"],
+      acceptedKinds: ["image"],
+    })
+
+    expect(r.uploads).toEqual([])
+    expect(r.rejected).toEqual([
+      { displayName: "a.pdf", reason: "unsupported-kind" },
+    ])
+    expect(uploadSaveInputs).toEqual([])
+  })
+
+  it("omits the rejected field entirely when every pick was accepted", async () => {
+    const { ctx } = makeCtx({ pickFilesResult: ["/tmp/a.png"] })
+    const handlers = createIpcHandlers(ctx)
+
+    const r = await handlers.pickUploads({
+      acceptedMimes: ["image/png"],
+      acceptedKinds: ["image"],
+    })
+
+    expect(r.uploads).toHaveLength(1)
+    expect("rejected" in r).toBe(false)
+  })
+})
+
+describe("createIpcHandlers.readUploadThumbnail", () => {
+  it("builds a data:<mime>;base64,<base64> URL from uploadStore.readBase64", async () => {
+    const uploadStore: UploadStore = {
+      save: async () => err({ kind: "io-failed", detail: "unused" }),
+      readBase64: async () => ok("aGVsbG8="),
+      pathOf: async () => err({ kind: "not-found", detail: "unused" }),
+      exists: async () => true,
+      size: async () => 0,
+    }
+    const { ctx } = makeCtx({ uploadStore })
+    const handlers = createIpcHandlers(ctx)
+
+    const r = await handlers.readUploadThumbnail({
+      id: "sha_abc",
+      mime: "image/png",
+    })
+
+    expect(r).toEqual({ dataUrl: "data:image/png;base64,aGVsbG8=" })
+  })
+
+  it("returns { missing: true } when uploadStore.exists is false", async () => {
+    const uploadStore: UploadStore = {
+      save: async () => err({ kind: "io-failed", detail: "unused" }),
+      readBase64: async () => err({ kind: "not-found", detail: "unused" }),
+      pathOf: async () => err({ kind: "not-found", detail: "unused" }),
+      exists: async () => false,
+      size: async () => 0,
+    }
+    const { ctx } = makeCtx({ uploadStore })
+    const handlers = createIpcHandlers(ctx)
+
+    const r = await handlers.readUploadThumbnail({
+      id: "sha_ghost",
+      mime: "image/png",
+    })
+
+    expect(r).toEqual({ missing: true })
+  })
+})
+
+describe("createIpcHandlers.readUploadDataUrl", () => {
+  it("builds a data:<mime>;base64,<base64> URL from uploadStore.readBase64", async () => {
+    const uploadStore: UploadStore = {
+      save: async () => err({ kind: "io-failed", detail: "unused" }),
+      readBase64: async () => ok("aGVsbG8="),
+      pathOf: async () => err({ kind: "not-found", detail: "unused" }),
+      exists: async () => true,
+      size: async () => 0,
+    }
+    const { ctx } = makeCtx({ uploadStore })
+    const handlers = createIpcHandlers(ctx)
+
+    const r = await handlers.readUploadDataUrl({
+      id: "sha_abc",
+      mime: "image/png",
+    })
+
+    expect(r).toEqual({ dataUrl: "data:image/png;base64,aGVsbG8=" })
+  })
+
+  it("returns { missing: true } when uploadStore.exists is false", async () => {
+    const uploadStore: UploadStore = {
+      save: async () => err({ kind: "io-failed", detail: "unused" }),
+      readBase64: async () => err({ kind: "not-found", detail: "unused" }),
+      pathOf: async () => err({ kind: "not-found", detail: "unused" }),
+      exists: async () => false,
+      size: async () => 0,
+    }
+    const { ctx } = makeCtx({ uploadStore })
+    const handlers = createIpcHandlers(ctx)
+
+    const r = await handlers.readUploadDataUrl({
+      id: "sha_ghost",
+      mime: "image/png",
+    })
+
+    expect(r).toEqual({ missing: true })
+  })
+})
+
+describe("createIpcHandlers.openUploadExternal", () => {
+  it("delegates a file:// URL built from pathOf(id) to ctx.openExternalUrl and returns null on success", async () => {
+    const uploadsDir = "/tmp/uploads"
+    const openExternalUrlCalls: string[] = []
+    const uploadStore: UploadStore = {
+      save: async () => err({ kind: "io-failed", detail: "unused" }),
+      readBase64: async () => err({ kind: "not-found", detail: "unused" }),
+      pathOf: async () => ok(`${uploadsDir}/sha_abc.pdf`),
+      exists: async () => true,
+      size: async () => 0,
+    }
+    const { ctx } = makeCtx({ uploadStore })
+    // Force the fake paths.uploadsDir to the expected value.
+    ;(ctx as { paths: { uploadsDir: string } }).paths.uploadsDir = uploadsDir
+    // Override the fake ctx.openExternalUrl to record the call + succeed.
+    ;(
+      ctx as { openExternalUrl: (url: string) => Promise<boolean> }
+    ).openExternalUrl = async (url: string) => {
+      openExternalUrlCalls.push(url)
+      return true
+    }
+    const handlers = createIpcHandlers(ctx)
+
+    const r = await handlers.openUploadExternal({ id: "sha_abc" })
+
+    expect(r).toBeNull()
+    expect(openExternalUrlCalls).toEqual([`file://${uploadsDir}/sha_abc.pdf`])
+  })
+
+  it("returns { missing: true } when pathOf is not-found", async () => {
+    const uploadStore: UploadStore = {
+      save: async () => err({ kind: "io-failed", detail: "unused" }),
+      readBase64: async () => err({ kind: "not-found", detail: "unused" }),
+      pathOf: async () => err({ kind: "not-found", detail: "ghost" }),
+      exists: async () => false,
+      size: async () => 0,
+    }
+    const { ctx } = makeCtx({ uploadStore })
+    const handlers = createIpcHandlers(ctx)
+
+    const r = await handlers.openUploadExternal({ id: "sha_ghost" })
+
+    expect(r).toEqual({ missing: true })
+  })
+
+  it("returns { opened: false } (NOT { missing }) when pathOf resolves to a path outside ctx.paths.uploadsDir", async () => {
+    const uploadStore: UploadStore = {
+      save: async () => err({ kind: "io-failed", detail: "unused" }),
+      readBase64: async () => err({ kind: "not-found", detail: "unused" }),
+      pathOf: async () => ok("/etc/passwd"),
+      exists: async () => true,
+      size: async () => 0,
+    }
+    const { ctx } = makeCtx({ uploadStore })
+    ;(ctx as { paths: { uploadsDir: string } }).paths.uploadsDir =
+      "/var/spectrum/uploads"
+    const handlers = createIpcHandlers(ctx)
+
+    const r = await handlers.openUploadExternal({ id: "sha_evil" })
+
+    // The security check rejects it BEFORE calling openExternalUrl — the handler
+    // returns a non-null failure marker so the webview can surface a toast.
+    expect(r).toEqual({ opened: false })
+  })
+
+  it("accepts a Windows-style absolute path inside ctx.paths.uploadsDir", async () => {
+    // On Windows, uploads live under a drive-letter root like
+    // `C:\Users\me\AppData\Roaming\Spectrum\uploads\sha.png`. The security
+    // check MUST treat drive-letter roots as absolute (the `startsWith("/")`
+    // form was macOS/Linux-only and silently rejected every Windows path).
+    const winUploadsDir = "C:\\Users\\me\\AppData\\Roaming\\Spectrum\\uploads"
+    const winPath = `${winUploadsDir}\\sha_abc.pdf`
+    const openExternalUrlCalls: string[] = []
+    const uploadStore: UploadStore = {
+      save: async () => err({ kind: "io-failed", detail: "unused" }),
+      readBase64: async () => err({ kind: "not-found", detail: "unused" }),
+      pathOf: async () => ok(winPath),
+      exists: async () => true,
+      size: async () => 0,
+    }
+    const { ctx } = makeCtx({ uploadStore })
+    ;(ctx as { paths: { uploadsDir: string } }).paths.uploadsDir = winUploadsDir
+    ;(
+      ctx as { openExternalUrl: (url: string) => Promise<boolean> }
+    ).openExternalUrl = async (url: string) => {
+      openExternalUrlCalls.push(url)
+      return true
+    }
+    const handlers = createIpcHandlers(ctx)
+
+    const r = await handlers.openUploadExternal({ id: "sha_abc" })
+
+    expect(r).toBeNull()
+    expect(openExternalUrlCalls).toEqual([`file://${winPath}`])
+  })
+
+  it("still rejects a Windows-style path that escapes ctx.paths.uploadsDir", async () => {
+    const winUploadsDir = "C:\\Users\\me\\AppData\\Roaming\\Spectrum\\uploads"
+    const winEvilPath = "C:\\Windows\\System32\\drivers\\etc\\hosts"
+    const uploadStore: UploadStore = {
+      save: async () => err({ kind: "io-failed", detail: "unused" }),
+      readBase64: async () => err({ kind: "not-found", detail: "unused" }),
+      pathOf: async () => ok(winEvilPath),
+      exists: async () => true,
+      size: async () => 0,
+    }
+    const { ctx } = makeCtx({ uploadStore })
+    ;(ctx as { paths: { uploadsDir: string } }).paths.uploadsDir = winUploadsDir
+    const handlers = createIpcHandlers(ctx)
+
+    const r = await handlers.openUploadExternal({ id: "sha_evil" })
+
+    expect(r).toEqual({ opened: false })
   })
 })

@@ -32,7 +32,21 @@ export type {
   CreateAppContextDeps,
   ProviderTestResult,
 } from "@spectrum/runtime-core"
-export { createAppContext, realDeps } from "@spectrum/runtime-core"
+export { createAppContext } from "@spectrum/runtime-core"
+import { realDeps as runtimeCoreRealDeps } from "@spectrum/runtime-core"
+import { createFsUploadStore } from "./upload-store-fs"
+
+/**
+ * Desktop-flavored `realDeps`: the shared runtime-core wiring with the real fs-backed
+ * `createUploadStore` (`createFsUploadStore` over `paths.uploadsDir`) so the GUI can
+ * actually persist user-picked attachments. Headless consumers (CLI) keep the runtime-core
+ * default (in-memory stub) and never see this.
+ */
+export const realDeps = {
+  ...runtimeCoreRealDeps,
+  createUploadStore: ({ uploadsDir }: { readonly uploadsDir: string }) =>
+    createFsUploadStore({ uploadsDir }),
+} as const
 
 import { rmSync } from "node:fs"
 import { homedir } from "node:os"
@@ -105,6 +119,13 @@ export interface GuiContext extends AppContext {
   readonly pickFolder: (opts: { readonly startingFolder?: string }) => Promise<
     readonly string[]
   >
+  /**
+   * Native multi-file picker. Used by the media-upload IPC handler to source
+   * files for `UploadStore.save`. Each entry in the returned array is an
+   * absolute path (Electrobun resolves the picker's output). An empty array
+   * means the user cancelled.
+   */
+  readonly pickFiles: () => Promise<readonly string[]>
   readonly openExternalUrl: (url: string) => Promise<boolean>
   readonly updater: UpdaterAdapter
   /** In-app terminal PTY manager (terminal-panel plan). */
@@ -433,6 +454,25 @@ export const createGuiContext = (
   }
 
   // ------------------------------------------------------------------
+  // Native multi-file picker — lazy so bun test never loads native FFI
+  // ------------------------------------------------------------------
+  // Used by the media-upload IPC handler (`pickUploads`). Mirrors `pickFolder`
+  // but with `canChooseFiles:true, allowsMultipleSelection:true`. The handler
+  // passes an `acceptedMimes` list separately, which the handler filters by
+  // before saving (Electrobun's `openFileDialog` accepts a MIME allowlist too,
+  // but we apply the kind check post-pick to keep the rejection path in our
+  // own code rather than relying on OS behavior).
+  const pickFiles: GuiContext["pickFiles"] = async () => {
+    const { Utils } = await import("electrobun/bun")
+    const paths = await Utils.openFileDialog({
+      canChooseDirectory: false,
+      canChooseFiles: true,
+      allowsMultipleSelection: true,
+    })
+    return paths.filter((p) => p.trim() !== "")
+  }
+
+  // ------------------------------------------------------------------
   // OS-default URL opener — lazy import
   // ------------------------------------------------------------------
   const openExternalUrl: GuiContext["openExternalUrl"] = async (url) => {
@@ -481,6 +521,7 @@ export const createGuiContext = (
     rendererWatchdog,
     resetApp,
     pickFolder,
+    pickFiles,
     openExternalUrl,
     updater,
     terminalManager,

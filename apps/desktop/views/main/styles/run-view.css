@@ -1160,3 +1160,94 @@
   flex: 1 1 auto;
   min-height: 0;
 }
+.lk-attachment-chip {
+  position: relative;
+  flex: 0 0 auto;
+  width: 64px;
+  height: 64px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: 4px;
+  border: 1px solid var(--sp-border);
+  border-radius: var(--sp-radius-md);
+  background: var(--sp-surface-raised);
+  color: var(--sp-text);
+  cursor: pointer;
+  overflow: hidden;
+}
+.lk-attachment-chip__thumb {
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+.lk-attachment-chip__thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: var(--sp-radius-sm);
+}
+.lk-attachment-chip__label {
+  max-width: 56px;
+  font-size: 10px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.lk-attachment-chip__remove-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--sp-danger-soft);
+  color: var(--sp-danger);
+  font-size: 22px;
+  line-height: 1;
+  opacity: 0;
+  transition: opacity var(--sp-duration) var(--sp-ease);
+}
+.lk-attachment-chip__remove-overlay::before {
+  content: "\2715";
+}
+.lk-attachment-chip:hover .lk-attachment-chip__remove-overlay,
+.lk-attachment-chip__remove-overlay:focus-visible {
+  opacity: 1;
+}
+.lk-attachment-tray {
+  display: flex;
+  flex-direction: row;
+  gap: var(--sp-space-2);
+  overflow-x: auto;
+  padding: var(--sp-space-1) 0;
+  flex: 0 0 auto;
+}
+
+.lk-lightbox__image {
+  max-width: 90vw;
+  max-height: 90vh;
+  object-fit: contain;
+}
+.lk-lightbox__text {
+  max-width: 80vw;
+  max-height: 70vh;
+  overflow: auto;
+  white-space: pre-wrap;
+  font-family: var(--sp-font-mono, monospace);
+}
+
+.lk-composer__action[data-action="attach"] {
+  margin-left: 0;
+  background: transparent;
+  color: var(--sp-text);
+  border-color: transparent;
+}
+.lk-composer__action[data-action="attach"]:hover:not(:disabled) {
+  background: var(--sp-surface-raised);
+  border-color: var(--sp-border);
+}

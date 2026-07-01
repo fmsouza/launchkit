@@ -31,6 +31,7 @@ import {
   REQ_USER_INPUT,
   TURN_COMPLETED,
   TURN_STARTED,
+  imageInput,
   textInput,
 } from "./protocol"
 import type { CodexServerNotification } from "./protocol"
@@ -303,22 +304,33 @@ export const createCodexAdapter = (
 
     let closed = false
     return {
-      send: (text) => {
-        const turn =
+      // Task 6: build a `turn/start`/`turn/steer` input array from the turn text
+      // and any image attachments. Non-image kinds are dropped defensively (the
+      // capability gate should prevent them in production).
+      send: (turn) => {
+        const input: Array<
+          | { type: "text"; text: string; text_elements: [] }
+          | { type: "image"; url: string }
+        > = [textInput(turn.text)]
+        for (const a of turn.attachments ?? []) {
+          if (a.kind !== "image") continue
+          input.push(imageInput(a))
+        }
+        const req =
           activeTurnId !== undefined
             ? dispatcher.request(M_TURN_STEER, {
                 threadId,
-                input: [textInput(text)],
+                input,
                 expectedTurnId: activeTurnId,
               })
             : dispatcher.request(M_TURN_START, {
                 threadId,
-                input: [textInput(text)],
+                input,
                 ...(model !== undefined ? { model } : {}),
                 ...toCodexTurnPolicy(mode),
                 ...effortField(currentEffort, model),
               })
-        void turn.catch((err: unknown) => {
+        void req.catch((err: unknown) => {
           ctx.emit({
             type: "runner-finished",
             runnerId: ctx.rootRunnerId,
@@ -351,4 +363,7 @@ export const createCodexAdapter = (
     }
   },
   supportedModes: CODEX_SUPPORTED_MODES,
+  // Codex `turn/start` accepts an `image` arm; documents/binary land as text or
+  // are dropped defensively (the upstream capability gate prevents them).
+  supportedAttachments: { image: true, pdf: false, binary: false },
 })

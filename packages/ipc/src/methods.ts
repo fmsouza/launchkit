@@ -1,4 +1,6 @@
 import {
+  AttachmentKindSchema,
+  AttachmentRefSchema,
   PermissionModeSchema,
   StoredEventSchema,
   ThinkingEffortSchema,
@@ -298,6 +300,110 @@ export const OpenExternalUrlParamsSchema = z
   .strict()
 export const OpenExternalUrlResultSchema = VoidSchema
 
+// ── Media uploads (file picker → uploads dir → data URL / external open) ────
+
+/**
+ * Open the native multi-file picker, copy each accepted file into the
+ * `uploads/` dir, and return the resulting `AttachmentRef`s. Files whose
+ * inferred `kind` is not in `acceptedKinds` are returned in `rejected`
+ * (the caller decides whether to surface a toast or simply drop them).
+ */
+export const PickUploadsParamsSchema = z
+  .object({
+    /** MIME allowlist forwarded to the native picker (image/*, application/pdf, etc.). */
+    acceptedMimes: z.array(z.string()),
+    /** Kinds the caller is willing to consume (image/pdf/text/binary). */
+    acceptedKinds: z.array(AttachmentKindSchema),
+  })
+  .strict()
+export const PickUploadsResultSchema = z
+  .object({
+    uploads: z.array(AttachmentRefSchema),
+    rejected: z
+      .array(
+        z
+          .object({
+            displayName: z.string(),
+            reason: z.literal("unsupported-kind"),
+          })
+          .strict(),
+      )
+      .optional(),
+    /**
+     * Per-file IO failures the picker couldn't save (the file was unreadable,
+     * too large, etc.). The caller surfaces each as a toast so the user knows
+     * the file wasn't attached — silently dropping it would be confusing.
+     */
+    errors: z
+      .array(
+        z
+          .object({
+            displayName: z.string(),
+            reason: z.enum(["io-failed", "too-large"]),
+          })
+          .strict(),
+      )
+      .optional(),
+  })
+  .strict()
+
+/**
+ * Build a `data:<mime>;base64,...` URL for a stored upload's thumbnail bytes
+ * (full image data — the renderer is responsible for sizing). The `mime` is
+ * required: it comes from the `AttachmentRef` the caller already has, and
+ * the handler never re-infers it from the on-disk file extension. `missing`
+ * means the file no longer exists on disk (was cleaned up between pick and
+ * render).
+ */
+export const ReadUploadThumbnailParamsSchema = z
+  .object({
+    id: z.string().min(1),
+    mime: z.string().min(1),
+  })
+  .strict()
+export const ReadUploadThumbnailResultSchema = z
+  .object({
+    dataUrl: z.string().optional(),
+    missing: z.literal(true).optional(),
+  })
+  .strict()
+
+/**
+ * Build a `data:<mime>;base64,...` URL for a stored upload's FULL bytes
+ * (used by the send path + the lightbox). Same shape as the thumbnail
+ * result; the caller distinguishes by intent.
+ */
+export const ReadUploadDataUrlParamsSchema = z
+  .object({
+    id: z.string().min(1),
+    mime: z.string().min(1),
+  })
+  .strict()
+export const ReadUploadDataUrlResultSchema = ReadUploadThumbnailResultSchema
+
+/**
+ * Open an upload's on-disk file in the OS default viewer (Preview for PDFs,
+ * etc.). The handler reconstructs the path from `id` via `UploadStore.pathOf`
+ * — the webview never sends a path. Success returns `null` (the caller's
+ * intent is "open it" — no payload to echo). A failure surfaces as either:
+ *   - `missing:true` — the id is unknown / the file is gone
+ *   - `opened:false` — the path was resolved but lives OUTSIDE the uploads
+ *     dir (security check rejected it)
+ * The actual `Utils.openExternal` failure (OS refused) raises a handler error
+ * the ipc server wraps as `handler-failed` (matches the `openExternalUrl`
+ * handler's contract).
+ */
+export const OpenUploadExternalParamsSchema = z
+  .object({ id: z.string().min(1) })
+  .strict()
+export const OpenUploadExternalResultSchema = z
+  .union([
+    VoidSchema,
+    z.object({ opened: z.literal(false) }).strict(),
+    z.object({ missing: z.literal(true) }).strict(),
+  ])
+  .nullable()
+
 // ── Settings ──────────────────────────────────────────────────────────────
 
 // Read the persisted, non-secret settings the GUI needs to prefill its UI: the
@@ -570,6 +676,22 @@ export const IpcMethodSchemas = {
   openExternalUrl: {
     params: OpenExternalUrlParamsSchema,
     result: OpenExternalUrlResultSchema,
+  },
+  pickUploads: {
+    params: PickUploadsParamsSchema,
+    result: PickUploadsResultSchema,
+  },
+  readUploadThumbnail: {
+    params: ReadUploadThumbnailParamsSchema,
+    result: ReadUploadThumbnailResultSchema,
+  },
+  readUploadDataUrl: {
+    params: ReadUploadDataUrlParamsSchema,
+    result: ReadUploadDataUrlResultSchema,
+  },
+  openUploadExternal: {
+    params: OpenUploadExternalParamsSchema,
+    result: OpenUploadExternalResultSchema,
   },
   listProviderModels: {
     params: ListProviderModelsParamsSchema,

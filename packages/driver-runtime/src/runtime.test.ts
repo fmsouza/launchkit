@@ -33,7 +33,7 @@ const makeFakeAdapter = (): {
   const state = { interrupts: 0, closes: 0 }
   const handle: AdapterHandle = {
     send: (t) => {
-      sent.push(t)
+      sent.push(t.text)
     },
     setMode: (mode) => {
       modes.push(mode)
@@ -234,6 +234,58 @@ describe("createDriver", () => {
       text: "do the thing",
       role: "user",
     })
+  })
+
+  it("send emits a user text-delta whose attachments have no dataUrl, and forwards the full turn to the handle", async () => {
+    const received: { text: string; attachments?: unknown }[] = []
+    const adapter: DriverAdapter = {
+      start: async () => ({
+        send: (turn) => {
+          received.push(turn)
+        },
+        interrupt: () => {},
+        close: () => {},
+      }),
+    }
+    const driver = createDriver({
+      adapter,
+      idGen: createSequentialIdGen(),
+      scheduler: sync,
+    })
+    const started = driver.start(startInput)
+    if (!started.ok) throw new Error("expected ok")
+    // flush the async adapter start promise so the handle exists
+    await Promise.resolve()
+    const seen: CanonicalEvent[] = []
+    started.value.onEvent((e) => seen.push(e))
+    started.value.send({
+      text: "hi",
+      attachments: [
+        {
+          id: "h1",
+          mime: "image/png",
+          displayName: "p.png",
+          kind: "image",
+          bytes: 4,
+          dataUrl: "data:image/png;base64,AAAA",
+        },
+      ],
+    })
+    // The handle received the full turn incl. dataUrl.
+    expect(received[0]?.attachments).toEqual([
+      expect.objectContaining({ dataUrl: "data:image/png;base64,AAAA" }),
+    ])
+    // The emitted text-delta carries refs WITHOUT dataUrl.
+    const last = seen[seen.length - 1]
+    expect(last).toBeDefined()
+    if (last === undefined) throw new Error("expected an emitted event")
+    expect(last.type).toBe("text-delta")
+    const persistedAttachments = (last as { attachments?: unknown[] })
+      .attachments
+    expect(persistedAttachments).toBeDefined()
+    expect(persistedAttachments).toHaveLength(1)
+    const first = persistedAttachments?.[0] as { dataUrl?: unknown } | undefined
+    expect(first?.dataUrl).toBeUndefined()
   })
 
   it("forwards send directly once the handle exists", async () => {

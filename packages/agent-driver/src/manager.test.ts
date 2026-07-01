@@ -471,6 +471,92 @@ describe("createRunManager.handleInbound", () => {
     })
   })
 
+  it("run-send forwards attachments to the live agent session", () => {
+    const sentTurns: Array<{
+      text: string
+      attachments?: readonly {
+        readonly id: string
+        readonly mime: string
+        readonly displayName: string
+        readonly kind: "image" | "pdf" | "text" | "binary"
+        readonly bytes: number
+        readonly dataUrl: string
+      }[]
+      clientSendId?: string
+    }> = []
+    const capturingDriver: AgentDriver = {
+      start: () =>
+        ok({
+          rootRunnerId: root,
+          onEvent: () => undefined,
+          send: (turn) => {
+            sentTurns.push(turn)
+            return ok(undefined)
+          },
+          respondApproval: () => ok(undefined),
+          respondQuestion: () => ok(undefined),
+          interrupt: () => ok(undefined),
+          close: () => ok(undefined),
+        }),
+    }
+    const { deps } = makeDeps(scriptOf([]))
+    const manager = createRunManager({ ...deps, driver: capturingDriver })
+    manager.launch({ harnessId, cwd: "/tmp", env: {} })
+    const attachment = {
+      id: "att_1",
+      mime: "image/png",
+      displayName: "shot.png",
+      kind: "image" as const,
+      bytes: 4,
+      dataUrl: "data:image/png;base64,AAAA",
+    }
+    manager.handleInbound({
+      type: "run-send",
+      id: sessionId,
+      text: "look at this",
+      attachments: [attachment],
+      clientSendId: "c1",
+    })
+    expect(sentTurns).toHaveLength(1)
+    expect(sentTurns[0]?.text).toBe("look at this")
+    expect(sentTurns[0]?.clientSendId).toBe("c1")
+    expect(sentTurns[0]?.attachments).toBeDefined()
+    expect(sentTurns[0]?.attachments).toHaveLength(1)
+  })
+
+  it("run-send omits attachments when none are supplied to the live session", () => {
+    const sentTurns: Array<{
+      text: string
+      attachments?: readonly unknown[]
+      clientSendId?: string
+    }> = []
+    const capturingDriver: AgentDriver = {
+      start: () =>
+        ok({
+          rootRunnerId: root,
+          onEvent: () => undefined,
+          send: (turn) => {
+            sentTurns.push(turn)
+            return ok(undefined)
+          },
+          respondApproval: () => ok(undefined),
+          respondQuestion: () => ok(undefined),
+          interrupt: () => ok(undefined),
+          close: () => ok(undefined),
+        }),
+    }
+    const { deps } = makeDeps(scriptOf([]))
+    const manager = createRunManager({ ...deps, driver: capturingDriver })
+    manager.launch({ harnessId, cwd: "/tmp", env: {} })
+    manager.handleInbound({
+      type: "run-send",
+      id: sessionId,
+      text: "no attach",
+    })
+    expect(sentTurns).toHaveLength(1)
+    expect(sentTurns[0]?.attachments).toBeUndefined()
+  })
+
   it("routes run-approve to the session, producing the approve batch's events", () => {
     const resolved: CanonicalEvent = {
       type: "approval-resolved",
@@ -1833,5 +1919,73 @@ describe("createRunManager resume (lazy auto-resume on run-send)", () => {
     }
     // Session must be closed on failure (exit code 1).
     expect(closed).toEqual([{ id: String(sessionId), code: 1 }])
+  })
+
+  it("forwards attachments on the resume-queued path", async () => {
+    // Same setup as "reopens the session and re-launches the driver" but the
+    // first run-send carries attachments. The manager queues the turn while
+    // the resume is in flight, then flushes it to the resumed driver. The
+    // queued shape must include the attachment payload.
+    const script: FakeScript = {
+      rootRunnerId: root,
+      reactions: [
+        { on: "start", emit: [startEvent, finishEvent] },
+        { on: "send", emit: [textEvent] },
+      ],
+    }
+    const capturedSends: Array<{
+      text: string
+      attachments?: readonly { readonly id: string; readonly dataUrl: string }[]
+      clientSendId?: string
+    }> = []
+    let startCalls = 0
+    const trackingDriver: AgentDriver = {
+      start: (input) => {
+        startCalls += 1
+        if (startCalls === 1) {
+          return createFakeDriver({ script, scheduler: sync }).start(input)
+        }
+        return ok({
+          rootRunnerId: root,
+          onEvent: () => undefined,
+          send: (turn) => {
+            capturedSends.push(turn)
+            return ok(undefined)
+          },
+          respondApproval: () => ok(undefined),
+          respondQuestion: () => ok(undefined),
+          interrupt: () => ok(undefined),
+          close: () => ok(undefined),
+        })
+      },
+    }
+    const { deps } = makeDeps(script)
+    const manager = createRunManager({ ...deps, driver: trackingDriver })
+    manager.launch({ harnessId, cwd: "/tmp", env: {} })
+    expect(startCalls).toBe(1)
+    const attachment = {
+      id: "att_resume",
+      mime: "image/png",
+      displayName: "shot.png",
+      kind: "image" as const,
+      bytes: 4,
+      dataUrl: "data:image/png;base64,AAAA",
+    }
+    manager.handleInbound({
+      type: "run-send",
+      id: sessionId,
+      text: "look again",
+      attachments: [attachment],
+      clientSendId: "c-resume",
+    })
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(startCalls).toBe(2)
+    expect(capturedSends).toHaveLength(1)
+    expect(capturedSends[0]?.text).toBe("look again")
+    expect(capturedSends[0]?.clientSendId).toBe("c-resume")
+    expect(capturedSends[0]?.attachments).toBeDefined()
+    expect(capturedSends[0]?.attachments).toHaveLength(1)
+    expect(capturedSends[0]?.attachments?.[0]?.id).toBe("att_resume")
   })
 })

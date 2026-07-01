@@ -44,4 +44,14 @@ describe("Icon", () => {
       cleanup()
     }
   })
+
+  it("renders the paperclip glyph without crashing", () => {
+    const { container } = render(<Icon name="paperclip" />)
+    expect(container.querySelector("svg")).toBeTruthy()
+  })
+
+  it("renders the x glyph", () => {
+    const { container } = render(<Icon name="x" />)
+    expect(container.querySelector("svg")).toBeTruthy()
+  })
 })

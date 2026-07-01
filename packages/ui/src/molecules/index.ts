@@ -1,3 +1,5 @@
+export * from "./AttachmentChip"
+export * from "./AttachmentTray"
 export * from "./ModelPicker"
 export * from "./QuestionCard"
 export * from "./EmptyState"

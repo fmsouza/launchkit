@@ -32,6 +32,7 @@ import type {
 } from "@spectrum/types"
 import type { Clock, Result } from "@spectrum/utils"
 import type { DriverRegistry } from "./driver-registry"
+import type { UploadStore } from "./upload-store"
 
 /** Result of testing one provider's live connectivity (mirrors ipc TestProviderResult). */
 export type ProviderTestResult = {
@@ -162,7 +163,16 @@ export interface AppContext {
     readonly dbFile: string
     readonly harnessDir: string
     readonly dataDir: string
+    readonly uploadsDir: string
   }
+  /**
+   * Content-addressed upload store: copy a file from a native picker temp path into
+   * `paths.uploadsDir` (idempotent — same content ⇒ same sha256 id, no double-copy);
+   * expose the result as an `AttachmentRef` for the run-event path. The real
+   * implementation lives in `apps/desktop/src/upload-store-fs.ts`; the runtime-core
+   * default is a no-op stub (every save returns `io-failed`).
+   */
+  readonly uploadStore: UploadStore
   /**
    * Legacy data dirs the GUI's factory reset (`createResetApp`) cleans up alongside `dataDir`.
    * Computed by `createAppContext` from `legacyMacosConfigDir(homeDir)` + `legacyLaunchkitDataDir(...)`

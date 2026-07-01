@@ -1,5 +1,9 @@
 import type { AgentStartInput } from "@spectrum/agent-driver"
-import type { ApprovalDecision, PermissionMode } from "@spectrum/agent-events"
+import type {
+  ApprovalDecision,
+  AttachmentRefWithBytes,
+  PermissionMode,
+} from "@spectrum/agent-events"
 import type {
   AdapterCtx,
   AdapterHandle,
@@ -67,6 +71,37 @@ const replyFor = (decision: ApprovalDecision): "once" | "always" | "reject" =>
       ? "always"
       : "once"
 
+/** Build a Turn prompt body against the current `mode`. */
+const promptBody = (
+  turn: {
+    readonly text: string
+    readonly attachments?: readonly AttachmentRefWithBytes[]
+  },
+  mode: PermissionMode,
+): {
+  parts: ReadonlyArray<
+    | { readonly type: "text"; readonly text: string }
+    | {
+        readonly type: "file"
+        readonly mime: string
+        readonly url: string
+        readonly filename?: string
+      }
+  >
+  agent?: string
+} => ({
+  parts: [
+    { type: "text", text: turn.text },
+    ...(turn.attachments ?? []).map((a) => ({
+      type: "file" as const,
+      mime: a.mime,
+      url: a.dataUrl,
+      filename: a.displayName,
+    })),
+  ],
+  ...(mode === "plan" ? { agent: "plan" } : {}),
+})
+
 /**
  * The OpenCode adapter. `start` connects to `opencode serve`, creates the root session, emits the root
  * runner-started, subscribes the GLOBAL SSE bus, and drains it into ctx.emit(mapOpencodeEvent(...)) — the
@@ -85,6 +120,9 @@ export const createOpencodeAdapter = (
   deps: OpencodeAdapterDeps,
 ): DriverAdapter => ({
   supportedModes: OPENCODE_SUPPORTED_MODES,
+  // OpenCode's `FilePartInput` accepts mime + filename + url (data:); all three
+  // categories of attachment can be forwarded as file parts.
+  supportedAttachments: { image: true, pdf: true, binary: true },
   start: async (input, ctx: AdapterCtx): Promise<AdapterHandle> => {
     const setTimer = deps.setTimer ?? ((fn, ms) => setTimeout(fn, ms))
     const clearTimer = deps.clearTimer ?? ((h) => clearTimeout(h))
@@ -210,15 +248,7 @@ export const createOpencodeAdapter = (
       })()
 
       // Build a prompt body with optional agent field for plan mode.
-      const promptBody = (
-        text: string,
-      ): {
-        parts: ReadonlyArray<{ type: "text"; text: string }>
-        agent?: string
-      } => ({
-        parts: [{ type: "text", text }],
-        ...(mode === "plan" ? { agent: "plan" } : {}),
-      })
+      // (Replaced by the module-level `promptBody(turn, mode)` defined above.)
 
       // Initial prompt — sent only on the very first start. A setModel reconnect starts a fresh
       // OpenCode session that has no prior context; re-sending the original initialPrompt would be
@@ -231,7 +261,7 @@ export const createOpencodeAdapter = (
         arm()
         await client.session.prompt({
           path: { id: sessionId },
-          body: promptBody(input.initialPrompt),
+          body: promptBody({ text: input.initialPrompt }, mode),
         })
       }
 
@@ -245,24 +275,16 @@ export const createOpencodeAdapter = (
     await connectAndRun(input.env, { isInitial: true })
 
     return {
-      send: (text) => {
-        // Build the prompt body against the current mode (so setMode applies even mid-async-restart).
-        const promptBody = (
-          text: string,
-        ): {
-          parts: ReadonlyArray<{ type: "text"; text: string }>
-          agent?: string
-        } => ({
-          parts: [{ type: "text", text }],
-          ...(mode === "plan" ? { agent: "plan" } : {}),
-        })
+      // Task 6: build the prompt body against the current mode (so setMode applies
+      // even mid-async-restart), with text + file parts from any attachments.
+      send: (turn) => {
         arm()
         const sid = currentSessionId
         const cli = currentClient
         if (sid === undefined || cli === undefined) return
         void cli.session.prompt({
           path: { id: sid },
-          body: promptBody(text),
+          body: promptBody(turn, mode),
         })
       },
       interrupt: () => {
