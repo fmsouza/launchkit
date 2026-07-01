@@ -87,6 +87,13 @@ const lowerExt = (displayName: string): string => {
   return dot === -1 ? "" : displayName.slice(dot).toLowerCase()
 }
 
+/**
+ * Single per-file size cap for staged uploads. Shared by the bun-side store
+ * enforcement (picker + drag-and-drop ingest) and the webview-side pre-check
+ * (skip reading/shipping oversized dropped files). One constant, one rule.
+ */
+export const MAX_UPLOAD_BYTES = 10 * 1024 * 1024
+
 /** Infer the attachment kind from mime + filename. Pure. */
 export const inferKind = (
   mime: string,

@@ -3,6 +3,7 @@ import {
   AttachmentCapabilitiesSchema,
   AttachmentRefSchema,
   AttachmentRefWithBytesSchema,
+  MAX_UPLOAD_BYTES,
   acceptedMimesFromCapabilities,
   inferKind,
   stripDataUrl,
@@ -141,5 +142,11 @@ describe("attachment domain", () => {
         binary: false,
       }).success,
     ).toBe(true)
+  })
+})
+
+describe("MAX_UPLOAD_BYTES", () => {
+  it("pins the shared per-file upload cap at 10MB", () => {
+    expect(MAX_UPLOAD_BYTES).toBe(10 * 1024 * 1024)
   })
 })
