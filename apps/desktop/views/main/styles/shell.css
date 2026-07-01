@@ -85,10 +85,14 @@ nav[aria-label="Primary"] button[data-active="true"] {
   color: var(--sp-text);
 }
 
-/* The proxy status (now wrapped in a Tooltip) is the last child; pin it down. */
-nav[aria-label="Primary"] > .lk-tooltip {
+/* Bottom cluster: optional connection spinner stacked above the proxy dot. */
+nav[aria-label="Primary"] > .lk-rail-status {
   margin-top: auto;
   margin-bottom: var(--sp-space-1);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--sp-space-2);
 }
 
 /* ── Master (column 2): the Sessions / Settings list column. ──
