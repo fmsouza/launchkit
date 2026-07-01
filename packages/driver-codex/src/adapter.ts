@@ -309,7 +309,8 @@ export const createCodexAdapter = (
       // capability gate should prevent them in production).
       send: (turn) => {
         const input: Array<
-          { type: "text"; text: string; text_elements: [] } | { type: "image"; url: string }
+          | { type: "text"; text: string; text_elements: [] }
+          | { type: "image"; url: string }
         > = [textInput(turn.text)]
         for (const a of turn.attachments ?? []) {
           if (a.kind !== "image") continue

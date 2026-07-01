@@ -684,10 +684,7 @@ describe("createOpencodeAdapter", () => {
     // assert that the adapter exposes the capability — and that the initialPrompt body
     // still works as a text-only parts array when there are no attachments.
     const t = setupMode("manual")
-    await t.adapter.start(
-      t.startInput({ initialPrompt: "init" }),
-      t.ctx,
-    )
+    await t.adapter.start(t.startInput({ initialPrompt: "init" }), t.ctx)
     expect(t.promptBodies[0]).toEqual({
       id: S_ROOT,
       parts: [{ type: "text", text: "init" }],

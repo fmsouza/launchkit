@@ -266,7 +266,7 @@ describe("createOpenclawAdapter", () => {
     const adapter = createOpenclawAdapter({
       connect: async () =>
         ({
-          run: () => ({} as never),
+          run: () => ({}) as never,
           send: () => undefined,
           disconnect: () => undefined,
         }) as never,

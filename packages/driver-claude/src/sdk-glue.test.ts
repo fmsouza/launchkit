@@ -1312,7 +1312,9 @@ describe("createClaudeAdapter", () => {
     const pulledTexts = pulled.map(
       (p) =>
         p.message.content
-          .map((b) => (b.type === "text" && typeof b.text === "string" ? b.text : ""))
+          .map((b) =>
+            b.type === "text" && typeof b.text === "string" ? b.text : "",
+          )
           .join("") || "",
     )
 
@@ -1603,7 +1605,9 @@ describe("createClaudeAdapter", () => {
   })
 
   it("supportedAttachments is { image: true, pdf: true, binary: true }", () => {
-    const adapter = createClaudeAdapter({ loadSdk: async () => makeFakeSdk([]).sdk })
+    const adapter = createClaudeAdapter({
+      loadSdk: async () => makeFakeSdk([]).sdk,
+    })
     expect(adapter.supportedAttachments).toEqual({
       image: true,
       pdf: true,

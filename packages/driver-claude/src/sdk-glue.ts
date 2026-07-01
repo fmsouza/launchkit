@@ -73,7 +73,7 @@ const parseDataUrl = (
 ): { mediaType: string; base64: string } => {
   // "data:<mediaType>;base64,<data>"
   const m = dataUrl.match(/^data:([^;]+);base64,(.*)$/)
-  if (m === null) throw new Error(`malformed data url`)
+  if (m === null) throw new Error("malformed data url")
   return { mediaType: m[1] ?? "", base64: m[2] ?? "" }
 }
 
