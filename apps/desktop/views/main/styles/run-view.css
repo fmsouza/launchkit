@@ -1242,6 +1242,7 @@
 }
 
 .lk-composer__action[data-action="attach"] {
+  margin-left: 0;
   background: transparent;
   color: var(--sp-text);
   border-color: transparent;
