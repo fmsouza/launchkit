@@ -104,6 +104,19 @@ describe("createWsRunnerClient", () => {
     expect(h.client.getLastFrameMs()).toBe(5_000)
   })
 
+  it("flushes the outbox on a reconnect open, not just the first open", () => {
+    const h = harness()
+    h.sockets[0].open() // first connect
+    h.sockets[0].close() // drop → schedules a reconnect
+    h.fireTimers() // reconnect creates socket 2 (still connecting)
+    h.client.attach("s_2" as never) // queued: socket 2 is not open yet
+    expect(h.sockets[1].sent).toEqual([])
+    h.sockets[1].open() // reconnect open must flush the outbox
+    expect(h.sockets[1].sent).toEqual([
+      JSON.stringify({ type: "run-attach", id: "s_2" }),
+    ])
+  })
+
   it("reconnect() drops the current socket and opens a fresh one", () => {
     const h = harness()
     h.sockets[0].open()

@@ -52,7 +52,7 @@ export const createWsRunnerClient = (
   const now = deps.now ?? ((): number => Date.now())
 
   const outbox: RunnerInbound[] = []
-  let ws: WebSocketLike
+  let ws: WebSocketLike | undefined
   let generation = 0
   let attempts = 0
   let everConnected = false
