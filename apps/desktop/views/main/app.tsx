@@ -27,6 +27,7 @@ import { LoggerProvider } from "./LoggerContext"
 import { createRealClients } from "./clients"
 import { MountFallback } from "./components/MountFallback"
 import { UpdateBanner } from "./components/UpdateBanner"
+import { installGlobalDropGuard } from "./drop-guard"
 import { useHarnesses } from "./hooks/useHarnesses"
 import { useModels } from "./hooks/useModels"
 import { useNotifications } from "./hooks/useNotifications"
@@ -537,6 +538,7 @@ export const mount = async (): Promise<void> => {
   const container = document.getElementById("root")
   if (container === null) throw new Error("missing #root element")
   const root = createRoot(container)
+  installGlobalDropGuard(window)
   try {
     const startView = window.location.hash.replace(/^#/, "")
     // Bound the startup IPC: a wedged Electrobun RPC must surface a fallback, not hang blank.
