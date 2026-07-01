@@ -158,4 +158,13 @@ describe("resolveAppPaths", () => {
     })
     expect(p.dataDir).toBe("/home/me/.config/spectrum-canary")
   })
+
+  it("resolveAppPaths includes uploadsDir under dataDir", () => {
+    const paths = resolveAppPaths({
+      platform: "macos",
+      homeDir: "/Users/me",
+      env: {},
+    })
+    expect(paths.uploadsDir).toBe(`${paths.dataDir}/uploads`)
+  })
 })
