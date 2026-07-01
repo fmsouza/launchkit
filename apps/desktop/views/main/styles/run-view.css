@@ -1219,3 +1219,11 @@
 .lk-attachment-chip__remove-overlay:focus-visible {
   opacity: 1;
 }
+.lk-attachment-tray {
+  display: flex;
+  flex-direction: row;
+  gap: var(--sp-space-2);
+  overflow-x: auto;
+  padding: var(--sp-space-1) 0;
+  flex: 0 0 auto;
+}
