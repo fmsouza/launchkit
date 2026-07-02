@@ -1,6 +1,7 @@
 import {
   AttachmentKindSchema,
   AttachmentRefSchema,
+  MAX_UPLOAD_BYTES,
   PermissionModeSchema,
   StoredEventSchema,
   ThinkingEffortSchema,
@@ -364,7 +365,14 @@ export const SaveDroppedUploadsParamsSchema = z
             displayName: z.string().min(1),
             /** Browser-reported MIME; "" (unknown) → the handler infers from the extension. */
             mime: z.string(),
-            dataBase64: z.string().min(1),
+            dataBase64: z
+              .string()
+              .min(1)
+              .base64()
+              // base64 length ceiling for a MAX_UPLOAD_BYTES file — schema-rejects
+              // oversized payloads before decode; compliant webviews pre-check
+              // file.size and never hit this.
+              .max(Math.ceil(MAX_UPLOAD_BYTES / 3) * 4 + 4),
           })
           .strict(),
       )

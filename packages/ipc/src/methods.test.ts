@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test"
+import { MAX_UPLOAD_BYTES } from "@spectrum/agent-events"
 import type { HarnessId, ModelId, ProviderId } from "@spectrum/types"
 import {
   AddModelParamsSchema,
@@ -578,5 +579,35 @@ describe("SaveDroppedUploadsParamsSchema", () => {
         acceptedKinds: ["image"],
       }).success,
     ).toBe(false)
+  })
+
+  it("rejects a dataBase64 that is not valid base64", () => {
+    const parsed = SaveDroppedUploadsParamsSchema.safeParse({
+      files: [
+        {
+          displayName: "a.png",
+          mime: "image/png",
+          dataBase64: "not base64!!",
+        },
+      ],
+      acceptedKinds: ["image"],
+    })
+    expect(parsed.success).toBe(false)
+  })
+
+  it("rejects a dataBase64 longer than the MAX_UPLOAD_BYTES-derived ceiling", () => {
+    // The schema's ceiling is Math.ceil(MAX_UPLOAD_BYTES / 3) * 4 + 4 (base64
+    // length for a MAX_UPLOAD_BYTES file, +4 slack). Adding 4 more keeps the
+    // string a multiple of 4 (so it is still shaped like valid base64 and
+    // fails ONLY the length check, not the base64-format check).
+    const ceiling = Math.ceil(MAX_UPLOAD_BYTES / 3) * 4 + 4
+    const overLimit = "A".repeat(ceiling + 4)
+    const parsed = SaveDroppedUploadsParamsSchema.safeParse({
+      files: [
+        { displayName: "a.png", mime: "image/png", dataBase64: overLimit },
+      ],
+      acceptedKinds: ["image"],
+    })
+    expect(parsed.success).toBe(false)
   })
 })

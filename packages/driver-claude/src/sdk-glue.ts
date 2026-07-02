@@ -77,6 +77,11 @@ const parseDataUrl = (
   return { mediaType: m[1] ?? "", base64: m[2] ?? "" }
 }
 
+/** Compile-time exhaustiveness: adding a new AttachmentKind must force a mapping decision here. */
+const unreachableKind = (kind: never): never => {
+  throw new Error(`unhandled attachment kind: ${String(kind)}`)
+}
+
 const toClaudeBlock = (
   ref: AttachmentRefWithBytes,
 ): TextBlock | ImageBlock | DocumentBlock => {
@@ -99,15 +104,18 @@ const toClaudeBlock = (
     const content = Buffer.from(base64, "base64").toString("utf-8")
     return {
       type: "text",
-      text: `<attached-file name="${ref.displayName}" mime="${ref.mime}">\n${content}\n</attached-file>`,
+      text: `<attached-file name=${JSON.stringify(ref.displayName)} mime=${JSON.stringify(ref.mime)}>\n${content}\n</attached-file>`,
     }
   }
-  // kind "binary": Claude has no native block for arbitrary bytes — send the
-  // media-upload spec's text-note fallback instead of an invalid image block.
-  return {
-    type: "text",
-    text: `[Attached file "${ref.displayName}" (${ref.mime}, ${ref.bytes} bytes) — binary content cannot be shown inline]`,
+  if (ref.kind === "binary") {
+    // Claude has no native block for arbitrary bytes — send the media-upload
+    // spec's text-note fallback instead of an invalid image block.
+    return {
+      type: "text",
+      text: `[Attached file "${ref.displayName}" (${ref.mime}, ${ref.bytes} bytes) — binary content cannot be shown inline]`,
+    }
   }
+  return unreachableKind(ref.kind)
 }
 
 /** A tool-permission result in the SDK's `PermissionResult` shape. */

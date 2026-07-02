@@ -1616,7 +1616,7 @@ describe("createClaudeAdapter", () => {
           mime: "text/markdown",
           displayName: "notes.md",
           kind: "text",
-          bytes: 14,
+          bytes: 13,
           dataUrl: `data:text/markdown;base64,${Buffer.from("# hello\nworld").toString("base64")}`,
         },
       ],
@@ -1631,6 +1631,33 @@ describe("createClaudeAdapter", () => {
     expect(String(content[1]?.text)).toContain("notes.md")
     expect(String(content[1]?.text)).toContain("# hello")
     expect(content.some((b) => b.type === "image")).toBe(false)
+  })
+
+  it("push JSON-quotes a text attachment's displayName so an embedded quote stays escaped", async () => {
+    const fake = makeFakeSdk([])
+    const adapter = createClaudeAdapter({ loadSdk: async () => fake.sdk })
+    const handle = await adapter.start(input, makeCtx([], []))
+    handle.send({
+      text: "check this",
+      attachments: [
+        {
+          id: "h5",
+          mime: "text/markdown",
+          displayName: 'he"llo.md',
+          kind: "text",
+          bytes: 5,
+          dataUrl: `data:text/markdown;base64,${Buffer.from("hello").toString("base64")}`,
+        },
+      ],
+    })
+    await new Promise((r) => setTimeout(r, 10))
+    const pushed = fake.pushedPrompts as Array<{
+      message: { content: unknown }
+    }>
+    const last = pushed[pushed.length - 1]
+    const content = last?.message.content as Array<Record<string, unknown>>
+    expect(content[1]?.type).toBe("text")
+    expect(String(content[1]?.text)).toContain(JSON.stringify('he"llo.md'))
   })
 
   it("push builds a text-note fallback for a binary attachment instead of an invalid image block", async () => {
@@ -1658,6 +1685,7 @@ describe("createClaudeAdapter", () => {
     const content = last?.message.content as Array<Record<string, unknown>>
     expect(content[1]?.type).toBe("text")
     expect(String(content[1]?.text)).toContain("bundle.zip")
+    expect(String(content[1]?.text)).toContain("(application/zip, 3 bytes)")
     expect(
       content.some((b) => b.type === "image" || b.type === "document"),
     ).toBe(false)
