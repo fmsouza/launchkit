@@ -1,9 +1,14 @@
 import { createHash } from "node:crypto"
-import { copyFile, mkdir, readFile, readdir, stat } from "node:fs/promises"
+import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import type { AttachmentRef } from "@spectrum/agent-events"
 import { inferKind } from "@spectrum/agent-events"
-import type { UploadError, UploadStore } from "@spectrum/runtime-core"
+import type {
+  StoredUpload,
+  UploadError,
+  UploadStore,
+} from "@spectrum/runtime-core"
+import type { Result } from "@spectrum/utils"
 
 const err = (kind: UploadError["kind"], detail: string): UploadError => ({
   kind,
@@ -36,6 +41,49 @@ export const createFsUploadStore = (deps: FsUploadStoreDeps): UploadStore => {
     }
   }
 
+  const persist = async (
+    data: Uint8Array,
+    mime: string,
+    displayName: string,
+    maxBytes: number,
+  ): Promise<Result<StoredUpload, UploadError>> => {
+    try {
+      await ensureDir()
+      if (data.byteLength > maxBytes) {
+        return {
+          ok: false,
+          error: err("too-large", `${data.byteLength} > ${maxBytes}`),
+        }
+      }
+      const id = createHash("sha256").update(data).digest("hex")
+      const ext = extOf(displayName)
+      const dest = join(uploadsDir, `${id}${ext}`)
+      const ref: AttachmentRef = {
+        id,
+        mime,
+        displayName,
+        kind: inferKind(mime, displayName),
+        bytes: data.byteLength,
+      }
+      // Idempotent: if dest exists with the same size, skip the write.
+      try {
+        const existing = await stat(dest)
+        if (existing.size === data.byteLength) {
+          return { ok: true, value: { ref, path: dest } }
+        }
+      } catch {
+        // dest doesn't exist — proceed to write
+      }
+      await writeFile(dest, data)
+      return { ok: true, value: { ref, path: dest } }
+    } catch (e) {
+      return {
+        ok: false,
+        error: err("io-failed", e instanceof Error ? e.message : String(e)),
+      }
+    }
+  }
+
   return {
     async save({
       sourcePath,
@@ -49,49 +97,35 @@ export const createFsUploadStore = (deps: FsUploadStoreDeps): UploadStore => {
       maxBytes: number
     }) {
       try {
-        await ensureDir()
         const st = await stat(sourcePath)
         if (st.size > maxBytes) {
           return {
-            ok: false,
+            ok: false as const,
             error: err("too-large", `${st.size} > ${maxBytes}`),
           }
         }
         const data = await readFile(sourcePath)
-        const id = createHash("sha256").update(data).digest("hex")
-        const ext = extOf(displayName)
-        const dest = join(uploadsDir, `${id}${ext}`)
-        // Idempotent: if dest exists with the same size, skip the copy.
-        try {
-          const existing = await stat(dest)
-          if (existing.size === st.size) {
-            const ref: AttachmentRef = {
-              id,
-              mime,
-              displayName,
-              kind: inferKind(mime, displayName),
-              bytes: st.size,
-            }
-            return { ok: true, value: { ref, path: dest } }
-          }
-        } catch {
-          // dest doesn't exist — proceed to copy
-        }
-        await copyFile(sourcePath, dest)
-        const ref: AttachmentRef = {
-          id,
-          mime,
-          displayName,
-          kind: inferKind(mime, displayName),
-          bytes: st.size,
-        }
-        return { ok: true, value: { ref, path: dest } }
+        return persist(data, mime, displayName, maxBytes)
       } catch (e) {
         return {
-          ok: false,
+          ok: false as const,
           error: err("io-failed", e instanceof Error ? e.message : String(e)),
         }
       }
+    },
+
+    async saveBytes({
+      data,
+      mime,
+      displayName,
+      maxBytes,
+    }: {
+      data: Uint8Array
+      mime: string
+      displayName: string
+      maxBytes: number
+    }) {
+      return persist(data, mime, displayName, maxBytes)
     },
 
     async readBase64(id: string) {

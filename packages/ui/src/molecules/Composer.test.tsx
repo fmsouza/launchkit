@@ -295,6 +295,180 @@ describe("Composer", () => {
     expect(received?.attachments).toBeArrayOfSize(1)
     cleanup()
   })
+
+  const caps = { image: true, pdf: false, binary: false }
+  const fileDrag = (
+    files: File[] = [],
+  ): {
+    dataTransfer: { types: string[]; files: File[]; dropEffect: string }
+  } => ({
+    dataTransfer: { types: ["Files"], files, dropEffect: "none" },
+  })
+  const composerEl = (): Element => {
+    const el = document.querySelector(".lk-composer")
+    if (el === null) throw new Error("composer not rendered")
+    return el
+  }
+
+  it("renders attach and send inside the right-aligned actions group", () => {
+    render(
+      <Composer
+        onSend={() => {}}
+        attachmentCapabilities={caps}
+        onPickAttachments={() => {}}
+      />,
+    )
+    const group = document.querySelector(".lk-composer__actions")
+    expect(group).not.toBeNull()
+    expect(group).toContainElement(
+      screen.getByRole("button", { name: "Attach files" }),
+    )
+    expect(group).toContainElement(
+      screen.getByRole("button", { name: "Send message" }),
+    )
+    cleanup()
+  })
+
+  it("highlights the composer while a file drag hovers it and clears on leave", () => {
+    render(
+      <Composer
+        onSend={() => {}}
+        attachmentCapabilities={caps}
+        onDropFiles={() => {}}
+      />,
+    )
+    fireEvent.dragEnter(composerEl(), fileDrag())
+    expect(composerEl()).toHaveClass("lk-composer--drop-active")
+    fireEvent.dragLeave(composerEl(), fileDrag())
+    expect(composerEl()).not.toHaveClass("lk-composer--drop-active")
+    cleanup()
+  })
+
+  it("keeps the highlight while the drag crosses child elements (enter/leave depth)", () => {
+    render(
+      <Composer
+        onSend={() => {}}
+        attachmentCapabilities={caps}
+        onDropFiles={() => {}}
+      />,
+    )
+    fireEvent.dragEnter(composerEl(), fileDrag())
+    // Entering a child fires another dragenter that bubbles to the composer…
+    fireEvent.dragEnter(screen.getByRole("textbox"), fileDrag())
+    // …followed by a dragleave from the parent surface. Still one hover overall.
+    fireEvent.dragLeave(composerEl(), fileDrag())
+    expect(composerEl()).toHaveClass("lk-composer--drop-active")
+    fireEvent.dragLeave(screen.getByRole("textbox"), fileDrag())
+    expect(composerEl()).not.toHaveClass("lk-composer--drop-active")
+    cleanup()
+  })
+
+  it("delivers dropped files to onDropFiles and clears the highlight", () => {
+    const received: string[][] = []
+    render(
+      <Composer
+        onSend={() => {}}
+        attachmentCapabilities={caps}
+        onDropFiles={(files) => received.push(files.map((f) => f.name))}
+      />,
+    )
+    fireEvent.dragEnter(composerEl(), fileDrag())
+    fireEvent.drop(
+      composerEl(),
+      fileDrag([
+        new File(["a"], "a.png", { type: "image/png" }),
+        new File(["b"], "b.png", { type: "image/png" }),
+      ]),
+    )
+    expect(received).toEqual([["a.png", "b.png"]])
+    expect(composerEl()).not.toHaveClass("lk-composer--drop-active")
+    cleanup()
+  })
+
+  it("clears the drop highlight when the composer becomes disabled mid-drag", () => {
+    const { rerender } = render(
+      <Composer
+        onSend={() => {}}
+        attachmentCapabilities={caps}
+        onDropFiles={() => {}}
+      />,
+    )
+    fireEvent.dragEnter(composerEl(), fileDrag())
+    expect(composerEl()).toHaveClass("lk-composer--drop-active")
+    rerender(
+      <Composer
+        onSend={() => {}}
+        disabled
+        attachmentCapabilities={caps}
+        onDropFiles={() => {}}
+      />,
+    )
+    expect(composerEl()).not.toHaveClass("lk-composer--drop-active")
+    cleanup()
+  })
+
+  it("ignores drags that carry no files (e.g. text selections)", () => {
+    let calls = 0
+    render(
+      <Composer
+        onSend={() => {}}
+        attachmentCapabilities={caps}
+        onDropFiles={() => {
+          calls += 1
+        }}
+      />,
+    )
+    const textDrag = {
+      dataTransfer: { types: ["text/plain"], files: [], dropEffect: "none" },
+    }
+    fireEvent.dragEnter(composerEl(), textDrag)
+    expect(composerEl()).not.toHaveClass("lk-composer--drop-active")
+    fireEvent.drop(composerEl(), textDrag)
+    expect(calls).toBe(0)
+    cleanup()
+  })
+
+  it("stays inert to file drags when attachments are unsupported", () => {
+    let calls = 0
+    render(
+      <Composer
+        onSend={() => {}}
+        onDropFiles={() => {
+          calls += 1
+        }}
+      />,
+    )
+    fireEvent.dragEnter(composerEl(), fileDrag())
+    expect(composerEl()).not.toHaveClass("lk-composer--drop-active")
+    fireEvent.drop(
+      composerEl(),
+      fileDrag([new File(["a"], "a.png", { type: "image/png" })]),
+    )
+    expect(calls).toBe(0)
+    cleanup()
+  })
+
+  it("stays inert to file drags while disabled", () => {
+    let calls = 0
+    render(
+      <Composer
+        onSend={() => {}}
+        disabled
+        attachmentCapabilities={caps}
+        onDropFiles={() => {
+          calls += 1
+        }}
+      />,
+    )
+    fireEvent.dragEnter(composerEl(), fileDrag())
+    expect(composerEl()).not.toHaveClass("lk-composer--drop-active")
+    fireEvent.drop(
+      composerEl(),
+      fileDrag([new File(["a"], "a.png", { type: "image/png" })]),
+    )
+    expect(calls).toBe(0)
+    cleanup()
+  })
 })
 
 describe("growTextareaHeight", () => {

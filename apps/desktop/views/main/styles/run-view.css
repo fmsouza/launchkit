@@ -559,6 +559,7 @@
 /* Composer: one rounded card — textarea on top, controls bar beneath
    (mode pill left [later task], circular send/stop icon button right). */
 .lk-composer {
+  position: relative;
   flex: 0 0 auto;
   display: flex;
   flex-direction: column;
@@ -602,8 +603,16 @@
   gap: var(--sp-space-2);
 }
 
-.lk-composer__action {
+/* Attach + send/stop live in one right-aligned cluster (a single auto margin
+   on the group — per-button auto margins would split the free space). */
+.lk-composer__actions {
   margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-space-2);
+}
+
+.lk-composer__action {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -641,6 +650,31 @@
 .lk-composer__action:disabled {
   opacity: 0.45;
   cursor: not-allowed;
+}
+
+/* ── Drag-and-drop target state ─────────────────────────────────────────────
+   Applied by the Composer while a file drag hovers the card. */
+.lk-composer--drop-active {
+  border-color: var(--sp-primary);
+  box-shadow: 0 0 0 3px var(--sp-focus-ring);
+}
+
+.lk-composer--drop-active::after {
+  content: "Drop files to attach";
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--sp-radius-lg);
+  background: var(--sp-surface-raised);
+  opacity: 0.94;
+  color: var(--sp-text);
+  font-family: var(--sp-font-sans);
+  font-size: var(--sp-text-sm);
+  font-weight: 600;
+  /* The overlay must never intercept the drag — events stay on the card. */
+  pointer-events: none;
 }
 
 /* ── Typing / working indicator (3 bouncing dots) ───────────────────────────── */

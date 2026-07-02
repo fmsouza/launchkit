@@ -52,6 +52,7 @@ const METHOD_NAMES = [
   "testProviderDraft",
   "listProviderModelsDraft",
   "pickUploads",
+  "saveDroppedUploads",
   "readUploadThumbnail",
   "readUploadDataUrl",
   "openUploadExternal",

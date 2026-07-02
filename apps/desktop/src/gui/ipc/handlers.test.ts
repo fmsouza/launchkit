@@ -149,6 +149,12 @@ const makeCtx = (
     displayName: string
     maxBytes: number
   }>
+  uploadSaveBytesInputs: Array<{
+    data: Uint8Array
+    mime: string
+    displayName: string
+    maxBytes: number
+  }>
 } => {
   const saves: Config[] = []
   const secretSets: string[] = []
@@ -172,6 +178,12 @@ const makeCtx = (
     displayName: string
     maxBytes: number
   }> = []
+  const uploadSaveBytesInputs: Array<{
+    data: Uint8Array
+    mime: string
+    displayName: string
+    maxBytes: number
+  }> = []
   /**
    * A recording fake UploadStore whose `save` mints a deterministic ref and
    * whose other methods default to "missing" so a test that only cares about
@@ -187,6 +199,17 @@ const makeCtx = (
         displayName: params.displayName,
         kind: mimeToKind(params.mime),
         bytes: 0,
+      }
+      return ok({ ref, path: `/tmp/uploads/${ref.id}` })
+    },
+    saveBytes: async (params) => {
+      uploadSaveBytesInputs.push(params)
+      const ref: AttachmentRef = {
+        id: `sha_${params.displayName}`,
+        mime: params.mime,
+        displayName: params.displayName,
+        kind: mimeToKind(params.mime),
+        bytes: params.data.byteLength,
       }
       return ok({ ref, path: `/tmp/uploads/${ref.id}` })
     },
@@ -408,6 +431,7 @@ const makeCtx = (
       return pickFilesCallsArr.length
     },
     uploadSaveInputs,
+    uploadSaveBytesInputs,
   }
 }
 
@@ -2510,10 +2534,66 @@ describe("createIpcHandlers.pickUploads", () => {
   })
 })
 
+describe("createIpcHandlers.saveDroppedUploads", () => {
+  it("saves dropped bytes via ctx.uploadStore.saveBytes and rejects unsupported kinds", async () => {
+    const { ctx, uploadSaveBytesInputs } = makeCtx({})
+    const handlers = createIpcHandlers(ctx)
+
+    const r = await handlers.saveDroppedUploads({
+      files: [
+        {
+          displayName: "a.png",
+          mime: "image/png",
+          dataBase64: Buffer.from("img").toString("base64"),
+        },
+        {
+          displayName: "b.pdf",
+          mime: "application/pdf",
+          dataBase64: Buffer.from("pdf").toString("base64"),
+        },
+      ],
+      acceptedKinds: ["image"],
+    })
+
+    expect(r.uploads).toHaveLength(1)
+    expect(r.uploads[0]?.displayName).toBe("a.png")
+    expect(r.rejected).toEqual([
+      { displayName: "b.pdf", reason: "unsupported-kind" },
+    ])
+    expect(uploadSaveBytesInputs).toEqual([
+      {
+        data: new Uint8Array(Buffer.from("img")),
+        mime: "image/png",
+        displayName: "a.png",
+        maxBytes: 10 * 1024 * 1024,
+      },
+    ])
+  })
+
+  it("falls back to the extension-inferred mime when a dropped file reports an empty mime", async () => {
+    const { ctx, uploadSaveBytesInputs } = makeCtx({})
+    const handlers = createIpcHandlers(ctx)
+
+    await handlers.saveDroppedUploads({
+      files: [
+        {
+          displayName: "shot.png",
+          mime: "",
+          dataBase64: Buffer.from("x").toString("base64"),
+        },
+      ],
+      acceptedKinds: ["image"],
+    })
+
+    expect(uploadSaveBytesInputs[0]?.mime).toBe("image/png")
+  })
+})
+
 describe("createIpcHandlers.readUploadThumbnail", () => {
   it("builds a data:<mime>;base64,<base64> URL from uploadStore.readBase64", async () => {
     const uploadStore: UploadStore = {
       save: async () => err({ kind: "io-failed", detail: "unused" }),
+      saveBytes: async () => err({ kind: "io-failed", detail: "stub" }),
       readBase64: async () => ok("aGVsbG8="),
       pathOf: async () => err({ kind: "not-found", detail: "unused" }),
       exists: async () => true,
@@ -2533,6 +2613,7 @@ describe("createIpcHandlers.readUploadThumbnail", () => {
   it("returns { missing: true } when uploadStore.exists is false", async () => {
     const uploadStore: UploadStore = {
       save: async () => err({ kind: "io-failed", detail: "unused" }),
+      saveBytes: async () => err({ kind: "io-failed", detail: "stub" }),
       readBase64: async () => err({ kind: "not-found", detail: "unused" }),
       pathOf: async () => err({ kind: "not-found", detail: "unused" }),
       exists: async () => false,
@@ -2554,6 +2635,7 @@ describe("createIpcHandlers.readUploadDataUrl", () => {
   it("builds a data:<mime>;base64,<base64> URL from uploadStore.readBase64", async () => {
     const uploadStore: UploadStore = {
       save: async () => err({ kind: "io-failed", detail: "unused" }),
+      saveBytes: async () => err({ kind: "io-failed", detail: "stub" }),
       readBase64: async () => ok("aGVsbG8="),
       pathOf: async () => err({ kind: "not-found", detail: "unused" }),
       exists: async () => true,
@@ -2573,6 +2655,7 @@ describe("createIpcHandlers.readUploadDataUrl", () => {
   it("returns { missing: true } when uploadStore.exists is false", async () => {
     const uploadStore: UploadStore = {
       save: async () => err({ kind: "io-failed", detail: "unused" }),
+      saveBytes: async () => err({ kind: "io-failed", detail: "stub" }),
       readBase64: async () => err({ kind: "not-found", detail: "unused" }),
       pathOf: async () => err({ kind: "not-found", detail: "unused" }),
       exists: async () => false,
@@ -2596,6 +2679,7 @@ describe("createIpcHandlers.openUploadExternal", () => {
     const openExternalUrlCalls: string[] = []
     const uploadStore: UploadStore = {
       save: async () => err({ kind: "io-failed", detail: "unused" }),
+      saveBytes: async () => err({ kind: "io-failed", detail: "stub" }),
       readBase64: async () => err({ kind: "not-found", detail: "unused" }),
       pathOf: async () => ok(`${uploadsDir}/sha_abc.pdf`),
       exists: async () => true,
@@ -2622,6 +2706,7 @@ describe("createIpcHandlers.openUploadExternal", () => {
   it("returns { missing: true } when pathOf is not-found", async () => {
     const uploadStore: UploadStore = {
       save: async () => err({ kind: "io-failed", detail: "unused" }),
+      saveBytes: async () => err({ kind: "io-failed", detail: "stub" }),
       readBase64: async () => err({ kind: "not-found", detail: "unused" }),
       pathOf: async () => err({ kind: "not-found", detail: "ghost" }),
       exists: async () => false,
@@ -2638,6 +2723,7 @@ describe("createIpcHandlers.openUploadExternal", () => {
   it("returns { opened: false } (NOT { missing }) when pathOf resolves to a path outside ctx.paths.uploadsDir", async () => {
     const uploadStore: UploadStore = {
       save: async () => err({ kind: "io-failed", detail: "unused" }),
+      saveBytes: async () => err({ kind: "io-failed", detail: "stub" }),
       readBase64: async () => err({ kind: "not-found", detail: "unused" }),
       pathOf: async () => ok("/etc/passwd"),
       exists: async () => true,
@@ -2665,6 +2751,7 @@ describe("createIpcHandlers.openUploadExternal", () => {
     const openExternalUrlCalls: string[] = []
     const uploadStore: UploadStore = {
       save: async () => err({ kind: "io-failed", detail: "unused" }),
+      saveBytes: async () => err({ kind: "io-failed", detail: "stub" }),
       readBase64: async () => err({ kind: "not-found", detail: "unused" }),
       pathOf: async () => ok(winPath),
       exists: async () => true,
@@ -2691,6 +2778,7 @@ describe("createIpcHandlers.openUploadExternal", () => {
     const winEvilPath = "C:\\Windows\\System32\\drivers\\etc\\hosts"
     const uploadStore: UploadStore = {
       save: async () => err({ kind: "io-failed", detail: "unused" }),
+      saveBytes: async () => err({ kind: "io-failed", detail: "stub" }),
       readBase64: async () => err({ kind: "not-found", detail: "unused" }),
       pathOf: async () => ok(winEvilPath),
       exists: async () => true,

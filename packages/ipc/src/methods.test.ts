@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test"
+import { MAX_UPLOAD_BYTES } from "@spectrum/agent-events"
 import type { HarnessId, ModelId, ProviderId } from "@spectrum/types"
 import {
   AddModelParamsSchema,
@@ -16,6 +17,7 @@ import {
   LaunchHarnessResultSchema,
   PickFolderParamsSchema,
   PickFolderResultSchema,
+  SaveDroppedUploadsParamsSchema,
   SetProviderSecretParamsSchema,
   UpdateHarnessPrefsParamsSchema,
   UpdateModelParamsSchema,
@@ -396,6 +398,7 @@ describe("IpcMethodSchemas", () => {
       "getRunEvents",
       "pickFolder",
       "pickUploads",
+      "saveDroppedUploads",
       "openExternalUrl",
       "openUploadExternal",
       "readUploadDataUrl",
@@ -551,5 +554,79 @@ describe("getProviderCatalog method", () => {
       },
     ])
     expect(r.success).toBe(true)
+  })
+})
+
+describe("SaveDroppedUploadsParamsSchema", () => {
+  it("accepts a dropped-file batch with an empty mime (unknown type)", () => {
+    const parsed = SaveDroppedUploadsParamsSchema.safeParse({
+      files: [{ displayName: "a.png", mime: "", dataBase64: "aGVsbG8=" }],
+      acceptedKinds: ["image"],
+    })
+    expect(parsed.success).toBe(true)
+  })
+
+  it("rejects an empty files array and a missing dataBase64", () => {
+    expect(
+      SaveDroppedUploadsParamsSchema.safeParse({
+        files: [],
+        acceptedKinds: ["image"],
+      }).success,
+    ).toBe(false)
+    expect(
+      SaveDroppedUploadsParamsSchema.safeParse({
+        files: [{ displayName: "a.png", mime: "image/png", dataBase64: "" }],
+        acceptedKinds: ["image"],
+      }).success,
+    ).toBe(false)
+  })
+
+  it("rejects a dataBase64 that is not valid base64", () => {
+    const parsed = SaveDroppedUploadsParamsSchema.safeParse({
+      files: [
+        {
+          displayName: "a.png",
+          mime: "image/png",
+          dataBase64: "not base64!!",
+        },
+      ],
+      acceptedKinds: ["image"],
+    })
+    expect(parsed.success).toBe(false)
+  })
+
+  it("rejects a dataBase64 longer than the MAX_UPLOAD_BYTES-derived ceiling", () => {
+    // The schema's ceiling is Math.ceil(MAX_UPLOAD_BYTES / 3) * 4 + 4 (base64
+    // length for a MAX_UPLOAD_BYTES file, +4 slack). Adding 4 more keeps the
+    // string a multiple of 4 (so it is still shaped like valid base64 and
+    // fails ONLY the length check, not the base64-format check).
+    const ceiling = Math.ceil(MAX_UPLOAD_BYTES / 3) * 4 + 4
+    const overLimit = "A".repeat(ceiling + 4)
+    const parsed = SaveDroppedUploadsParamsSchema.safeParse({
+      files: [
+        { displayName: "a.png", mime: "image/png", dataBase64: overLimit },
+      ],
+      acceptedKinds: ["image"],
+    })
+    expect(parsed.success).toBe(false)
+  })
+
+  it("accepts a large legitimate dataBase64 payload at the MAX_UPLOAD_BYTES size", () => {
+    // Regression guard: zod's built-in z.string().base64() (considered, not
+    // used — see methods.ts) silently rejects well-formed base64 once it
+    // gets long on Bun's JavaScriptCore. A real MAX_UPLOAD_BYTES-sized
+    // upload must be ACCEPTED, not just malformed/oversized ones rejected.
+    const bytes = Buffer.alloc(MAX_UPLOAD_BYTES)
+    const parsed = SaveDroppedUploadsParamsSchema.safeParse({
+      files: [
+        {
+          displayName: "big.bin",
+          mime: "application/octet-stream",
+          dataBase64: bytes.toString("base64"),
+        },
+      ],
+      acceptedKinds: ["binary"],
+    })
+    expect(parsed.success).toBe(true)
   })
 })
