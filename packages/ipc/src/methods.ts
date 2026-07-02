@@ -368,7 +368,14 @@ export const SaveDroppedUploadsParamsSchema = z
             dataBase64: z
               .string()
               .min(1)
-              .base64()
+              // zod's z.string().base64() is UNSAFE here: its regex repeats a
+              // capturing group via a bare `*`, and Bun's JavaScriptCore
+              // silently mis-matches (returns false on well-formed input)
+              // once the group repeats past ~1.29M times — i.e. any real file
+              // over ~3.7MB, well under this field's own MAX_UPLOAD_BYTES cap.
+              // Verified empirically against this schema. A plain quantified
+              // character class (no capturing group) has no such limit.
+              .regex(/^[A-Za-z0-9+/]+={0,2}$/, "must be base64")
               // base64 length ceiling for a MAX_UPLOAD_BYTES file — schema-rejects
               // oversized payloads before decode; compliant webviews pre-check
               // file.size and never hit this.

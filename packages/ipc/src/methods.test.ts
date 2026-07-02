@@ -610,4 +610,23 @@ describe("SaveDroppedUploadsParamsSchema", () => {
     })
     expect(parsed.success).toBe(false)
   })
+
+  it("accepts a large legitimate dataBase64 payload at the MAX_UPLOAD_BYTES size", () => {
+    // Regression guard: zod's built-in z.string().base64() (considered, not
+    // used — see methods.ts) silently rejects well-formed base64 once it
+    // gets long on Bun's JavaScriptCore. A real MAX_UPLOAD_BYTES-sized
+    // upload must be ACCEPTED, not just malformed/oversized ones rejected.
+    const bytes = Buffer.alloc(MAX_UPLOAD_BYTES)
+    const parsed = SaveDroppedUploadsParamsSchema.safeParse({
+      files: [
+        {
+          displayName: "big.bin",
+          mime: "application/octet-stream",
+          dataBase64: bytes.toString("base64"),
+        },
+      ],
+      acceptedKinds: ["binary"],
+    })
+    expect(parsed.success).toBe(true)
+  })
 })
