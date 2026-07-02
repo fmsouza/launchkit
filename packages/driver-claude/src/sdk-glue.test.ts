@@ -1604,6 +1604,65 @@ describe("createClaudeAdapter", () => {
     expect(blocks).toEqual([{ type: "text", text: "no-attach" }])
   })
 
+  it("push builds a labeled text block for a text attachment instead of an image block", async () => {
+    const fake = makeFakeSdk([])
+    const adapter = createClaudeAdapter({ loadSdk: async () => fake.sdk })
+    const handle = await adapter.start(input, makeCtx([], []))
+    handle.send({
+      text: "check this",
+      attachments: [
+        {
+          id: "h3",
+          mime: "text/markdown",
+          displayName: "notes.md",
+          kind: "text",
+          bytes: 14,
+          dataUrl: `data:text/markdown;base64,${Buffer.from("# hello\nworld").toString("base64")}`,
+        },
+      ],
+    })
+    await new Promise((r) => setTimeout(r, 10))
+    const pushed = fake.pushedPrompts as Array<{
+      message: { content: unknown }
+    }>
+    const last = pushed[pushed.length - 1]
+    const content = last?.message.content as Array<Record<string, unknown>>
+    expect(content[1]?.type).toBe("text")
+    expect(String(content[1]?.text)).toContain("notes.md")
+    expect(String(content[1]?.text)).toContain("# hello")
+    expect(content.some((b) => b.type === "image")).toBe(false)
+  })
+
+  it("push builds a text-note fallback for a binary attachment instead of an invalid image block", async () => {
+    const fake = makeFakeSdk([])
+    const adapter = createClaudeAdapter({ loadSdk: async () => fake.sdk })
+    const handle = await adapter.start(input, makeCtx([], []))
+    handle.send({
+      text: "check this",
+      attachments: [
+        {
+          id: "h4",
+          mime: "application/zip",
+          displayName: "bundle.zip",
+          kind: "binary",
+          bytes: 3,
+          dataUrl: "data:application/zip;base64,AAAA",
+        },
+      ],
+    })
+    await new Promise((r) => setTimeout(r, 10))
+    const pushed = fake.pushedPrompts as Array<{
+      message: { content: unknown }
+    }>
+    const last = pushed[pushed.length - 1]
+    const content = last?.message.content as Array<Record<string, unknown>>
+    expect(content[1]?.type).toBe("text")
+    expect(String(content[1]?.text)).toContain("bundle.zip")
+    expect(
+      content.some((b) => b.type === "image" || b.type === "document"),
+    ).toBe(false)
+  })
+
   it("supportedAttachments is { image: true, pdf: true, binary: true }", () => {
     const adapter = createClaudeAdapter({
       loadSdk: async () => makeFakeSdk([]).sdk,

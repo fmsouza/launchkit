@@ -79,7 +79,7 @@ const parseDataUrl = (
 
 const toClaudeBlock = (
   ref: AttachmentRefWithBytes,
-): ImageBlock | DocumentBlock => {
+): TextBlock | ImageBlock | DocumentBlock => {
   const { mediaType, base64 } = parseDataUrl(ref.dataUrl)
   if (ref.kind === "pdf") {
     return {
@@ -87,9 +87,26 @@ const toClaudeBlock = (
       source: { type: "base64", media_type: mediaType, data: base64 },
     }
   }
+  if (ref.kind === "image") {
+    return {
+      type: "image",
+      source: { type: "base64", media_type: mediaType, data: base64 },
+    }
+  }
+  if (ref.kind === "text") {
+    // Text files travel as labeled plain text — the only representation that
+    // survives EVERY route (Anthropic-native AND proxied non-Anthropic models).
+    const content = Buffer.from(base64, "base64").toString("utf-8")
+    return {
+      type: "text",
+      text: `<attached-file name="${ref.displayName}" mime="${ref.mime}">\n${content}\n</attached-file>`,
+    }
+  }
+  // kind "binary": Claude has no native block for arbitrary bytes — send the
+  // media-upload spec's text-note fallback instead of an invalid image block.
   return {
-    type: "image",
-    source: { type: "base64", media_type: mediaType, data: base64 },
+    type: "text",
+    text: `[Attached file "${ref.displayName}" (${ref.mime}, ${ref.bytes} bytes) — binary content cannot be shown inline]`,
   }
 }
 
@@ -512,8 +529,8 @@ export const createClaudeAdapter = (deps: {
 
     return {
       // Task 6: build native content blocks (text + image/document base64) from
-      // the turn + its attachments. The capability gate upstream prevents
-      // unsupported kinds from ever arriving here.
+      // the turn + its attachments. text kinds become labeled text blocks and
+      // binary kinds a text note — never an invalid image block.
       send: (turn) => {
         log?.info("claude turn -> sdk input", { length: turn.text.length })
         current.inputStream.push(turn)
