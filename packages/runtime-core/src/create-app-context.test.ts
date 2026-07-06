@@ -8,6 +8,7 @@ import {
 import { resolveAppPaths } from "@spectrum/platform"
 import { createProjectStore } from "@spectrum/projects"
 import { createInMemoryRuntimeState } from "@spectrum/proxy"
+import type { HarnessId } from "@spectrum/types"
 import { err, ok } from "@spectrum/utils"
 import { createAppContext } from "./create-app-context"
 import type { CreateAppContextDeps } from "./deps"
@@ -640,8 +641,8 @@ describe("createAppContext native run path wiring", () => {
     const ctx = createAppContext(deps)
     const listed = await ctx.registry.list()
     const ids = listed.ok ? listed.value.map((h) => h.id) : []
-    expect(ids).toContain("demo")
-    expect(ids).toContain("claude")
+    expect(ids).toContain("demo" as HarnessId)
+    expect(ids).toContain("claude" as HarnessId)
     expect(ctx.driverRegistry.isNative("demo" as never)).toBe(true)
   })
 })
