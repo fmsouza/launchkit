@@ -111,7 +111,9 @@ describe("NewSessionModal", () => {
     fireEvent.click(screen.getByRole("button", { name: "Launch" }))
     expect(onSubmit).toHaveBeenCalledTimes(1)
     // The exactOptional invariant: no modelId is sent — model lives in the composer.
-    expect(onSubmit.mock.calls[0][0]).not.toHaveProperty("modelId")
+    expect(onSubmit).toHaveBeenCalledWith(
+      expect.not.objectContaining({ modelId: expect.anything() }),
+    )
   })
 
   it("enables Launch when a harness is available", () => {
@@ -139,6 +141,8 @@ describe("NewSessionModal", () => {
       expect.not.objectContaining({ name: expect.anything() }),
     )
     // Explicit: name is absent (auto-derivation owns it).
-    expect(onSubmit.mock.calls[0][0]).not.toHaveProperty("name")
+    expect(onSubmit).toHaveBeenCalledWith(
+      expect.not.objectContaining({ name: expect.anything() }),
+    )
   })
 })
