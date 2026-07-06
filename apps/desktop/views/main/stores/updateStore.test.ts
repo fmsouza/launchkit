@@ -35,7 +35,7 @@ describe("createUpdateStore", () => {
   })
 
   it("dismiss calls the client with the latest build hash and re-reads state", async () => {
-    let dismissedWith: string | null = null
+    let dismissedWith: string | undefined
     const store = createUpdateStore({
       client: fakeClient({
         dismissUpdate: async ({ hash }) => {

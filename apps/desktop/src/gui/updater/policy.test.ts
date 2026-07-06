@@ -7,7 +7,9 @@ describe("decideBanner", () => {
       decideBanner({
         available: false,
         latestVersion: null,
+        latestHash: null,
         dismissedVersion: null,
+        dismissedHash: null,
       }),
     ).toBe("hidden")
   })

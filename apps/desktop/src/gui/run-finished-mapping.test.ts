@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test"
 import type { RunnerOutbound } from "@spectrum/agent-driver"
 import {
+  type CanonicalEvent,
   type RootRunnerMap,
   isRootRunnerFinished,
   trackRootRunner,
@@ -13,7 +14,7 @@ import {
 
 const sessionId = "sess-1" as SessionId
 
-const frame = (inner: RunnerOutbound["event"]["event"]): RunnerOutbound => ({
+const frame = (inner: CanonicalEvent): RunnerOutbound => ({
   type: "runner-event",
   id: sessionId,
   event: {
@@ -30,7 +31,11 @@ const resolver: SessionInfoResolver = (id) =>
 describe("mapRunFinished", () => {
   it("maps a runner-finished:errored frame to an errored RunFinished", () => {
     const result = mapRunFinished(
-      frame({ type: "runner-finished", runnerId: "r1", status: "errored" }),
+      frame({
+        type: "runner-finished",
+        runnerId: "r1" as never,
+        status: "errored",
+      }),
       resolver,
     )
     expect(result).toEqual({
@@ -43,7 +48,11 @@ describe("mapRunFinished", () => {
 
   it("maps a runner-finished:completed frame to a completed RunFinished", () => {
     const result = mapRunFinished(
-      frame({ type: "runner-finished", runnerId: "r1", status: "completed" }),
+      frame({
+        type: "runner-finished",
+        runnerId: "r1" as never,
+        status: "completed",
+      }),
       resolver,
     )
     expect(result).toEqual({
@@ -56,7 +65,11 @@ describe("mapRunFinished", () => {
 
   it("returns null for an interrupted runner-finished frame", () => {
     const result = mapRunFinished(
-      frame({ type: "runner-finished", runnerId: "r1", status: "interrupted" }),
+      frame({
+        type: "runner-finished",
+        runnerId: "r1" as never,
+        status: "interrupted",
+      }),
       resolver,
     )
     expect(result).toBeNull()
@@ -66,7 +79,7 @@ describe("mapRunFinished", () => {
     const result = mapRunFinished(
       frame({
         type: "text-delta",
-        runnerId: "r1",
+        runnerId: "r1" as never,
         messageId: "m1",
         text: "hi",
       }),
@@ -86,7 +99,7 @@ describe("mapRunFinished", () => {
           ts: "2026-06-15T00:00:00.000Z",
           event: {
             type: "runner-finished",
-            runnerId: "r1",
+            runnerId: "r1" as never,
             status: "completed",
           },
         },

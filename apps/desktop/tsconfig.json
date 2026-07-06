@@ -4,8 +4,7 @@
     "rootDir": ".",
     "outDir": "dist",
     "composite": false,
-    "types": ["bun", "react", "react-dom"]
+    "types": ["bun", "react", "react-dom", "@testing-library/jest-dom"]
   },
-  "include": ["src", "views", "electrobun.config.ts"],
-  "exclude": ["**/*.test.ts", "**/*.test.tsx"]
+  "include": ["src", "views", "electrobun.config.ts"]
 }

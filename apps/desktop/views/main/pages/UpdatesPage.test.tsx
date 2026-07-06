@@ -9,6 +9,7 @@ const upToDate = {
   phase: "up-to-date" as const,
   currentVersion: "1.0.0",
   latestVersion: null,
+  latestHash: null,
   available: false,
   progress: 0,
   error: null,

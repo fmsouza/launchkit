@@ -1,30 +1,36 @@
 import { describe, expect, it } from "bun:test"
-import type { HarnessDefinition } from "@spectrum/types"
+import type { HarnessView } from "@spectrum/ipc"
+import type { HarnessDefinition, HarnessId } from "@spectrum/types"
 import { screen, waitFor } from "@testing-library/react"
 import { createFakeIpcClient } from "../test/fake-client"
 import { renderWithProviders } from "../test/renderWithProviders"
 import { HarnessesPage } from "./HarnessesPage"
 
 const claude = {
-  id: "claude",
+  id: "claude" as HarnessId,
   name: "Claude Code",
   command: "claude",
   apiFormat: "anthropic",
   envTemplate: { ANTHROPIC_BASE_URL: "{{proxyUrl}}" },
   builtIn: true,
+  native: true,
 } as unknown as HarnessDefinition
 const codex = {
-  id: "codex",
+  id: "codex" as HarnessId,
   name: "Codex",
   command: "codex",
   apiFormat: "openai",
   envTemplate: { OPENAI_BASE_URL: "{{proxyUrl}}" },
   builtIn: true,
+  native: true,
 } as unknown as HarnessDefinition
 
 const renderPage = (stubs: Parameters<typeof createFakeIpcClient>[0]) => {
   const client = createFakeIpcClient({
-    getHarnesses: async () => ({ ok: true, value: [claude, codex] }),
+    getHarnesses: async () => ({
+      ok: true as const,
+      value: [claude, codex] as unknown as HarnessView[],
+    }),
     ...stubs,
   })
   renderWithProviders(<HarnessesPage />, client)

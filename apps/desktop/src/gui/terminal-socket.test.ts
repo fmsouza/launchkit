@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test"
 import {
+  TabIdSchema,
   type TerminalInbound,
   type TerminalManager,
   type TerminalOutbound,
@@ -12,7 +13,7 @@ import { makeTerminalSocketHandlers } from "./terminal-socket"
 const sessionId = SessionIdSchema.parse(
   "s_00000000-0000-4000-8000-000000000000",
 )
-const tabId = "11111111-1111-4111-8111-111111111111"
+const tabId = TabIdSchema.parse("11111111-1111-4111-8111-111111111111")
 
 const fakeManager = (log: {
   inbound: TerminalInbound[]

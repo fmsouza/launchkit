@@ -5,7 +5,7 @@ import type {
   QuestionAnswer,
   StoredEvent,
 } from "@spectrum/agent-events"
-import { SessionIdSchema } from "@spectrum/types"
+import { type SessionId, SessionIdSchema } from "@spectrum/types"
 import { createRunnerClient } from "./runnerClient"
 
 const id = SessionIdSchema.parse("s_00000000-0000-4000-8000-000000000000")

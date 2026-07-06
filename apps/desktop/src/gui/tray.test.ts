@@ -9,7 +9,7 @@ import {
   type Session,
 } from "@spectrum/types"
 import { err, ok } from "@spectrum/utils"
-import type { AppContext } from "../composition"
+import type { GuiContext } from "../composition"
 import { mountTray } from "./tray"
 import type { MountTrayDeps, TrayHandle } from "./tray"
 import type { TrayMenu } from "./tray-menu"
@@ -54,7 +54,7 @@ const makeCtx = (
     ensureGuiPathResolved?: () => Promise<void>
   } = {},
 ): {
-  ctx: AppContext
+  ctx: GuiContext
   runnerInputs: unknown[]
   sessionInputs: unknown[]
 } => {
@@ -114,7 +114,7 @@ const makeCtx = (
     // Default to a no-op so existing tests keep their original behavior; the
     // PATH-resolved order test overrides this with an order-recording stub.
     ensureGuiPathResolved: over.ensureGuiPathResolved ?? (async () => {}),
-  } as unknown as AppContext
+  } as unknown as GuiContext
   return { ctx, runnerInputs, sessionInputs }
 }
 
