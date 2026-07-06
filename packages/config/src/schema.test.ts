@@ -172,7 +172,10 @@ describe("ConfigSchema", () => {
         sessionNameModelId: null,
       },
     }
-    expect(ConfigSchema.parse(config)).toEqual(config)
+    expect(ConfigSchema.parse(config)).toEqual({
+      ...config,
+      models: [{ ...config.models[0], attachments: {} }],
+    })
   })
 
   it("rejects a provider whose secret is an inline raw string instead of a SecretRef", () => {
@@ -196,6 +199,39 @@ describe("ConfigSchema", () => {
         extra: 1,
       }).success,
     ).toBe(false)
+  })
+
+  it("loads a legacy config whose models lack attachment capability fields", () => {
+    // Pre-capability model entries must keep parsing (attachments defaults to {}).
+    const parsed = ConfigSchema.safeParse({
+      version: CURRENT_CONFIG_VERSION,
+      providers: [validProvider],
+      models: [
+        {
+          id: "mdl_00000000-0000-4000-8000-000000000000",
+          providerId: "p_openai",
+          providerModel: "kimi-k2.7-code",
+          aliases: [],
+        },
+      ],
+      settings: {
+        proxyPort: 4000,
+        proxyHost: "127.0.0.1",
+        lastSelectedFolder: "",
+        lastSelectedHarnessId: "",
+        collapsedProjects: [],
+        lastByHarness: {},
+        updateChannel: "stable",
+        dismissedUpdateVersion: null,
+        dismissedUpdateHash: null,
+        firstTokenTimeoutMs: 120000,
+        interTokenTimeoutMs: 60000,
+        windowBounds: null,
+        sessionNameModelId: null,
+      },
+    })
+    expect(parsed.success).toBe(true)
+    if (parsed.success) expect(parsed.data.models[0]?.attachments).toEqual({})
   })
 })
 

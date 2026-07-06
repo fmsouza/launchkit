@@ -201,6 +201,7 @@ describe("ModelsPage", () => {
         providerId: "p_openai",
         providerModel: "gpt-4o",
         aliases: ["haiku", "small"],
+        attachments: {},
       },
     })
   })

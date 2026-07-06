@@ -111,6 +111,7 @@ export const ModelsPage = (): ReactElement => {
             providerId: draft.providerId as ProviderId,
             providerModel: draft.providerModel,
             aliases,
+            attachments: {},
           })
     if (r.ok) setDraft(undefined)
     else

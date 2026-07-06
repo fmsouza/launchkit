@@ -29,6 +29,7 @@ const sampleModelRoute = {
   providerId: "openai" as ProviderId,
   providerModel: "gpt-4o",
   aliases: [] as string[],
+  attachments: {} as { image?: boolean; pdf?: boolean },
 }
 
 describe("AddProviderParamsSchema", () => {
@@ -146,6 +147,7 @@ describe("UpdateModelParamsSchema", () => {
         providerId: "openai" as ProviderId,
         providerModel: "gpt-4o",
         aliases: [] as string[],
+        attachments: {} as { image?: boolean; pdf?: boolean },
       },
     }
     expect(UpdateModelParamsSchema.parse(params)).toEqual(params)

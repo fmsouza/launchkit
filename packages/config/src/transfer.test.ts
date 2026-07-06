@@ -20,6 +20,7 @@ const configWithProvider = (): Config => ({
       providerId: "p_openai",
       providerModel: "gpt-4o-mini",
       aliases: [],
+      attachments: {},
     },
   ],
   settings: {
