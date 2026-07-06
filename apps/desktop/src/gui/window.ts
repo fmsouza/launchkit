@@ -82,6 +82,40 @@ const isExternalWebUrl = (url: unknown): url is string =>
   (url.startsWith("https://") || url.startsWith("http://"))
 
 /**
+ * Native navigation allow/deny rules that lock this window's webview to the
+ * app's OWN `views://main/*` origin. Electrobun 1.18.1 evaluates these in native
+ * code synchronously (no callback into the bun process), so this is a real
+ * origin lock, not a best-effort observation.
+ *
+ * Grammar (Electrobun 1.18.1): a `^`-prefixed pattern DENIES; an un-prefixed
+ * pattern ALLOWS; `*` is the only wildcard (glob), matching is case-insensitive
+ * over the whole URL, and the LAST matching rule wins. Critically, a URL that
+ * matches NO rule defaults to ALLOW — so a lock must deny everything first, then
+ * re-allow only the trusted origin. Hence `^*` (block all) followed by
+ * `views://main/*` (re-allow only the SPA's own origin). Every other target
+ * (`http(s)://…`, `file://…`, other `views://` hosts) matches only `^*` and is
+ * refused natively. Order is load-bearing; keep the deny rule first.
+ */
+export const ORIGIN_LOCK_RULES: readonly string[] = ["^*", "views://main/*"]
+
+/**
+ * Apply the native {@link ORIGIN_LOCK_RULES} to the window's webview so it can
+ * ONLY ever load `views://main/*` — any other navigation is refused by
+ * Electrobun's native code. Pure over the injected window so it is testable
+ * without a real BrowserView; the real `createWindow` wires it with the live
+ * `BrowserView`. `setNavigationRules` takes a mutable `string[]`, so the frozen
+ * policy constant is spread into a fresh array.
+ */
+export const bindNavigationLock = (
+  win: {
+    readonly webview: { setNavigationRules(rules: string[]): void }
+  },
+  rules: readonly string[] = ORIGIN_LOCK_RULES,
+): void => {
+  win.webview.setNavigationRules([...rules])
+}
+
+/**
  * Subscribe to the window's webview `will-navigate` event and open genuinely
  * external (`http(s)`) navigation targets in the OS browser via `openExternal`.
  * Pure over the injected window + opener; the real `createWindow` wires it with
@@ -96,19 +130,19 @@ const isExternalWebUrl = (url: unknown): url is string =>
  * routed to the browser (and reading the wrong field / an undefined url
  * previously crashed the process — see {@link isExternalWebUrl}).
  *
- * IMPORTANT — best-effort only, NOT a navigation lock. In Electrobun 1.18.1
- * `will-navigate` is purely observational: it is a plain event subscription
- * whose handler return value is discarded (see
- * `electrobun/dist/api/bun/core/BrowserView.ts` `on(...)`), so it CANNOT
- * cancel the in-window load. Real origin-locking is done natively via
- * `BrowserView.setNavigationRules(...)`, which this app does not yet set. The
- * primary external-link guarantee is the React click path (`MessageBubble`
- * calls `e.preventDefault()` then routes to the `openExternalUrl` IPC); this
- * handler only catches the non-click paths React can't see, and opens them
- * externally without preventing the (rare) in-window navigation. A real
- * origin-lock would set `BrowserView.setNavigationRules(...)` to deny non-`views://`
- * navigation natively (its rule grammar is undocumented in the installed
- * Electrobun and needs confirming before use) — left as a follow-up.
+ * The origin lock IS now set natively: `bindNavigationLock` calls
+ * `BrowserView.setNavigationRules(...)` (see {@link ORIGIN_LOCK_RULES}) so
+ * non-`views://main` navigation is refused in native code before this handler
+ * ever runs. `will-navigate` itself remains purely observational in Electrobun
+ * 1.18.1 — a plain event subscription whose handler return value is discarded
+ * (see `electrobun/dist/api/bun/core/BrowserView.ts` `on(...)`), so it still
+ * cannot itself cancel a load — but for a denied external navigation, native
+ * has already cancelled it by the time this handler fires, so opening it here
+ * is a clean redirect to the OS browser rather than a race with an in-window
+ * load. The primary external-link guarantee remains the React click path
+ * (`MessageBubble` calls `e.preventDefault()` then routes to the
+ * `openExternalUrl` IPC); this handler only catches the non-click paths React
+ * can't see.
  */
 export const bindExternalNavigation = (
   win: {
@@ -172,9 +206,9 @@ const defaultWireServer = (
  * in `createIpcHandlers` (tested in desktop-shell-02); this only assembles Electrobun pieces, so it
  * is smoke-tested. SECURITY: the window loads the local built `views/main` only (the strict CSP in
  * `index.html` blocks remote scripts/eval), so the webview gets no direct fs/network/secret access,
- * only the validated IPC. `bindExternalNavigation` additionally opens external `http(s)` in-webview
- * navigation in the OS browser (best-effort — it does NOT prevent in-window navigation; see its doc
- * comment).
+ * only the validated IPC. The native origin lock (`bindNavigationLock`) now prevents any
+ * non-`views://main` navigation in native code; `bindExternalNavigation` opens the (now-cancelled)
+ * external target in the OS browser as a convenience (see its doc comment).
  */
 export const openWindow = (
   ctx: GuiContext,
@@ -212,9 +246,10 @@ interface WindowBundle {
  * `createIpcServer` validates both directions. The webview side (`views/main/ipc-client.ts`)
  * mirrors this with `Electroview.defineRPC`. SECURITY: the window only ever loads `views://main/*`
  * (the strict CSP in `index.html` blocks remote scripts/eval), so the webview gets no direct
- * fs/network/secret access, only validated IPC. `bindExternalNavigation` opens external `http(s)`
- * in-webview navigation in the OS browser as a best-effort convenience (it does NOT prevent the
- * in-window load — see `bindExternalNavigation`'s doc comment).
+ * fs/network/secret access, only validated IPC — and the native origin lock (`bindNavigationLock`)
+ * now prevents any non-`views://main` navigation in the webview itself. `bindExternalNavigation`
+ * opens the (now-cancelled) external target in the OS browser as a convenience (see its doc
+ * comment).
  */
 export const realOpenWindowDeps: OpenWindowDeps = {
   createWindow: (opts) => {
@@ -256,20 +291,26 @@ export const realOpenWindowDeps: OpenWindowDeps = {
           renderer: RENDERER,
           rpc,
         })
+        // SECURITY: lock the webview to the app's own views://main origin so
+        // Electrobun natively REFUSES any other navigation (see ORIGIN_LOCK_RULES).
+        // Applied first so the lock is in place before any post-load navigation;
+        // the initial views://main/index.html load matches the allow rule.
+        bindNavigationLock(win)
         // Track OS focus so background runs (window unfocused) fire a native notification.
         bindFocusEvents(win)
         // Persist size/position as the user resizes/moves the window.
         bindBoundsEvents(win, opts.onBoundsChange)
-        // Best-effort: open EXTERNAL http(s) in-webview navigation (right-click
-        // "Open Link", dragged URL, programmatic location.href) in the OS browser
-        // via Utils.openExternal. bindExternalNavigation filters to external web
-        // URLs only, so the SPA's own views:// startup load stays in-window (CEF on
-        // Linux fires will-navigate for it). NOTE: will-navigate is observational in
-        // Electrobun 1.18.1 — this does NOT prevent the in-window load (see
-        // bindExternalNavigation's doc comment). The primary external-link path is
-        // MessageBubble's preventDefault + openExternalUrl IPC; this only catches
-        // the paths React can't see. `Utils` is already in scope from the outer
-        // import, so no second dynamic import is needed.
+        // Open EXTERNAL http(s) in-webview navigation (right-click "Open Link",
+        // dragged URL, programmatic location.href) in the OS browser via
+        // Utils.openExternal. bindExternalNavigation filters to external web URLs
+        // only, so the SPA's own views:// startup load stays in-window (CEF on
+        // Linux fires will-navigate for it). NOTE: the native origin lock (above)
+        // now prevents the in-window load of a denied external target — this
+        // handler just opens that refused target in the OS browser as a
+        // convenience. The primary external-link path is MessageBubble's
+        // preventDefault + openExternalUrl IPC; this only catches the paths React
+        // can't see. `Utils` is already in scope from the outer import, so no
+        // second dynamic import is needed.
         bindExternalNavigation(win, (url) => Utils.openExternal(url))
         // Hand the bun-side renderer watchdog a reload fn so it can respawn a dead
         // WKWebView content process (Electrobun emits no termination event).
