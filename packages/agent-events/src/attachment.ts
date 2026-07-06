@@ -123,3 +123,22 @@ export const stripDataUrl = (ref: AttachmentRefWithBytes): AttachmentRef => {
   const { dataUrl: _dataUrl, ...rest } = ref
   return rest
 }
+
+/**
+ * Effective composer capabilities for a session: what the HARNESS can send
+ * intersected with what the ROUTED MODEL can receive. `route === undefined`
+ * means a direct (non-proxied) route — the harness capabilities stand as-is.
+ * Unknown route capability (absent key) gates the kind OFF; text/binary stay
+ * harness-level because labeled text blocks survive every route. Pure.
+ */
+export const intersectAttachmentCaps = (
+  harness: AttachmentCapabilities,
+  route: { readonly image?: boolean; readonly pdf?: boolean } | undefined,
+): AttachmentCapabilities =>
+  route === undefined
+    ? harness
+    : {
+        image: harness.image && route.image === true,
+        pdf: harness.pdf && route.pdf === true,
+        binary: harness.binary,
+      }
