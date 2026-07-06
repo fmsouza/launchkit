@@ -37,7 +37,9 @@ export const WIRE_ALIAS_PREFIX = "claude-spectrum-"
  * the route can carry image or PDF attachments (so the CLI ships real blocks),
  * the raw route id otherwise. Pure.
  */
-export const wireModelFor = (route: ModelRoute): string =>
-  route.attachments.image === true || route.attachments.pdf === true
+export const wireModelFor = (route: ModelRoute): string => {
+  const caps = route.attachments ?? {}
+  return caps.image === true || caps.pdf === true
     ? `${WIRE_ALIAS_PREFIX}${String(route.id)}`
     : String(route.id)
+}

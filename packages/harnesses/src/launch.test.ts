@@ -373,6 +373,37 @@ describe("launchHarness", () => {
     expect(logger.records).toEqual([])
   })
 
+  it("renders the wire model name into the env template when provided", () => {
+    const resolver = createFakeCommandResolver({
+      claude: "/usr/local/bin/claude",
+    })
+    const r = resolveHarnessLaunch({ resolver })({
+      harness: claude,
+      route: {
+        ...proxiedRoute,
+        wireModel: "claude-spectrum-mdl_x",
+      },
+    })
+    expect(r.ok).toBe(true)
+    if (r.ok) {
+      expect(r.value.env.ANTHROPIC_MODEL).toBe("claude-spectrum-mdl_x")
+    }
+  })
+
+  it("falls back to the raw model id when wireModel is absent", () => {
+    const resolver = createFakeCommandResolver({
+      claude: "/usr/local/bin/claude",
+    })
+    const r = resolveHarnessLaunch({ resolver })({
+      harness: claude,
+      route: proxiedRoute,
+    })
+    expect(r.ok).toBe(true)
+    if (r.ok) {
+      expect(r.value.env.ANTHROPIC_MODEL).toBe("mdl_x")
+    }
+  })
+
   it("renders ANTHROPIC_SMALL_FAST_MODEL equal to the route model for a proxied claude launch", () => {
     const resolve = resolveHarnessLaunch({
       resolver: createFakeCommandResolver({ claude: "/usr/bin/claude" }),

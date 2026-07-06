@@ -7,7 +7,12 @@ import type {
   RunningProxy,
 } from "@spectrum/proxy"
 import type { SecretStore } from "@spectrum/secrets"
-import type { HarnessId, ModelId, SessionId } from "@spectrum/types"
+import {
+  type HarnessId,
+  type ModelId,
+  type SessionId,
+  wireModelFor,
+} from "@spectrum/types"
 
 import type {
   AgentDriver,
@@ -510,6 +515,13 @@ export const createAppContext = (
     if (harness === undefined) return {}
     const proxyUrl = `http://${cfg.settings.proxyHost}:${proxyPort}`
     const proxyKey = await mintSessionProxyKey(String(input.modelId))
+    // Wire model: claude-spectrum-<id> when the route can carry image/PDF attachments, so the
+    // CLI's name gate ships real blocks. Unknown-capability routes fall back to the raw id.
+    const routeModel = cfg.models.find(
+      (m) => String(m.id) === String(input.modelId),
+    )
+    const wireModel =
+      routeModel !== undefined ? wireModelFor(routeModel) : undefined
     const resolved = resolveLaunch({
       harness,
       route: {
@@ -517,6 +529,7 @@ export const createAppContext = (
         proxyUrl,
         proxyKey,
         modelId: input.modelId,
+        ...(wireModel !== undefined ? { wireModel } : {}),
       },
     })
     return resolved.ok ? resolved.value.env : {}
@@ -553,6 +566,14 @@ export const createAppContext = (
     }
     const loaded = await config.load()
     const cfg = loaded.ok ? loaded.value : defaultConfig()
+    // When a modelId is present, look up its capability record so the rendered env can carry the
+    // claude-spectrum-<id> wire alias for routes that can take image/PDF attachments.
+    const routeModel =
+      input.modelId === undefined
+        ? undefined
+        : cfg.models.find((m) => String(m.id) === String(input.modelId))
+    const wireModel =
+      routeModel !== undefined ? wireModelFor(routeModel) : undefined
     const route: import("@spectrum/harnesses").LaunchRoute =
       input.modelId === undefined
         ? { kind: "direct" }
@@ -562,6 +583,7 @@ export const createAppContext = (
             // SECURITY: per-session key encodes the selected model id; never logged.
             proxyKey: await mintSessionProxyKey(String(input.modelId)),
             modelId: input.modelId,
+            ...(wireModel !== undefined ? { wireModel } : {}),
           }
     const resolved = resolveLaunch({ harness, route })
     if (!resolved.ok) {

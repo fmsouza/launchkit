@@ -12,6 +12,7 @@ import {
   validateProviderConfig,
 } from "@spectrum/providers"
 import type { ModelId, ModelRoute, Provider, SecretRef } from "@spectrum/types"
+import { wireModelFor } from "@spectrum/types"
 import { isOk } from "@spectrum/utils"
 import type { GuiContext } from "../../composition"
 import { buildUpdateState as buildUpdateStateShared } from "../updater/build-update-state"
@@ -345,11 +346,20 @@ export const createIpcHandlers = (ctx: GuiContext): IpcHandlers => {
         // route any sub-agent / background / review request that isn't this exact id back to it.
         // SECURITY: never log proxyKey or the rendered env.
         const proxyKey = await ctx.mintSessionProxyKey(String(effectiveModelId))
+        // Wire alias: the CLI name gate ships real image/PDF blocks only when the name looks like
+        // a Claude model. Capability-aware routes get the claude-spectrum-<id> alias; everything
+        // else (unknown / not image-capable) falls back to the raw id.
+        const routeModel = config.models.find(
+          (m) => String(m.id) === String(effectiveModelId),
+        )
+        const wireModel =
+          routeModel !== undefined ? wireModelFor(routeModel) : undefined
         route = {
           kind: "proxied",
           proxyUrl,
           proxyKey,
           modelId: effectiveModelId,
+          ...(wireModel !== undefined ? { wireModel } : {}),
         }
       }
 

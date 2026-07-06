@@ -1214,6 +1214,59 @@ describe("createIpcHandlers.launchHarness effective proxy port", () => {
   })
 })
 
+describe("createIpcHandlers.launchHarness wire alias", () => {
+  it("hands the CLI a claude-spectrum wire name when the routed model can take images", async () => {
+    const { ctx, runnerLaunchInputs } = makeCtx({
+      providers: [provider()],
+      models: [
+        {
+          id: "mdl_vision" as ModelId,
+          providerId: "p_openai" as ProviderId,
+          providerModel: "llava:13b",
+          aliases: [] as string[],
+          attachments: { image: true },
+          attachmentsSource: "user" as const,
+        } satisfies ModelRoute,
+      ],
+      proxyKeyStored: "stored-run-key",
+    })
+    const handlers = createIpcHandlers(ctx)
+
+    await handlers.launchHarness({
+      id: "claude" as HarnessId,
+      modelId: "mdl_vision" as ModelId,
+    })
+
+    const input = runnerLaunchInputs[0] as { env: Record<string, string> }
+    expect(input.env.ANTHROPIC_MODEL).toBe("claude-spectrum-mdl_vision")
+  })
+
+  it("falls back to the raw model id when the routed model has no attachment capabilities", async () => {
+    const { ctx, runnerLaunchInputs } = makeCtx({
+      providers: [provider()],
+      models: [
+        {
+          id: "mdl_text" as ModelId,
+          providerId: "p_openai" as ProviderId,
+          providerModel: "kimi-k2.7-code",
+          aliases: [] as string[],
+          attachments: {},
+        } satisfies ModelRoute,
+      ],
+      proxyKeyStored: "stored-run-key",
+    })
+    const handlers = createIpcHandlers(ctx)
+
+    await handlers.launchHarness({
+      id: "claude" as HarnessId,
+      modelId: "mdl_text" as ModelId,
+    })
+
+    const input = runnerLaunchInputs[0] as { env: Record<string, string> }
+    expect(input.env.ANTHROPIC_MODEL).toBe("mdl_text")
+  })
+})
+
 describe("createIpcHandlers.getHarnesses", () => {
   it("getHarnesses sets native from the driver registry", async () => {
     const { ctx } = makeCtx({ nativeHarnessId: "claude" })

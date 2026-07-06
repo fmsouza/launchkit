@@ -12,6 +12,13 @@ export type LaunchRoute =
       readonly proxyUrl: string
       readonly proxyKey: string
       readonly modelId: ModelId
+      /**
+       * The model NAME the harness CLI should see. Callers pass a
+       * claude-spectrum-prefixed alias for routes that can carry image/PDF
+       * attachments (the CLI's name gate then ships real blocks); absent ⇒
+       * the raw route id.
+       */
+      readonly wireModel?: string
     }
   | { readonly kind: "direct" }
 
@@ -54,7 +61,7 @@ export const resolveHarnessLaunch =
     const vars: Readonly<Record<string, string>> = {
       proxyUrl: route.proxyUrl,
       proxyKey: route.proxyKey,
-      model: String(route.modelId),
+      model: route.wireModel ?? String(route.modelId),
     }
     const env: Record<string, string> = {}
     for (const [key, template] of Object.entries(harness.envTemplate)) {
