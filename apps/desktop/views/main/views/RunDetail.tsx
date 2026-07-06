@@ -7,6 +7,7 @@ import {
   type MessageItem,
   type RunState,
   initialRunState,
+  intersectAttachmentCaps,
   reduce,
 } from "@spectrum/agent-events"
 import type { HarnessId, ModelId, ModelRoute, SessionId } from "@spectrum/types"
@@ -353,8 +354,26 @@ const LiveRunDetail = ({
   // Page owns the pending list, picker call, lightbox state, and open resolver.
   // `uploads.open` defers back to `openAttachment` (it knows lightbox vs external).
   // `root` is set above; the hook accepts `undefined` until `runner-started` lands.
-  const supportedAttachments: AttachmentCapabilities | undefined =
+  const harnessAttachments: AttachmentCapabilities | undefined =
     root?.supportedAttachments
+  // Effective caps: what the harness can SEND ∩ what the routed model can
+  // RECEIVE. Direct route ("" = harness default/subscription) keeps harness
+  // caps; a selected route contributes its per-model capabilities (unknown ⇒
+  // gated off — the model form's toggles are the escape hatch).
+  const selectedRoute =
+    model === "" ? undefined : models?.find((m) => String(m.id) === model)
+  const supportedAttachments: AttachmentCapabilities | undefined =
+    harnessAttachments === undefined
+      ? undefined
+      : intersectAttachmentCaps(
+          harnessAttachments,
+          model === ""
+            ? undefined
+            : ((selectedRoute?.attachments ?? {}) as {
+                readonly image?: boolean
+                readonly pdf?: boolean
+              }),
+        )
   const uploads = useUploads(supportedAttachments, openAttachment, notify)
 
   const handleSend = async (turn: {

@@ -1497,4 +1497,48 @@ describe("RunDetail (media-upload wiring)", () => {
     )
     cleanup()
   })
+
+  it("gates image attach off when the routed model lacks vision even though the harness supports it", async () => {
+    const runner = makeFakeRunner()
+    const models = [
+      {
+        id: "mdl_novision" as never,
+        providerId: "p1" as never,
+        providerModel: "kimi-k2.7-code",
+        aliases: [],
+        attachments: {},
+      },
+    ]
+    const client = createFakeIpcClient({
+      pickUploads: async () => ({ ok: true, value: { uploads: [] } }),
+    })
+    renderWithProviders(
+      <RunDetail
+        mode="live"
+        sessionId={id}
+        runnerClient={runner}
+        models={models as never}
+        providerNames={{ p1: "ollama" }}
+      />,
+      client,
+    )
+    runner.push(
+      stored(0, {
+        type: "runner-started",
+        runnerId: "run_root" as never,
+        model: "mdl_novision" as never,
+        supportedAttachments: { image: true, pdf: true, binary: true },
+      }),
+    )
+    // binary stays harness-level, so the paperclip is still there…
+    await waitFor(() => screen.getByRole("button", { name: "Attach files" }))
+    fireEvent.click(screen.getByRole("button", { name: "Attach files" }))
+    await waitFor(() => expect(client.calls.pickUploads).toHaveLength(1))
+    // …but the accepted kinds exclude image and pdf.
+    const call = client.calls.pickUploads[0] as { acceptedKinds: string[] }
+    expect(call.acceptedKinds).not.toContain("image")
+    expect(call.acceptedKinds).not.toContain("pdf")
+    expect(call.acceptedKinds).toContain("text")
+    cleanup()
+  })
 })
