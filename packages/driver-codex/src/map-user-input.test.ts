@@ -1,10 +1,11 @@
 import { describe, expect, it } from "bun:test"
+import type { ToolRequestUserInputParams } from "./bindings/v2"
 import {
   mapAnswerToUserInputResponse,
   mapUserInputParams,
 } from "./map-user-input"
 
-const params = {
+const params: ToolRequestUserInputParams = {
   threadId: "t1",
   turnId: "u1",
   itemId: "i1",
@@ -31,9 +32,11 @@ describe("mapUserInputParams", () => {
     expect(prompt.questions[0]?.options.map((o) => o.label)).toEqual(["A", "B"])
   })
   it("treats null options as a free-text question", () => {
+    const baseQuestion = params.questions[0]
+    if (!baseQuestion) throw new Error("expected a base question")
     const prompt = mapUserInputParams({
       ...params,
-      questions: [{ ...params.questions[0], options: null }],
+      questions: [{ ...baseQuestion, options: null }],
     })
     expect(prompt.questions[0]?.options).toEqual([])
   })

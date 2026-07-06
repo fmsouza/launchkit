@@ -223,7 +223,7 @@ describe("mapCodexEvent — Collab sub-agents", () => {
         agentType: "codex-subagent",
       },
     ] satisfies CanonicalEvent[])
-    expect(state.runnerIds.get("th_child")).toBe("rnr_child")
+    expect(state.runnerIds.get("th_child")).toBe("rnr_child" as RunnerId)
   })
 
   it("ignores non-spawn collab tools (sendInput/wait/closeAgent) — no canonical event", () => {
