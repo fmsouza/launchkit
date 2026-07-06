@@ -253,15 +253,24 @@ export const parseAnthropicRequest = (
         if (isTextBlock(block)) {
           parts.push({ type: "text", text: block.text })
         } else if (isImageBlock(block)) {
+          // Re-wrap through Uint8Array.from so the data crosses the adapter boundary as
+          // Uint8Array<ArrayBuffer> (the zod schema's narrowing), not the wider
+          // Uint8Array<ArrayBufferLike> that Buffer.from returns.
+          const decoded = Buffer.from(block.source.data, "base64")
+          const data = new Uint8Array(decoded.byteLength)
+          data.set(decoded)
           parts.push({
             type: "image",
-            data: new Uint8Array(Buffer.from(block.source.data, "base64")),
+            data,
             mediaType: block.source.media_type,
           })
         } else if (isDocumentBlock(block)) {
+          const decoded = Buffer.from(block.source.data, "base64")
+          const data = new Uint8Array(decoded.byteLength)
+          data.set(decoded)
           parts.push({
             type: "file",
-            data: new Uint8Array(Buffer.from(block.source.data, "base64")),
+            data,
             mediaType: block.source.media_type,
           })
         }

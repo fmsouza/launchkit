@@ -144,4 +144,50 @@ describe("parseResponsesRequest", () => {
     expect(r.ok).toBe(true)
     if (r.ok) expect(r.value.thinkingEffort).toBe("high")
   })
+
+  it("translates a data-url input_image into a normalized image part", () => {
+    const body = {
+      model: "gpt-4o",
+      input: [
+        {
+          type: "message",
+          role: "user",
+          content: [
+            { type: "input_text", text: "look" },
+            { type: "input_image", image_url: "data:image/png;base64,AQID" },
+          ],
+        },
+      ],
+    }
+    const r = parseResponsesRequest(body)
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    const content = r.value.messages[0]?.content
+    expect(Array.isArray(content)).toBe(true)
+    const parts = content as Array<Record<string, unknown>>
+    expect(parts[0]).toEqual({ type: "text", text: "look" })
+    expect(parts[1]?.type).toBe("image")
+    expect(parts[1]?.mediaType).toBe("image/png")
+    expect(parts[1]?.data).toEqual(new Uint8Array([1, 2, 3]))
+  })
+
+  it("ignores an input_image with a non-data URL (unchanged behavior)", () => {
+    const body = {
+      model: "gpt-4o",
+      input: [
+        {
+          type: "message",
+          role: "user",
+          content: [
+            { type: "input_text", text: "look" },
+            { type: "input_image", image_url: "https://example.com/x.png" },
+          ],
+        },
+      ],
+    }
+    const r = parseResponsesRequest(body)
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.value.messages[0]?.content).toBe("look")
+  })
 })
