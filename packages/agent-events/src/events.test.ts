@@ -1,8 +1,8 @@
 import { describe, expect, it } from "bun:test"
 import type { RunnerId } from "@spectrum/types"
 import {
-  CanonicalEventSchema,
   type CanonicalEvent,
+  CanonicalEventSchema,
   QuestionAnswerSchema,
   QuestionPromptSchema,
   StoredEventSchema,
