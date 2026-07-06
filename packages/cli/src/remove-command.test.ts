@@ -20,6 +20,7 @@ const seeded = () => ({
       id: "mdl_fast" as never,
       providerId: "p_openai" as never,
       providerModel: "gpt-4o-mini",
+      aliases: [],
     },
   ],
 })

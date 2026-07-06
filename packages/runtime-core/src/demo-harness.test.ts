@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test"
 import { type HarnessRegistry, claude } from "@spectrum/harnesses"
+import type { HarnessId } from "@spectrum/types"
 import { err, ok } from "@spectrum/utils"
 import { demoHarness, withDemoHarness } from "./demo-harness"
 import { DEMO_HARNESS_ID } from "./driver-registry"
@@ -12,7 +13,7 @@ const okRegistry = (): HarnessRegistry => ({
 
 describe("demoHarness", () => {
   it("uses the demo id so it routes to the native driver + native view", () => {
-    expect(demoHarness.id).toBe(DEMO_HARNESS_ID)
+    expect(demoHarness.id).toBe(DEMO_HARNESS_ID as HarnessId)
   })
 
   it("uses a resolvable no-op command (true) that is never actually spawned", () => {
@@ -30,8 +31,8 @@ describe("withDemoHarness", () => {
     const listed = await reg.list()
     expect(listed.ok).toBe(true)
     const ids = listed.ok ? listed.value.map((h) => h.id) : []
-    expect(ids).toContain(DEMO_HARNESS_ID)
-    expect(ids).toContain("claude")
+    expect(ids).toContain(DEMO_HARNESS_ID as HarnessId)
+    expect(ids).toContain("claude" as HarnessId)
   })
 
   it("preserves the underlying list error instead of masking it", async () => {

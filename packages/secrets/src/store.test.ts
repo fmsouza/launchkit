@@ -8,7 +8,7 @@ import {
 } from "./backend"
 import { createSecretStore } from "./store"
 
-type Captured = { msg: string; fields?: Record<string, unknown> }
+type Captured = { msg: string; fields?: Record<string, unknown> | undefined }
 
 const makeFakeLogger = (): { logger: Logger; warns: Captured[] } => {
   const warns: Captured[] = []

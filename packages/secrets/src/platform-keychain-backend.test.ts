@@ -5,7 +5,11 @@ import { createPlatformKeychainBackend } from "./platform-keychain-backend"
 import type { ProcessRunner } from "./process-runner"
 import { createInMemorySecretFileOps } from "./secret-file-ops"
 
-type Call = { command: string; args: readonly string[]; stdin?: string }
+type Call = {
+  command: string
+  args: readonly string[]
+  stdin?: string | undefined
+}
 const recordingRunner = (
   results: ReadonlyArray<Result<{ stdout: string }, SecretError>>,
 ) => {

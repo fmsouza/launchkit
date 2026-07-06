@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test"
+import type { ModelId, ProviderId } from "@spectrum/types"
 import { CURRENT_CONFIG_VERSION, type Config, defaultConfig } from "./schema"
 import { exportConfig, importConfig } from "./transfer"
 
@@ -6,7 +7,7 @@ const configWithProvider = (): Config => ({
   version: CURRENT_CONFIG_VERSION,
   providers: [
     {
-      id: "p_openai",
+      id: "p_openai" as ProviderId,
       name: "OpenAI",
       sdkProvider: "openai",
       config: { baseUrl: "https://api.openai.com/v1" },
@@ -16,8 +17,8 @@ const configWithProvider = (): Config => ({
   ],
   models: [
     {
-      id: "fast",
-      providerId: "p_openai",
+      id: "fast" as ModelId,
+      providerId: "p_openai" as ProviderId,
       providerModel: "gpt-4o-mini",
       aliases: [],
     },
