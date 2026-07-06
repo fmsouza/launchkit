@@ -58,6 +58,13 @@ const acceptedKindsFromCaps = (
   return kinds
 }
 
+/** One dropped file's wire payload for `saveDroppedUploads`. */
+type DroppedFilePayload = {
+  readonly displayName: string
+  readonly mime: string
+  readonly dataBase64: string
+}
+
 /** The shared `pickUploads`/`saveDroppedUploads` result shape (one post-ingest path). */
 type UploadIngestOutcome = {
   readonly uploads: readonly AttachmentRef[]
@@ -162,38 +169,27 @@ export const useUploads = (
       // surface unreadable entries (dropped folders) as per-file toasts.
       // Kind filtering stays bun-side — ONE canonical validator (ingestUploads).
       const read = await Promise.all(
-        files.map(
-          async (
-            file,
-          ): Promise<{
-            displayName: string
-            mime: string
-            dataBase64: string
-          } | null> => {
-            if (file.size > MAX_UPLOAD_BYTES) {
-              notify({
-                tone: "warning",
-                message: `Couldn't attach ${file.name} (too large)`,
-              })
-              return null
+        files.map(async (file): Promise<DroppedFilePayload | null> => {
+          if (file.size > MAX_UPLOAD_BYTES) {
+            notify({
+              tone: "warning",
+              message: `Couldn't attach ${file.name} (too large)`,
+            })
+            return null
+          }
+          try {
+            return {
+              displayName: file.name,
+              mime: file.type,
+              dataBase64: await readFileAsBase64(file),
             }
-            try {
-              return {
-                displayName: file.name,
-                mime: file.type,
-                dataBase64: await readFileAsBase64(file),
-              }
-            } catch {
-              notify({ tone: "warning", message: `Couldn't read ${file.name}` })
-              return null
-            }
-          },
-        ),
+          } catch {
+            notify({ tone: "warning", message: `Couldn't read ${file.name}` })
+            return null
+          }
+        }),
       )
-      const payload = read.filter(
-        (f): f is { displayName: string; mime: string; dataBase64: string } =>
-          f !== null,
-      )
+      const payload = read.filter((f): f is DroppedFilePayload => f !== null)
       if (payload.length === 0) return
       const res = await ipcClient.saveDroppedUploads({
         files: payload,
