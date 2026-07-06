@@ -1,5 +1,5 @@
 import type { IpcError } from "@spectrum/ipc"
-import type { SdkProvider } from "@spectrum/types"
+import type { DiscoveredModel, SdkProvider } from "@spectrum/types"
 import { useCallback, useState } from "react"
 import { useIpcClient } from "../IpcClientContext"
 
@@ -10,22 +10,24 @@ export type DraftDiscoverInput = {
 }
 
 export type UseDraftProviderModels = {
-  readonly models: readonly string[]
+  readonly models: readonly DiscoveredModel[]
   readonly loading: boolean
   readonly error: IpcError | undefined
-  readonly discover: (input: DraftDiscoverInput) => Promise<readonly string[]>
+  readonly discover: (
+    input: DraftDiscoverInput,
+  ) => Promise<readonly DiscoveredModel[]>
   readonly reset: () => void
 }
 
 /** Imperative model discovery for an UN-SAVED provider (driven by inline draft inputs). */
 export const useDraftProviderModels = (): UseDraftProviderModels => {
   const client = useIpcClient()
-  const [models, setModels] = useState<readonly string[]>([])
+  const [models, setModels] = useState<readonly DiscoveredModel[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<IpcError | undefined>(undefined)
 
   const discover = useCallback(
-    async (input: DraftDiscoverInput): Promise<readonly string[]> => {
+    async (input: DraftDiscoverInput): Promise<readonly DiscoveredModel[]> => {
       setLoading(true)
       setError(undefined)
       const r = await client.listProviderModelsDraft(input)

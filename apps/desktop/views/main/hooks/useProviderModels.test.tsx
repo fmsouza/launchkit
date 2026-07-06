@@ -21,7 +21,7 @@ const Probe = ({
           ? "no-data"
           : data.length === 0
             ? "empty"
-            : `models:${data.join(",")}`}
+            : `models:${data.map((d) => d.id).join(",")}`}
       </span>
     </div>
   )
@@ -44,7 +44,7 @@ describe("useProviderModels", () => {
     const client = createFakeIpcClient({
       listProviderModels: async () => ({
         ok: true,
-        value: { models: ["gpt-4o", "gpt-4o-mini"] },
+        value: { models: [{ id: "gpt-4o" }, { id: "gpt-4o-mini" }] },
       }),
     })
     render(
@@ -82,7 +82,9 @@ describe("useProviderModels", () => {
     const client = createFakeIpcClient({
       listProviderModels: async () => ({
         ok: true,
-        value: { models: ["gpt-4o-mini", "gpt-4o", "gpt-3.5"] },
+        value: {
+          models: [{ id: "gpt-4o-mini" }, { id: "gpt-4o" }, { id: "gpt-3.5" }],
+        },
       }),
     })
     render(

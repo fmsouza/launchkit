@@ -64,7 +64,10 @@ describe("createModelLister – ollama (cloud)", () => {
       apiKey: "k1",
     })
 
-    expect(result).toEqual({ ok: true, value: ["llama3.2", "mistral:latest"] })
+    expect(result).toEqual({
+      ok: true,
+      value: [{ id: "llama3.2" }, { id: "mistral:latest" }],
+    })
   })
 
   it("uses the default ollama cloud base URL when config has no serverUrl", async () => {
@@ -173,7 +176,10 @@ describe("createModelLister – openai", () => {
       apiKey: "sk-test",
     })
 
-    expect(result).toEqual({ ok: true, value: ["gpt-4o", "gpt-4o-mini"] })
+    expect(result).toEqual({
+      ok: true,
+      value: [{ id: "gpt-4o" }, { id: "gpt-4o-mini" }],
+    })
   })
 
   it("sends Bearer token in Authorization header", async () => {
@@ -287,7 +293,7 @@ describe.each([
         apiKey: "key-for-test",
       })
 
-      expect(result).toEqual({ ok: true, value: ["model-a"] })
+      expect(result).toEqual({ ok: true, value: [{ id: "model-a" }] })
     })
   },
 )
@@ -382,7 +388,7 @@ it("lists ollama CLOUD models from {base}/tags with the Authorization header", a
   const lister = createModelLister({ httpGet })
   const r = await lister({ sdkProvider: "ollama", config: {}, apiKey: "k1" })
   expect(r.ok).toBe(true)
-  if (r.ok) expect(r.value).toEqual(["gpt-oss:120b"])
+  if (r.ok) expect(r.value).toEqual([{ id: "gpt-oss:120b" }])
   expect(calls[0]?.url).toBe("https://ollama.com/api/tags")
   expect(calls[0]?.headers).toEqual({ Authorization: "Bearer k1" })
 })
@@ -401,7 +407,7 @@ it("lists custom models from {serverUrl}/models with a bearer header when keyed"
     apiKey: "sk",
   })
   expect(r.ok).toBe(true)
-  if (r.ok) expect(r.value).toEqual(["model-a"])
+  if (r.ok) expect(r.value).toEqual([{ id: "model-a" }])
   expect(calls[0]?.url).toBe("http://localhost:11434/v1/models")
   expect(calls[0]?.headers).toEqual({ Authorization: "Bearer sk" })
 })
@@ -415,7 +421,7 @@ it("lists openrouter models from its fixed base /models (public)", async () => {
   const lister = createModelLister({ httpGet })
   const r = await lister({ sdkProvider: "openrouter", config: {} })
   expect(r.ok).toBe(true)
-  if (r.ok) expect(r.value).toEqual(["openai/gpt-4o"])
+  if (r.ok) expect(r.value).toEqual([{ id: "openai/gpt-4o" }])
   expect(calls[0]?.url).toBe("https://openrouter.ai/api/v1/models")
 })
 
@@ -424,4 +430,70 @@ it("returns provider-failed for custom with no server url configured", async () 
   const lister = createModelLister({ httpGet })
   const r = await lister({ sdkProvider: "custom", config: {} })
   expect(r.ok).toBe(false)
+})
+
+it("carries openrouter modality metadata into the discovered entries", async () => {
+  const httpGet = fakeHttpGet(
+    ok({
+      data: [
+        {
+          id: "openai/gpt-4o",
+          architecture: { input_modalities: ["text", "image"] },
+        },
+        {
+          id: "deepseek/deepseek-r1",
+          architecture: { input_modalities: ["text"] },
+        },
+      ],
+    }),
+  )
+  const lister = createModelLister({ httpGet })
+  const r = await lister({
+    sdkProvider: "openrouter" as SdkProvider,
+    config: {},
+    apiKey: "k",
+  })
+  expect(r.ok).toBe(true)
+  if (r.ok) {
+    expect(r.value).toEqual([
+      { id: "deepseek/deepseek-r1", attachments: { image: false, pdf: false } },
+      { id: "openai/gpt-4o", attachments: { image: true, pdf: false } },
+    ])
+  }
+})
+
+it("carries ollama vision families into the discovered entries", async () => {
+  const httpGet = fakeHttpGet(
+    ok({
+      models: [
+        { name: "llava:13b", details: { families: ["llama", "clip"] } },
+        { name: "llama3:8b", details: { families: ["llama"] } },
+      ],
+    }),
+  )
+  const lister = createModelLister({ httpGet })
+  const r = await lister({
+    sdkProvider: "ollama" as SdkProvider,
+    config: {},
+    apiKey: "k",
+  })
+  expect(r.ok).toBe(true)
+  if (r.ok) {
+    expect(r.value).toEqual([
+      { id: "llama3:8b", attachments: { image: false, pdf: false } },
+      { id: "llava:13b", attachments: { image: true, pdf: false } },
+    ])
+  }
+})
+
+it("omits attachments when the provider payload has no modality metadata", async () => {
+  const httpGet = fakeHttpGet(ok({ data: [{ id: "gpt-4o" }] }))
+  const lister = createModelLister({ httpGet })
+  const r = await lister({
+    sdkProvider: "openai" as SdkProvider,
+    config: {},
+    apiKey: "k",
+  })
+  expect(r.ok).toBe(true)
+  if (r.ok) expect(r.value).toEqual([{ id: "gpt-4o" }])
 })

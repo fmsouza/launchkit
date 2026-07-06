@@ -11,8 +11,25 @@ import type {
 
 // A text block. Anthropic blocks may carry extra keys (e.g. cache_control);
 // the non-strict object tolerates and ignores them. Non-text blocks
-// (tool_use/tool_result/image) are matched by their own branches below.
+// (tool_use/tool_result/image/document) are matched by their own branches below.
 const TextBlock = z.object({ type: z.literal("text"), text: z.string() })
+
+// Base64 image/document source (Anthropic's only attachment source shape we accept).
+const Base64Source = z.object({
+  type: z.literal("base64"),
+  media_type: z.string().min(1),
+  data: z.string(),
+})
+
+// User-attached image. Decoded at this boundary (base64 → bytes) so the gateway can hand the
+// raw Uint8Array to the AI SDK streamText call.
+const ImageBlock = z.object({ type: z.literal("image"), source: Base64Source })
+
+// User-attached document (PDF is the supported kind). Same decode-at-boundary rule as image.
+const DocumentBlock = z.object({
+  type: z.literal("document"),
+  source: Base64Source,
+})
 
 // An assistant tool call. `input` is arbitrary JSON; keep it as unknown.
 const ToolUseBlock = z.object({
@@ -40,6 +57,8 @@ const ContentBlock = z.union([
   TextBlock,
   ToolUseBlock,
   ToolResultBlock,
+  ImageBlock,
+  DocumentBlock,
   z.object({ type: z.string() }),
 ])
 type ContentBlockT = z.infer<typeof ContentBlock>
@@ -86,6 +105,11 @@ const isToolUseBlock = (b: ContentBlockT): b is z.infer<typeof ToolUseBlock> =>
 const isToolResultBlock = (
   b: ContentBlockT,
 ): b is z.infer<typeof ToolResultBlock> => b.type === "tool_result"
+const isImageBlock = (b: ContentBlockT): b is z.infer<typeof ImageBlock> =>
+  b.type === "image" && "source" in b
+const isDocumentBlock = (
+  b: ContentBlockT,
+): b is z.infer<typeof DocumentBlock> => b.type === "document" && "source" in b
 
 // Concatenate the text of a content value, ignoring non-text blocks.
 const flatten = (c: z.infer<typeof Content>): string =>
@@ -214,7 +238,45 @@ export const parseAnthropicRequest = (
     }
     const toolResults = m.content.filter(isToolResultBlock)
     if (toolResults.length === 0) {
-      messages.push({ role: "user", content: flatten(m.content) })
+      // Attachment turn: when the user message carries image/document blocks, build parts in the
+      // original block order (text + image/file). Base64 is decoded HERE — the transport encoding
+      // stops at this boundary. Text-only turns keep the existing flattened-string shape.
+      const media = m.content.filter(
+        (b) => isImageBlock(b) || isDocumentBlock(b),
+      )
+      if (media.length === 0) {
+        messages.push({ role: "user", content: flatten(m.content) })
+        continue
+      }
+      const parts: NormalizedContentPart[] = []
+      for (const block of m.content) {
+        if (isTextBlock(block)) {
+          parts.push({ type: "text", text: block.text })
+        } else if (isImageBlock(block)) {
+          // Re-wrap through Uint8Array.from so the data crosses the adapter boundary as
+          // Uint8Array<ArrayBuffer> (the zod schema's narrowing), not the wider
+          // Uint8Array<ArrayBufferLike> that Buffer.from returns.
+          const decoded = Buffer.from(block.source.data, "base64")
+          const data = new Uint8Array(decoded.byteLength)
+          data.set(decoded)
+          parts.push({
+            type: "image",
+            data,
+            mediaType: block.source.media_type,
+          })
+        } else if (isDocumentBlock(block)) {
+          const decoded = Buffer.from(block.source.data, "base64")
+          const data = new Uint8Array(decoded.byteLength)
+          data.set(decoded)
+          parts.push({
+            type: "file",
+            data,
+            mediaType: block.source.media_type,
+          })
+        }
+        // Other block types are ignored, as before.
+      }
+      messages.push({ role: "user", content: parts })
       continue
     }
     // Mixed turn: the tool results MUST come first — directly after the assistant tool_use — so the

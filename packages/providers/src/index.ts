@@ -28,3 +28,9 @@ export {
   buildProviderOptions,
   reasoningDisablesTemperature,
 } from "./build-provider-options"
+export {
+  attachmentsFromOllamaTag,
+  attachmentsFromOpenAiEntry,
+  heuristicAttachments,
+} from "./attachment-capabilities"
+export type { DiscoveredAttachments } from "./attachment-capabilities"

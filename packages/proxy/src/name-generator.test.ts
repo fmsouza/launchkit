@@ -12,6 +12,7 @@ const route: ModelRoute = {
   providerId: pid,
   providerModel: "gpt-4o",
   aliases: [],
+  attachments: {},
 }
 const provider: Provider = {
   id: pid,

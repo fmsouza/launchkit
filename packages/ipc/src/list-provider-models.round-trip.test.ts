@@ -34,11 +34,19 @@ describe("ListProviderModelsParamsSchema", () => {
 })
 
 describe("ListProviderModelsResultSchema", () => {
-  it("parses a result with a list of model strings", () => {
+  it("parses a result with a list of model objects (id + optional attachments)", () => {
     const result = ListProviderModelsResultSchema.parse({
-      models: ["gpt-4o", "gpt-4o-mini"],
+      models: [
+        { id: "gpt-4o" },
+        { id: "llava:13b", attachments: { image: true, pdf: false } },
+      ],
     })
-    expect(result).toEqual({ models: ["gpt-4o", "gpt-4o-mini"] })
+    expect(result).toEqual({
+      models: [
+        { id: "gpt-4o" },
+        { id: "llava:13b", attachments: { image: true, pdf: false } },
+      ],
+    })
   })
 
   it("parses a result with an empty models array", () => {
@@ -49,7 +57,7 @@ describe("ListProviderModelsResultSchema", () => {
   it("rejects extra keys (strict)", () => {
     expect(
       ListProviderModelsResultSchema.safeParse({
-        models: ["gpt-4o"],
+        models: [{ id: "gpt-4o" }],
         extra: 1,
       }).success,
     ).toBe(false)
@@ -59,7 +67,7 @@ describe("ListProviderModelsResultSchema", () => {
     expect(ListProviderModelsResultSchema.safeParse({}).success).toBe(false)
   })
 
-  it("rejects non-string items in the models array", () => {
+  it("rejects objects without an id string", () => {
     expect(
       ListProviderModelsResultSchema.safeParse({ models: [1, 2] }).success,
     ).toBe(false)
@@ -76,7 +84,9 @@ describe("listProviderModels round-trip", () => {
     const handlers: Pick<IpcHandlers, "listProviderModels"> = {
       listProviderModels: async ({ providerId }) => {
         receivedProviderId = providerId
-        return { models: ["llama3.2", "mistral:latest"] }
+        return {
+          models: [{ id: "llama3.2" }, { id: "mistral:latest" }],
+        }
       },
     }
     createIpcServer(handlers as IpcHandlers, pair.server)
@@ -88,7 +98,9 @@ describe("listProviderModels round-trip", () => {
 
     expect(r).toEqual({
       ok: true,
-      value: { models: ["llama3.2", "mistral:latest"] },
+      value: {
+        models: [{ id: "llama3.2" }, { id: "mistral:latest" }],
+      },
     })
     expect(receivedProviderId).toBe("p_ollama" as ProviderId)
   })

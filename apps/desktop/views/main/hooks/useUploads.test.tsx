@@ -604,6 +604,50 @@ describe("useUploads", () => {
     expect(result.current.pending).toEqual([same])
   })
 
+  it("removes staged attachments whose kind became unsupported and toasts each", async () => {
+    const img: AttachmentRef = ref({
+      id: "sha_img",
+      displayName: "shot.png",
+      kind: "image",
+    })
+    const client = createFakeIpcClient({
+      pickUploads: async () => ({ ok: true, value: { uploads: [img] } }),
+      readUploadThumbnail: async () => ({
+        ok: true,
+        value: { dataUrl: "data:image/png;base64,AAAA" },
+      }),
+    })
+    const toasts: Array<{ tone: string; message: string }> = []
+    const { result, rerender } = renderHook(
+      ({ caps }) =>
+        useUploads(
+          caps,
+          () => {},
+          (i: { tone: string; message: string }) => toasts.push(i),
+        ),
+      {
+        initialProps: {
+          caps: { image: true, pdf: false, binary: false },
+        },
+        wrapper: ({ children }) => (
+          <IpcClientProvider client={client}>{children}</IpcClientProvider>
+        ),
+      },
+    )
+    await act(async () => {
+      await result.current.pick()
+    })
+    expect(result.current.pending).toHaveLength(1)
+    rerender({ caps: { image: false, pdf: false, binary: false } })
+    expect(result.current.pending).toEqual([])
+    expect(toasts).toEqual([
+      {
+        tone: "warning",
+        message: "Removed shot.png — the selected model can't receive images",
+      },
+    ])
+  })
+
   it("preserves pending order in resolveForSend even when dataUrls resolve out of order", async () => {
     const first: AttachmentRef = ref({ id: "sha_first" })
     const second: AttachmentRef = ref({

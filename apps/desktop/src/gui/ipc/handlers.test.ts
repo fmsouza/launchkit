@@ -308,8 +308,7 @@ const makeCtx = (
     listProviderModelsDraft: async (input: unknown) => {
       draftListInputs.push(input)
       return (
-        over.draftListResult ??
-        ok(["gpt-4o", "gpt-4o-mini"] as readonly string[])
+        over.draftListResult ?? ok([{ id: "gpt-4o" }, { id: "gpt-4o-mini" }])
       )
     },
     runtime: {
@@ -763,6 +762,7 @@ describe("createIpcHandlers models CRUD", () => {
       providerId: "p_openai" as ProviderId,
       providerModel: "gpt-4o",
       aliases: [] as string[],
+      attachments: {},
     }
     await ctx.config.save({
       ...unwrap(await ctx.config.load()),
@@ -781,6 +781,7 @@ describe("createIpcHandlers models CRUD", () => {
       providerId: "openai" as ProviderId,
       providerModel: "gpt-4o",
       aliases: [],
+      attachments: {},
     })
 
     expect(created.providerModel).toBe("gpt-4o")
@@ -798,6 +799,7 @@ describe("createIpcHandlers models CRUD", () => {
       providerId: "p_anthropic" as ProviderId,
       providerModel: "claude-haiku-4-5",
       aliases: ["haiku", "fast"],
+      attachments: {},
     })
 
     expect(created.aliases).toEqual(["haiku", "fast"])
@@ -811,6 +813,7 @@ describe("createIpcHandlers models CRUD", () => {
       providerId: "p_openai" as ProviderId,
       providerModel: "gpt-4o",
       aliases: [] as string[],
+      attachments: {},
     }
     await ctx.config.save({
       ...unwrap(await ctx.config.load()),
@@ -824,6 +827,7 @@ describe("createIpcHandlers models CRUD", () => {
         providerId: "p_anthropic" as ProviderId,
         providerModel: "opus",
         aliases: ["opus-fast"],
+        attachments: {},
       },
     })
 
@@ -832,8 +836,58 @@ describe("createIpcHandlers models CRUD", () => {
       providerId: "p_anthropic" as ProviderId,
       providerModel: "opus",
       aliases: ["opus-fast"],
+      attachments: {},
     })
     expect(saves.at(-1)?.models).toEqual([updated])
+  })
+
+  it("addModel stamps heuristic capabilities with source auto when omitted", async () => {
+    const { ctx } = makeCtx()
+    const handlers = createIpcHandlers(ctx)
+    const created = await handlers.addModel({
+      providerId: "p_openai" as ProviderId,
+      providerModel: "gpt-4o",
+      aliases: [],
+    })
+    expect(created.attachments.image).toBe(true)
+    expect(created.attachmentsSource).toBe("auto")
+  })
+
+  it("addModel persists caller-supplied capabilities verbatim with source user", async () => {
+    const { ctx } = makeCtx()
+    const handlers = createIpcHandlers(ctx)
+    const created = await handlers.addModel({
+      providerId: "p_openai" as ProviderId,
+      providerModel: "totally-unknown-model",
+      aliases: [],
+      attachments: { image: true, pdf: false },
+      attachmentsSource: "user",
+    })
+    expect(created.attachments).toEqual({ image: true, pdf: false })
+    expect(created.attachmentsSource).toBe("user")
+  })
+
+  it("updateModel preserves existing capabilities when omitted", async () => {
+    const { ctx } = makeCtx()
+    const handlers = createIpcHandlers(ctx)
+    const created = await handlers.addModel({
+      providerId: "p_openai" as ProviderId,
+      providerModel: "x",
+      aliases: [],
+      attachments: { image: true },
+      attachmentsSource: "user",
+    })
+    const updated = await handlers.updateModel({
+      id: created.id,
+      input: {
+        providerId: created.providerId,
+        providerModel: "x-renamed",
+        aliases: [],
+        attachments: {},
+      },
+    })
+    expect(updated.attachments).toEqual({ image: true })
+    expect(updated.attachmentsSource).toBe("user")
   })
 
   it("deleteModel removes the route and returns null", async () => {
@@ -1147,6 +1201,7 @@ describe("createIpcHandlers.launchHarness session-encoded proxy key", () => {
           providerId: "p1" as ProviderId,
           providerModel: "claude-opus",
           aliases: [],
+          attachments: {},
         } satisfies ModelRoute,
       ],
       mintSessionProxyKey: async (modelId: string) => {
@@ -1182,6 +1237,59 @@ describe("createIpcHandlers.launchHarness effective proxy port", () => {
 
     const input = runnerLaunchInputs[0] as { env: Record<string, string> }
     expect(input.env.ANTHROPIC_BASE_URL).toBe("http://127.0.0.1:4001")
+  })
+})
+
+describe("createIpcHandlers.launchHarness wire alias", () => {
+  it("hands the CLI a claude-spectrum wire name when the routed model can take images", async () => {
+    const { ctx, runnerLaunchInputs } = makeCtx({
+      providers: [provider()],
+      models: [
+        {
+          id: "mdl_vision" as ModelId,
+          providerId: "p_openai" as ProviderId,
+          providerModel: "llava:13b",
+          aliases: [] as string[],
+          attachments: { image: true },
+          attachmentsSource: "user" as const,
+        } satisfies ModelRoute,
+      ],
+      proxyKeyStored: "stored-run-key",
+    })
+    const handlers = createIpcHandlers(ctx)
+
+    await handlers.launchHarness({
+      id: "claude" as HarnessId,
+      modelId: "mdl_vision" as ModelId,
+    })
+
+    const input = runnerLaunchInputs[0] as { env: Record<string, string> }
+    expect(input.env.ANTHROPIC_MODEL).toBe("claude-spectrum-mdl_vision")
+  })
+
+  it("falls back to the raw model id when the routed model has no attachment capabilities", async () => {
+    const { ctx, runnerLaunchInputs } = makeCtx({
+      providers: [provider()],
+      models: [
+        {
+          id: "mdl_text" as ModelId,
+          providerId: "p_openai" as ProviderId,
+          providerModel: "kimi-k2.7-code",
+          aliases: [] as string[],
+          attachments: {},
+        } satisfies ModelRoute,
+      ],
+      proxyKeyStored: "stored-run-key",
+    })
+    const handlers = createIpcHandlers(ctx)
+
+    await handlers.launchHarness({
+      id: "claude" as HarnessId,
+      modelId: "mdl_text" as ModelId,
+    })
+
+    const input = runnerLaunchInputs[0] as { env: Record<string, string> }
+    expect(input.env.ANTHROPIC_MODEL).toBe("mdl_text")
   })
 })
 
@@ -1365,14 +1473,16 @@ describe("createIpcHandlers.listProviderModels", () => {
   it("returns { models } when ctx.listProviderModels resolves ok", async () => {
     const { ctx } = makeCtx()
     ;(ctx as { listProviderModels: unknown }).listProviderModels = async () =>
-      ok(["gpt-4o", "gpt-4o-mini"])
+      ok([{ id: "gpt-4o" }, { id: "gpt-4o-mini" }])
     const handlers = createIpcHandlers(ctx)
 
     const result = await handlers.listProviderModels({
       providerId: "p_openai" as never,
     })
 
-    expect(result).toEqual({ models: ["gpt-4o", "gpt-4o-mini"] })
+    expect(result).toEqual({
+      models: [{ id: "gpt-4o" }, { id: "gpt-4o-mini" }],
+    })
   })
 
   it("throws so the server surfaces handler-failed when ctx.listProviderModels returns err", async () => {
@@ -1716,6 +1826,7 @@ describe("createIpcHandlers.launchHarness (model default fallback)", () => {
           providerId: "p1" as ProviderId,
           providerModel: "m",
           aliases: [] as string[],
+          attachments: {},
         } satisfies ModelRoute,
       ],
       settings: { ...loaded.settings, lastByHarness: {} },
@@ -1739,6 +1850,7 @@ describe("createIpcHandlers.launchHarness (model default fallback)", () => {
           providerId: "p1" as ProviderId,
           providerModel: "m",
           aliases: [] as string[],
+          attachments: {},
         } satisfies ModelRoute,
       ],
       settings: {
@@ -2298,7 +2410,7 @@ describe("createIpcHandlers.listProviderModelsDraft", () => {
       config: {},
       secrets: { apiKey: "sk-x" },
     })
-    expect(r).toEqual({ models: ["gpt-4o", "gpt-4o-mini"] })
+    expect(r).toEqual({ models: [{ id: "gpt-4o" }, { id: "gpt-4o-mini" }] })
     expect(draftListInputs).toEqual([
       { sdkProvider: "openai", config: {}, secrets: { apiKey: "sk-x" } },
     ])

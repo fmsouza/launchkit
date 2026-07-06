@@ -8,6 +8,7 @@ import {
 } from "@spectrum/agent-events"
 import { ProviderCatalogEntrySchema } from "@spectrum/providers"
 import {
+  DiscoveredModelSchema,
   HarnessDefinitionSchema,
   HarnessIdSchema,
   ModelIdSchema,
@@ -104,6 +105,12 @@ export const AddModelParamsSchema = z
     providerId: ProviderIdSchema,
     providerModel: z.string().min(1),
     aliases: z.array(z.string()).default([]),
+    /** Optional explicit capabilities (form-prefilled or user-set); absent ⇒ server heuristic. */
+    attachments: z
+      .object({ image: z.boolean().optional(), pdf: z.boolean().optional() })
+      .strict()
+      .optional(),
+    attachmentsSource: z.enum(["user", "auto"]).optional(),
   })
   .strict()
 export const AddModelResultSchema = ModelRouteSchema
@@ -249,7 +256,7 @@ export const ListProviderModelsParamsSchema = z
   .object({ providerId: ProviderIdSchema })
   .strict()
 export const ListProviderModelsResultSchema = z
-  .object({ models: z.array(z.string()) })
+  .object({ models: z.array(DiscoveredModelSchema) })
   .strict()
 
 /**

@@ -6,6 +6,7 @@ import {
   MAX_UPLOAD_BYTES,
   acceptedMimesFromCapabilities,
   inferKind,
+  intersectAttachmentCaps,
   stripDataUrl,
 } from "./attachment"
 
@@ -148,5 +149,40 @@ describe("attachment domain", () => {
 describe("MAX_UPLOAD_BYTES", () => {
   it("pins the shared per-file upload cap at 10MB", () => {
     expect(MAX_UPLOAD_BYTES).toBe(10 * 1024 * 1024)
+  })
+})
+
+describe("intersectAttachmentCaps", () => {
+  const harness = { image: true, pdf: true, binary: true }
+
+  it("returns harness caps unchanged for a direct route (undefined)", () => {
+    expect(intersectAttachmentCaps(harness, undefined)).toEqual(harness)
+  })
+
+  it("requires BOTH sides for image and pdf on proxied routes", () => {
+    expect(
+      intersectAttachmentCaps(harness, { image: true, pdf: false }),
+    ).toEqual({
+      image: true,
+      pdf: false,
+      binary: true,
+    })
+  })
+
+  it("gates unknown route capabilities off", () => {
+    expect(intersectAttachmentCaps(harness, {})).toEqual({
+      image: false,
+      pdf: false,
+      binary: true,
+    })
+  })
+
+  it("never grants what the harness lacks", () => {
+    expect(
+      intersectAttachmentCaps(
+        { image: false, pdf: false, binary: false },
+        { image: true, pdf: true },
+      ),
+    ).toEqual({ image: false, pdf: false, binary: false })
   })
 })

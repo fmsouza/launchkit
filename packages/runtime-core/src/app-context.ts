@@ -25,6 +25,7 @@ import type { RunStore } from "@spectrum/run-store"
 import type { SecretStore } from "@spectrum/secrets"
 import type { SessionStore } from "@spectrum/sessions"
 import type {
+  DiscoveredModel,
   HarnessId,
   ModelId,
   SdkProvider,
@@ -102,7 +103,7 @@ export interface AppContext {
    */
   readonly listProviderModels: (
     providerId: string,
-  ) => Promise<Result<readonly string[], unknown>>
+  ) => Promise<Result<readonly DiscoveredModel[], unknown>>
   /** Probe connectivity for an UN-SAVED provider from inline config + secret VALUES. */
   readonly testProviderDraft: (input: {
     sdkProvider: SdkProvider
@@ -115,7 +116,7 @@ export interface AppContext {
     sdkProvider: SdkProvider
     config: Readonly<Record<string, string>>
     secrets: Readonly<Record<string, string>>
-  }) => Promise<Result<readonly string[], unknown>>
+  }) => Promise<Result<readonly DiscoveredModel[], unknown>>
   /** The configured proxy port (from `config.settings.proxyPort`), surfaced for `getProxyStatus`. */
   readonly proxyPort: number
   /** The loopback proxy base URL (`http://127.0.0.1:<port>`), used by `proxy.isRunning`. */

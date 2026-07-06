@@ -1,3 +1,7 @@
+import {
+  type DiscoveredAttachments,
+  heuristicAttachments,
+} from "@spectrum/providers"
 import type { ModelId, ProviderId } from "@spectrum/types"
 import {
   Button,
@@ -12,7 +16,7 @@ import {
   Spinner,
   TextInput,
 } from "@spectrum/ui"
-import { type ReactElement, useState } from "react"
+import { type ReactElement, useMemo, useState } from "react"
 import { useModels } from "../hooks/useModels"
 import { useNotifications } from "../hooks/useNotifications"
 import { useProviderModels } from "../hooks/useProviderModels"
@@ -22,6 +26,11 @@ type ModelDraft = {
   readonly providerId: string
   readonly providerModel: string
   readonly aliases: string
+  /** Local-form state for the capability toggles. */
+  readonly image: boolean
+  readonly pdf: boolean
+  /** True once the user has manually flipped either toggle. */
+  readonly capsTouched: boolean
   /** When editing, the ModelId being updated; undefined for a new model. */
   readonly editingOf: string | undefined
 }
@@ -30,6 +39,9 @@ const EMPTY_DRAFT: ModelDraft = {
   providerId: "",
   providerModel: "",
   aliases: "",
+  image: false,
+  pdf: false,
+  capsTouched: false,
   editingOf: undefined,
 }
 
@@ -51,7 +63,7 @@ const ModelField = ({
     <ModelPicker
       id="model-model"
       loading={loading && providerId !== ""}
-      models={discovered}
+      models={discovered.map((d) => d.id)}
       value={value}
       onChange={onChange}
       {...(showMessage
@@ -70,6 +82,22 @@ export const ModelsPage = (): ReactElement => {
   const { notify } = useNotifications()
 
   const [draft, setDraft] = useState<ModelDraft | undefined>(undefined)
+  // Reuse the same hook at the page level so we can read the discovered
+  // models for capability prefill WITHOUT triggering an extra render cycle
+  // (sharing the same call keeps both subscribers in sync).
+  const providerIdForDiscovery = draft?.providerId ?? ""
+  const { data: discoveredRaw } = useProviderModels(providerIdForDiscovery)
+  const discoveredById = useMemo<
+    ReadonlyMap<string, DiscoveredAttachments | undefined>
+  >(() => {
+    const m = new Map<string, DiscoveredAttachments | undefined>()
+    for (const d of discoveredRaw ?? []) {
+      // `DiscoveredModel.attachments` is the same shape as
+      // `DiscoveredAttachments`; readonly is erased at the call site.
+      m.set(d.id, d.attachments as DiscoveredAttachments | undefined)
+    }
+    return m
+  }, [discoveredRaw])
 
   const providerNames: Record<string, string> = {}
   for (const p of providers.data ?? []) providerNames[p.id] = p.name
@@ -86,6 +114,9 @@ export const ModelsPage = (): ReactElement => {
       providerId: found.providerId,
       providerModel: found.providerModel,
       aliases: (found.aliases ?? []).join(", "),
+      image: found.attachments?.image === true,
+      pdf: found.attachments?.pdf === true,
+      capsTouched: found.attachmentsSource === "user",
       editingOf: found.id,
     })
   }
@@ -100,17 +131,24 @@ export const ModelsPage = (): ReactElement => {
       .map((s) => s.trim())
       .filter((s) => s !== "")
 
+    const attachments = { image: draft.image, pdf: draft.pdf }
+    const attachmentsSource = draft.capsTouched ? "user" : "auto"
+
     const r =
       draft.editingOf === undefined
         ? await models.add({
             providerId: draft.providerId as ProviderId,
             providerModel: draft.providerModel,
             aliases,
+            attachments,
+            attachmentsSource,
           })
         : await models.update(draft.editingOf as ModelId, {
             providerId: draft.providerId as ProviderId,
             providerModel: draft.providerModel,
             aliases,
+            attachments,
+            attachmentsSource,
           })
     if (r.ok) setDraft(undefined)
     else
@@ -145,7 +183,28 @@ export const ModelsPage = (): ReactElement => {
       ...(prev ?? EMPTY_DRAFT),
       providerId: newProviderId,
       providerModel: "",
+      image: false,
+      pdf: false,
+      capsTouched: false,
     }))
+
+  const updateProviderModel = (newModelId: string): void => {
+    setDraft((prev) => {
+      if (prev === undefined) return prev
+      if (prev.capsTouched) {
+        return { ...prev, providerModel: newModelId }
+      }
+      // Prefill capabilities from discovery, else heuristic.
+      const discovered = discoveredById.get(newModelId)
+      const caps = discovered ?? heuristicAttachments(newModelId)
+      return {
+        ...prev,
+        providerModel: newModelId,
+        image: caps.image === true,
+        pdf: caps.pdf === true,
+      }
+    })
+  }
 
   const draftIncomplete =
     draft === undefined ||
@@ -214,7 +273,7 @@ export const ModelsPage = (): ReactElement => {
             <ModelField
               providerId={draft.providerId}
               value={draft.providerModel}
-              onChange={(v) => update("providerModel", v)}
+              onChange={updateProviderModel}
             />
             <FormField id="model-aliases" label="Aliases">
               <TextInput
@@ -224,6 +283,44 @@ export const ModelsPage = (): ReactElement => {
                 onChange={(v) => update("aliases", v)}
               />
             </FormField>
+            <label className="lk-form-check">
+              <input
+                type="checkbox"
+                aria-label="Accepts images"
+                checked={draft.image}
+                onChange={(e) =>
+                  setDraft((d) =>
+                    d === undefined
+                      ? d
+                      : {
+                          ...d,
+                          image: e.target.checked,
+                          capsTouched: true,
+                        },
+                  )
+                }
+              />
+              Accepts images
+            </label>
+            <label className="lk-form-check">
+              <input
+                type="checkbox"
+                aria-label="Accepts PDFs"
+                checked={draft.pdf}
+                onChange={(e) =>
+                  setDraft((d) =>
+                    d === undefined
+                      ? d
+                      : {
+                          ...d,
+                          pdf: e.target.checked,
+                          capsTouched: true,
+                        },
+                  )
+                }
+              />
+              Accepts PDFs
+            </label>
             <Row gap={2} className="lk-form-actions">
               <Button
                 onClick={() => void submitDraft()}

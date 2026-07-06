@@ -12,12 +12,14 @@ const sampleModels = [
     providerId: "prv_1" as ProviderId,
     providerModel: "gpt-4o",
     aliases: [] as string[],
+    attachments: {},
   },
   {
     id: "mdl_2" as ModelId,
     providerId: "prv_2" as ProviderId,
     providerModel: "claude-3-5-haiku",
     aliases: [] as string[],
+    attachments: {},
   },
 ]
 const sampleProviders = [

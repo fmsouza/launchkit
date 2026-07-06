@@ -32,6 +32,7 @@ const routes: readonly ModelRoute[] = [
     providerId: "p_o" as ProviderId,
     providerModel: "kimi-k2.7-code:cloud",
     aliases: [],
+    attachments: {},
   },
 ]
 const providerNames = { p_o: "ollama" }
@@ -187,6 +188,7 @@ describe("SessionsView", () => {
       providerId: "p_o" as ProviderId,
       providerModel: "kimi-k2.7-code:cloud",
       aliases: [],
+      attachments: {},
     }
     const { master } = SessionsView({
       openSessionIds: [],

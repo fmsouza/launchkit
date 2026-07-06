@@ -11,8 +11,10 @@ import type {
 import { effortStringToTier } from "./reasoning-effort"
 
 // A message content text block. Responses uses input_text (user/developer) and
-// output_text (assistant); both carry a `text` string. Other parts (e.g.
-// input_image) are matched by the catch-all branch below and ignored.
+// output_text (assistant); both carry a `text` string. Image attachments use
+// input_image with an `image_url` (data URLs only — non-data URLs are ignored
+// because we cannot fetch + decode them in the proxy without losing stream-time
+// guarantees).
 const InputTextBlock = z.object({
   type: z.literal("input_text"),
   text: z.string(),
@@ -21,9 +23,14 @@ const OutputTextBlock = z.object({
   type: z.literal("output_text"),
   text: z.string(),
 })
+const InputImageBlock = z.object({
+  type: z.literal("input_image"),
+  image_url: z.string(),
+})
 const MessageContentBlock = z.union([
   InputTextBlock,
   OutputTextBlock,
+  InputImageBlock,
   z.object({ type: z.string() }),
 ])
 type MessageContentBlockT = z.infer<typeof MessageContentBlock>
@@ -90,6 +97,37 @@ const isTextBlock = (
   b: MessageContentBlockT,
 ): b is z.infer<typeof InputTextBlock> | z.infer<typeof OutputTextBlock> =>
   b.type === "input_text" || b.type === "output_text"
+const isInputImageBlock = (
+  b: MessageContentBlockT,
+): b is z.infer<typeof InputImageBlock> =>
+  b.type === "input_image" && "image_url" in b
+
+/** data:[<media>];base64,<b64> → { data: Uint8Array, mediaType }. Non-data URLs return undefined. */
+const DATA_URL = /^data:([^;]+);base64,(.*)$/s
+const imagePartFromDataUrl = (
+  url: string,
+):
+  | {
+      readonly type: "image"
+      readonly data: Uint8Array<ArrayBuffer>
+      readonly mediaType: string
+    }
+  | undefined => {
+  const m = url.match(DATA_URL)
+  if (m === null) return undefined
+  // `Buffer.from(b64, "base64")` returns a `Buffer` (Uint8Array<ArrayBufferLike>); the zod schema
+  // narrows to `Uint8Array<ArrayBuffer>`. Re-wrap through `Uint8Array.from(...)` so the
+  // ArrayBuffer-backed variant is what crosses the adapter boundary.
+  const b64 = m[2] ?? ""
+  const decoded = Buffer.from(b64, "base64")
+  const data = new Uint8Array(decoded.byteLength)
+  data.set(decoded)
+  return {
+    type: "image",
+    data,
+    mediaType: m[1] ?? "application/octet-stream",
+  }
+}
 
 // Concatenate the text of a message content value, ignoring non-text parts.
 const flatten = (c: z.infer<typeof MessageContent>): string =>
@@ -198,7 +236,32 @@ export const parseResponsesRequest = (
 
     if (isMessageItem(item)) {
       if (item.role === "developer" || item.role === "system") continue
-      messages.push({ role: item.role, content: flatten(item.content) })
+      if (typeof item.content === "string") {
+        messages.push({ role: item.role, content: item.content })
+        continue
+      }
+      // Attachment turn: when the message carries data-URL input_image blocks, build parts in
+      // original block order (text + image). Non-data-URL image blocks (and any other unknown
+      // blocks) are dropped — only text+image parts reach the gateway.
+      const images = item.content
+        .filter(isInputImageBlock)
+        .map((b) => imagePartFromDataUrl(b.image_url))
+        .filter((p): p is NonNullable<typeof p> => p !== undefined)
+      if (images.length === 0) {
+        messages.push({ role: item.role, content: flatten(item.content) })
+        continue
+      }
+      const parts: NormalizedContentPart[] = []
+      for (const block of item.content) {
+        if (isTextBlock(block)) {
+          parts.push({ type: "text", text: block.text })
+        } else if (isInputImageBlock(block)) {
+          const p = imagePartFromDataUrl(block.image_url)
+          if (p !== undefined) parts.push(p)
+        }
+        // other block types: ignored, as before
+      }
+      messages.push({ role: item.role, content: parts })
     }
     // Unknown item types (e.g. reasoning) are ignored.
   }

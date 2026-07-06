@@ -214,4 +214,48 @@ describe("createRouter", () => {
     expect(r.ok).toBe(true)
     if (r.ok) expect(r.value.resolvedVia).toBe("session-fallback")
   })
+
+  // -------------------------------------------------------------------------
+  // Wire alias resolution (Task 9): the CLI was handed `claude-spectrum-<routeId>`
+  // so it treats the model as multimodal-capable; strip the prefix back to the
+  // exact route.
+  // -------------------------------------------------------------------------
+
+  it("resolves a claude-spectrum wire alias to its exact route", () => {
+    const router = createRouter(
+      configWith([
+        {
+          id: "mdl_vis",
+          providerId: "p1",
+          providerModel: "llava:13b",
+          aliases: [],
+        },
+      ]),
+    )
+    const r = router.resolve("claude-spectrum-mdl_vis")
+    expect(r.ok).toBe(true)
+    if (r.ok) {
+      expect(r.value.routeId).toBe("mdl_vis")
+      expect(r.value.resolvedVia).toBe("wire-alias")
+    }
+  })
+
+  it("falls through the normal chain when the wire-alias suffix matches no route", () => {
+    const router = createRouter(
+      configWith([
+        {
+          id: "mdl_a",
+          providerId: "p1",
+          providerModel: "x",
+          aliases: ["haiku"],
+        },
+      ]),
+    )
+    // Suffix unknown, but the WHOLE id contains "haiku" → family/alias step still applies.
+    const r = router.resolve("claude-spectrum-haiku-unknown", {
+      fallbackModelId: "mdl_a",
+    })
+    expect(r.ok).toBe(true)
+    if (r.ok) expect(r.value.routeId).toBe("mdl_a")
+  })
 })

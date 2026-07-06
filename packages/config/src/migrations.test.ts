@@ -203,6 +203,7 @@ describe("v3 → v4 (aliases → models)", () => {
         providerId: "openai" as ProviderId,
         providerModel: "gpt-4o-mini",
         aliases: [],
+        attachments: {},
       },
     ])
     expect("profiles" in result.value).toBe(false)

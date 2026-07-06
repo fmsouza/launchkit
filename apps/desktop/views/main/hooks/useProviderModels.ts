@@ -1,10 +1,19 @@
 import type { IpcError } from "@spectrum/ipc"
-import type { ProviderId } from "@spectrum/types"
+import type { DiscoveredModel, ProviderId } from "@spectrum/types"
 import { type Result, ok } from "@spectrum/utils"
 import { useCallback } from "react"
 import { useIpcClient } from "../IpcClientContext"
-import { sortModelIds } from "../model-sort"
 import { type AsyncResource, useAsyncResource } from "./useAsyncResource"
+
+const collator = new Intl.Collator(undefined, {
+  numeric: true,
+  sensitivity: "base",
+})
+
+const sortById = (
+  models: readonly DiscoveredModel[],
+): readonly DiscoveredModel[] =>
+  [...models].sort((a, b) => collator.compare(a.id, b.id))
 
 /**
  * Fetch the live model list for the given provider id.
@@ -15,22 +24,22 @@ import { type AsyncResource, useAsyncResource } from "./useAsyncResource"
  *   the memoised `call` callback, which closes over the current `providerId`).
  *
  * SECURITY: the apiKey is resolved server-side and never crosses to the view. This hook only
- * receives the final model names.
+ * receives the final model ids + capability metadata.
  */
 export const useProviderModels = (
   providerId: string,
-): AsyncResource<readonly string[]> => {
+): AsyncResource<readonly DiscoveredModel[]> => {
   const client = useIpcClient()
 
   const call = useCallback(async (): Promise<
-    Result<readonly string[], IpcError>
+    Result<readonly DiscoveredModel[], IpcError>
   > => {
-    if (providerId === "") return ok([] as readonly string[])
+    if (providerId === "") return ok([] as readonly DiscoveredModel[])
     const r = await client.listProviderModels({
       providerId: providerId as ProviderId,
     })
     if (!r.ok) return r
-    return ok(sortModelIds(r.value.models as readonly string[]))
+    return ok(sortById(r.value.models))
   }, [client, providerId])
 
   return useAsyncResource(call)

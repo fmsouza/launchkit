@@ -8,6 +8,7 @@ const route: ModelRoute = {
   providerId: "p_openai" as ProviderId,
   providerModel: "gpt-4o",
   aliases: [],
+  attachments: {},
 }
 
 describe("createModelsStore", () => {
@@ -33,6 +34,7 @@ describe("createModelsStore", () => {
       providerId: "p_openai" as ProviderId,
       providerModel: "gpt-4o",
       aliases: [],
+      attachments: {},
     })
     expect(client.calls.addModel.length).toBe(1)
     expect(getModels).toHaveBeenCalledTimes(2)

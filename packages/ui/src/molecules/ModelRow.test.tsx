@@ -7,6 +7,7 @@ const props = {
   provider: "OpenAI",
   model: "gpt-4o-mini",
   aliases: "",
+  capabilities: "",
 }
 
 describe("ModelRow", () => {
@@ -77,6 +78,7 @@ describe("ModelRow", () => {
           <ModelRow
             {...props}
             aliases=""
+            capabilities=""
             onEdit={() => {}}
             onDelete={() => {}}
           />
@@ -84,7 +86,23 @@ describe("ModelRow", () => {
       </table>,
     )
     const cells = container.querySelectorAll("td")
-    // provider, model, aliases, actions = 4 cells
-    expect(cells.length).toBe(4)
+    // provider, model, aliases, capabilities, actions = 5 cells
+    expect(cells.length).toBe(5)
+  })
+
+  it("renders the capabilities cell", () => {
+    render(
+      <table>
+        <tbody>
+          <ModelRow
+            {...props}
+            capabilities="images"
+            onEdit={() => {}}
+            onDelete={() => {}}
+          />
+        </tbody>
+      </table>,
+    )
+    expect(screen.getByText("images")).toBeInTheDocument()
   })
 })

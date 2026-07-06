@@ -10,6 +10,15 @@ export type ModelTableProps = {
   readonly onDelete: (id: string) => void
 }
 
+const capabilitiesLabel = (m: ModelRoute): string => {
+  const img = m.attachments.image === true
+  const pdf = m.attachments.pdf === true
+  if (img && pdf) return "images + PDFs"
+  if (img) return "images"
+  if (pdf) return "PDFs"
+  return "—"
+}
+
 export const ModelTable = ({
   models,
   providerNames,
@@ -31,6 +40,7 @@ export const ModelTable = ({
           <th>Provider</th>
           <th>Model</th>
           <th>Aliases</th>
+          <th>Attachments</th>
           <th>Actions</th>
         </tr>
       </thead>
@@ -44,6 +54,7 @@ export const ModelTable = ({
             }
             model={m.providerModel}
             aliases={(m.aliases ?? []).join(", ")}
+            capabilities={capabilitiesLabel(m)}
             onEdit={onEdit}
             onDelete={onDelete}
           />

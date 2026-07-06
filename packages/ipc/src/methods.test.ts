@@ -29,6 +29,7 @@ const sampleModelRoute = {
   providerId: "openai" as ProviderId,
   providerModel: "gpt-4o",
   aliases: [] as string[],
+  attachments: {} as { image?: boolean; pdf?: boolean },
 }
 
 describe("AddProviderParamsSchema", () => {
@@ -130,6 +131,26 @@ describe("AddModelParamsSchema", () => {
   })
 })
 
+describe("AddModelParamsSchema attachments", () => {
+  it("accepts capability fields and defaults them to absent", () => {
+    expect(
+      AddModelParamsSchema.safeParse({
+        providerId: "p_00000000-0000-4000-8000-000000000000",
+        providerModel: "llava:13b",
+        aliases: [],
+        attachments: { image: true },
+        attachmentsSource: "user",
+      }).success,
+    ).toBe(true)
+    const bare = AddModelParamsSchema.parse({
+      providerId: "p_00000000-0000-4000-8000-000000000000",
+      providerModel: "gpt-4o",
+      aliases: [],
+    })
+    expect(bare.attachments).toBeUndefined()
+  })
+})
+
 describe("AddModelResultSchema", () => {
   it("parses a full model route carrying the minted id", () => {
     expect(AddModelResultSchema.parse(sampleModelRoute)).toEqual(
@@ -146,6 +167,7 @@ describe("UpdateModelParamsSchema", () => {
         providerId: "openai" as ProviderId,
         providerModel: "gpt-4o",
         aliases: [] as string[],
+        attachments: {} as { image?: boolean; pdf?: boolean },
       },
     }
     expect(UpdateModelParamsSchema.parse(params)).toEqual(params)

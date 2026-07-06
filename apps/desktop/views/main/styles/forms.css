@@ -27,3 +27,11 @@ form {
   justify-content: flex-start;
   margin-top: var(--sp-space-1);
 }
+
+.lk-form-check {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-space-2);
+  font-size: var(--sp-text-sm);
+  color: var(--sp-text);
+}

@@ -68,7 +68,7 @@ describe("parseAnthropicRequest", () => {
     expect(r.ok && r.value.messages).toEqual([{ role: "user", content: "hi" }])
     expect(r.ok && r.value.system).toContain("sys")
   })
-  it("ignores non-text content blocks and extracts text", () => {
+  it("translates image blocks and keeps text for a mixed user turn", () => {
     const body = {
       model: "default",
       max_tokens: 10,
@@ -79,7 +79,7 @@ describe("parseAnthropicRequest", () => {
             { type: "text", text: "hello" },
             {
               type: "image",
-              source: { type: "base64", media_type: "image/png", data: "x" },
+              source: { type: "base64", media_type: "image/png", data: "AQID" },
             },
           ],
         },
@@ -87,7 +87,77 @@ describe("parseAnthropicRequest", () => {
     }
     const r = parseAnthropicRequest(body)
     expect(r.ok).toBe(true)
-    expect(r.ok && r.value.messages[0]?.content).toBe("hello")
+    if (!r.ok) return
+    const content = r.value.messages[0]?.content
+    expect(Array.isArray(content)).toBe(true)
+    const parts = content as Array<Record<string, unknown>>
+    expect(parts[0]).toEqual({ type: "text", text: "hello" })
+    expect(parts[1]?.type).toBe("image")
+    expect(parts[1]?.mediaType).toBe("image/png")
+    expect(parts[1]?.data).toEqual(new Uint8Array([1, 2, 3]))
+  })
+  it("translates a document block to a file part (application/pdf)", () => {
+    const body = {
+      model: "default",
+      max_tokens: 10,
+      messages: [
+        {
+          role: "user",
+          content: [
+            {
+              type: "document",
+              source: {
+                type: "base64",
+                media_type: "application/pdf",
+                data: "AQID",
+              },
+            },
+          ],
+        },
+      ],
+    }
+    const r = parseAnthropicRequest(body)
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    const parts = r.value.messages[0]?.content as Array<Record<string, unknown>>
+    expect(parts[0]?.type).toBe("file")
+    expect(parts[0]?.mediaType).toBe("application/pdf")
+    expect(parts[0]?.data).toEqual(new Uint8Array([1, 2, 3]))
+  })
+  it("keeps a plain-string flatten for text-only user turns", () => {
+    const body = {
+      model: "default",
+      max_tokens: 10,
+      messages: [
+        {
+          role: "user",
+          content: [{ type: "text", text: "just text" }],
+        },
+      ],
+    }
+    const r = parseAnthropicRequest(body)
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.value.messages[0]?.content).toBe("just text")
+  })
+  it("still ignores unknown block types (catch-all) in a text-only turn", () => {
+    const body = {
+      model: "default",
+      max_tokens: 10,
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "hi" },
+            { type: "server_tool_use", whatever: true },
+          ],
+        },
+      ],
+    }
+    const r = parseAnthropicRequest(body)
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.value.messages[0]?.content).toBe("hi")
   })
   it("ignores unknown top-level fields like metadata", () => {
     const body = {

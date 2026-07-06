@@ -8,7 +8,7 @@ import {
   MAX_UPLOAD_BYTES,
   acceptedMimesFromCapabilities,
 } from "@spectrum/agent-events"
-import { useCallback, useState } from "react"
+import { useCallback, useEffect, useState } from "react"
 import { useIpcClient } from "../IpcClientContext"
 import type { NotificationInput } from "../stores/notifications-model"
 
@@ -240,6 +240,31 @@ export const useUploads = (
     },
     [onOpen],
   )
+
+  // Capability narrowing (e.g. the user switched to a non-vision model):
+  // staged refs of now-unsupported kinds are removed, one warning toast each,
+  // so the tray never advertises files that can no longer be sent.
+  useEffect(() => {
+    if (caps === undefined) return
+    const allowed = (k: AttachmentKind): boolean =>
+      k === "image" ? caps.image : k === "pdf" ? caps.pdf : caps.binary
+    const orphaned = pending.filter((a) => !allowed(a.kind))
+    if (orphaned.length === 0) return
+    for (const a of orphaned) {
+      notify({
+        tone: "warning",
+        message: `Removed ${a.displayName} — the selected model can't receive ${
+          a.kind === "pdf" ? "PDFs" : `${a.kind}s`
+        }`,
+      })
+    }
+    setPending((p) => p.filter((a) => allowed(a.kind)))
+    setThumbnails((m) => {
+      const n = new Map(m)
+      for (const a of orphaned) n.delete(a.id)
+      return n
+    })
+  }, [caps, pending, notify])
 
   return {
     pending,
