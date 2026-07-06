@@ -475,6 +475,7 @@ describe("QuestionCard wizard DOM", () => {
       const selected = tab.getAttribute("aria-selected")
       expect(selected === "true" || selected === "false").toBe(true)
       const state = tab.getAttribute("data-state")
+      if (state === null) throw new Error("expected data-state attribute")
       expect(["current", "answered", "todo"]).toContain(state)
     }
     cleanup()

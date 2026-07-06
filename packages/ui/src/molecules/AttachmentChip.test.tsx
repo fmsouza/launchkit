@@ -54,17 +54,17 @@ describe("AttachmentChip", () => {
   })
 
   it("calls onOpen when the chip is clicked", () => {
-    let opened: AttachmentRef | null = null
+    const opened: { value: AttachmentRef | null } = { value: null }
     render(
       <AttachmentChip
         ref={imgRef}
         onOpen={(r) => {
-          opened = r
+          opened.value = r
         }}
         thumbnailUrl="data:image/png;base64,AAA"
       />,
     )
     fireEvent.click(screen.getByTestId("chip"))
-    expect(opened).toEqual(imgRef)
+    expect(opened.value).toEqual(imgRef)
   })
 })
