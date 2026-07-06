@@ -1,6 +1,8 @@
 import { describe, expect, it } from "bun:test"
+import type { RunnerId } from "@spectrum/types"
 import {
   CanonicalEventSchema,
+  type CanonicalEvent,
   QuestionAnswerSchema,
   QuestionPromptSchema,
   StoredEventSchema,
@@ -232,9 +234,9 @@ describe("QuestionAnswerSchema", () => {
 
 describe("CanonicalEventSchema question events", () => {
   it("accepts question-requested", () => {
-    const ev = {
+    const ev: CanonicalEvent = {
       type: "question-requested",
-      runnerId: "r1",
+      runnerId: "r1" as RunnerId,
       requestId: "q1",
       prompt: {
         questions: [
@@ -251,9 +253,9 @@ describe("CanonicalEventSchema question events", () => {
     expect(CanonicalEventSchema.parse(ev)).toEqual(ev)
   })
   it("accepts question-resolved", () => {
-    const ev = {
+    const ev: CanonicalEvent = {
       type: "question-resolved",
-      runnerId: "r1",
+      runnerId: "r1" as RunnerId,
       requestId: "q1",
       answer: { selections: [{ questionIndex: 0, labels: ["A"] }] },
       by: "user",
