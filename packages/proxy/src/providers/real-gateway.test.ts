@@ -247,6 +247,75 @@ describe("toModelMessages", () => {
       },
     ])
   })
+
+  it("maps a normalized image part to an AI SDK image part", () => {
+    const bytes = new Uint8Array([1, 2, 3])
+    const req: NormalizedRequest = {
+      model: "m",
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "describe" },
+            { type: "image", data: bytes, mediaType: "image/png" },
+          ],
+        },
+      ],
+      stream: true,
+    }
+    const msgs = toModelMessages(req)
+    const content = msgs[0]?.content as Array<Record<string, unknown>>
+    expect(content[0]).toEqual({ type: "text", text: "describe" })
+    expect(content[1]?.type).toBe("image")
+    expect(content[1]?.image).toBe(bytes)
+    expect(content[1]?.mediaType).toBe("image/png")
+  })
+
+  it("maps a normalized file part to an AI SDK file part (with optional filename)", () => {
+    const bytes = new Uint8Array([4, 5])
+    const req: NormalizedRequest = {
+      model: "m",
+      messages: [
+        {
+          role: "user",
+          content: [
+            {
+              type: "file",
+              data: bytes,
+              mediaType: "application/pdf",
+              filename: "doc.pdf",
+            },
+          ],
+        },
+      ],
+      stream: true,
+    }
+    const msgs = toModelMessages(req)
+    const content = msgs[0]?.content as Array<Record<string, unknown>>
+    expect(content[0]?.type).toBe("file")
+    expect(content[0]?.data).toBe(bytes)
+    expect(content[0]?.mediaType).toBe("application/pdf")
+    expect(content[0]?.filename).toBe("doc.pdf")
+  })
+
+  it("maps a normalized file part without a filename (omits the key)", () => {
+    const bytes = new Uint8Array([6])
+    const req: NormalizedRequest = {
+      model: "m",
+      messages: [
+        {
+          role: "user",
+          content: [{ type: "file", data: bytes, mediaType: "text/plain" }],
+        },
+      ],
+      stream: true,
+    }
+    const msgs = toModelMessages(req)
+    const content = msgs[0]?.content as Array<Record<string, unknown>>
+    expect(content[0]?.type).toBe("file")
+    expect(content[0]?.mediaType).toBe("text/plain")
+    expect("filename" in (content[0] ?? {})).toBe(false)
+  })
 })
 
 describe("reasoningOptionsFor", () => {

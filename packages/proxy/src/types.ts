@@ -16,9 +16,9 @@ export const NormalizedToolSchema = z
 export type NormalizedTool = z.infer<typeof NormalizedToolSchema>
 
 /**
- * A piece of message content. Plain text, OR a tool call (assistant asked to run a tool), OR a tool
- * result (the harness ran a tool and is feeding the output back). These mirror the AI SDK v6
- * `tool-call`/`tool-result` message parts so the gateway can map them 1:1.
+ * A piece of message content. Plain text, an attached image/file, an assistant tool call, or a
+ * tool result. Image/file parts carry the raw bytes decoded at the inbound adapter boundary so
+ * the gateway can hand them straight to the AI SDK `streamText` call.
  */
 export const NormalizedContentPartSchema = z.union([
   z.object({ type: z.literal("text"), text: z.string() }),
@@ -33,6 +33,17 @@ export const NormalizedContentPartSchema = z.union([
     toolCallId: z.string().min(1),
     toolName: z.string().min(1),
     output: z.string(),
+  }),
+  z.object({
+    type: z.literal("image"),
+    data: z.instanceof(Uint8Array),
+    mediaType: z.string().min(1),
+  }),
+  z.object({
+    type: z.literal("file"),
+    data: z.instanceof(Uint8Array),
+    mediaType: z.string().min(1),
+    filename: z.string().min(1).optional(),
   }),
 ])
 export type NormalizedContentPart = z.infer<typeof NormalizedContentPartSchema>

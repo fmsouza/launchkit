@@ -152,12 +152,23 @@ export const mapFullStreamPart = (
 /**
  * Pure mapping from a structured `NormalizedContentPart` to an AI SDK message content part.
  * `text` and `tool-call` map 1:1; a `tool-result` carries its string output wrapped as the AI SDK
- * `{ type: "text", value }` tool-output shape.
+ * `{ type: "text", value }` tool-output shape. Image and file parts are forwarded with the bytes
+ * decoded at the inbound adapter boundary (the AI SDK v6 image/file part fields are `image`/`data`
+ * with a `mediaType`).
  */
 const toModelContentPart = (
   part: NormalizedContentPart,
 ): Record<string, unknown> => {
   if (part.type === "text") return { type: "text", text: part.text }
+  if (part.type === "image")
+    return { type: "image", image: part.data, mediaType: part.mediaType }
+  if (part.type === "file")
+    return {
+      type: "file",
+      data: part.data,
+      mediaType: part.mediaType,
+      ...(part.filename !== undefined ? { filename: part.filename } : {}),
+    }
   if (part.type === "tool-call")
     return {
       type: "tool-call",
