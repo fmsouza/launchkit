@@ -812,8 +812,58 @@ describe("createIpcHandlers models CRUD", () => {
       providerId: "p_anthropic",
       providerModel: "opus",
       aliases: ["opus-fast"],
+      attachments: {},
     })
     expect(saves.at(-1)?.models).toEqual([updated])
+  })
+
+  it("addModel stamps heuristic capabilities with source auto when omitted", async () => {
+    const { ctx } = makeCtx()
+    const handlers = createIpcHandlers(ctx)
+    const created = await handlers.addModel({
+      providerId: "p_openai" as ProviderId,
+      providerModel: "gpt-4o",
+      aliases: [],
+    })
+    expect(created.attachments.image).toBe(true)
+    expect(created.attachmentsSource).toBe("auto")
+  })
+
+  it("addModel persists caller-supplied capabilities verbatim with source user", async () => {
+    const { ctx } = makeCtx()
+    const handlers = createIpcHandlers(ctx)
+    const created = await handlers.addModel({
+      providerId: "p_openai" as ProviderId,
+      providerModel: "totally-unknown-model",
+      aliases: [],
+      attachments: { image: true, pdf: false },
+      attachmentsSource: "user",
+    })
+    expect(created.attachments).toEqual({ image: true, pdf: false })
+    expect(created.attachmentsSource).toBe("user")
+  })
+
+  it("updateModel preserves existing capabilities when omitted", async () => {
+    const { ctx } = makeCtx()
+    const handlers = createIpcHandlers(ctx)
+    const created = await handlers.addModel({
+      providerId: "p_openai" as ProviderId,
+      providerModel: "x",
+      aliases: [],
+      attachments: { image: true },
+      attachmentsSource: "user",
+    })
+    const updated = await handlers.updateModel({
+      id: created.id,
+      input: {
+        providerId: created.providerId,
+        providerModel: "x-renamed",
+        aliases: [],
+        attachments: {},
+      },
+    })
+    expect(updated.attachments).toEqual({ image: true })
+    expect(updated.attachmentsSource).toBe("user")
   })
 
   it("deleteModel removes the route and returns null", async () => {

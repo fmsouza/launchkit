@@ -6,7 +6,11 @@ import {
   ThinkingEffortSchema,
 } from "@spectrum/agent-events"
 import type { IpcHandlers, ProviderView } from "@spectrum/ipc"
-import { providerCatalog, validateProviderConfig } from "@spectrum/providers"
+import {
+  heuristicAttachments,
+  providerCatalog,
+  validateProviderConfig,
+} from "@spectrum/providers"
 import type { ModelId, ModelRoute, Provider, SecretRef } from "@spectrum/types"
 import { isOk } from "@spectrum/utils"
 import type { GuiContext } from "../../composition"
@@ -220,7 +224,11 @@ export const createIpcHandlers = (ctx: GuiContext): IpcHandlers => {
         providerId: input.providerId,
         providerModel: input.providerModel,
         aliases: input.aliases,
-        attachments: {},
+        attachments:
+          input.attachments ?? heuristicAttachments(input.providerModel),
+        ...(input.attachmentsSource !== undefined
+          ? { attachmentsSource: input.attachmentsSource }
+          : { attachmentsSource: "auto" as const }),
       }
       const saved = await ctx.config.save({
         ...config,
@@ -232,12 +240,28 @@ export const createIpcHandlers = (ctx: GuiContext): IpcHandlers => {
 
     updateModel: async ({ id, input }) => {
       const config = await loadConfig()
+      const existing = config.models.find((m) => m.id === id)
+      const inputAttachments = input.attachments ?? {}
+      const capsTouched =
+        input.attachmentsSource !== undefined ||
+        Object.keys(inputAttachments).length > 0
       const next: ModelRoute = {
         id,
         providerId: input.providerId,
         providerModel: input.providerModel,
         aliases: input.aliases,
-        attachments: input.attachments,
+        attachments: capsTouched
+          ? inputAttachments
+          : (existing?.attachments ?? {}),
+        ...((capsTouched
+          ? input.attachmentsSource
+          : existing?.attachmentsSource) !== undefined
+          ? {
+              attachmentsSource: capsTouched
+                ? input.attachmentsSource
+                : existing?.attachmentsSource,
+            }
+          : {}),
       }
       const models = config.models.map((m) => (m.id === id ? next : m))
       const saved = await ctx.config.save({ ...config, models })
