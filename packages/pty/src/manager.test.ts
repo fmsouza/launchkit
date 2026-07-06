@@ -3,6 +3,7 @@ import { SessionIdSchema } from "@spectrum/types"
 import { createFakePtySpawner } from "./fake-pty"
 import { createNoopTerminalManager, createTerminalManager } from "./manager"
 import type { TerminalOutbound } from "./protocol"
+import type { PtySpawner } from "./pty-adapter"
 
 const sessionId = SessionIdSchema.parse(
   "s_00000000-0000-4000-8000-000000000000",
@@ -119,10 +120,10 @@ describe("TerminalManager", () => {
   })
 
   it("returns a spawn-failed Result and does not throw when the spawner errors", () => {
-    const failingSpawner = {
+    const failingSpawner: PtySpawner = {
       spawn: () => ({
         ok: false,
-        error: { kind: "spawn-failed", message: "boom" } as const,
+        error: { kind: "spawn-failed", message: "boom" },
       }),
     }
     const mgr = createTerminalManager({ spawner: failingSpawner })
@@ -132,10 +133,10 @@ describe("TerminalManager", () => {
   })
 
   it("sends a term-error frame (not just a Result) when the spawner fails", () => {
-    const failingSpawner = {
+    const failingSpawner: PtySpawner = {
       spawn: () => ({
         ok: false,
-        error: { kind: "spawn-failed", message: "boom" } as const,
+        error: { kind: "spawn-failed", message: "boom" },
       }),
     }
     const { sent, sink } = capturingSink()

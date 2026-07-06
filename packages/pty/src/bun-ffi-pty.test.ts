@@ -11,7 +11,10 @@ import type { SpawnInput } from "./pty-adapter"
 // called and keep the handle identity so we can assert it stays reachable.
 const makeFakeFfi = (): {
   ffi: Parameters<typeof loadNative>[0]
-  handle: unknown
+  handle: {
+    symbols: { openpty: () => number; ioctl: () => number }
+    close: () => number
+  }
   dlopenCalls: () => number
 } => {
   const noop = (): number => 0
