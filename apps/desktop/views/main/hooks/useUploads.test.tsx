@@ -603,4 +603,54 @@ describe("useUploads", () => {
     })
     expect(result.current.pending).toEqual([same])
   })
+
+  it("preserves pending order in resolveForSend even when dataUrls resolve out of order", async () => {
+    const first: AttachmentRef = ref({ id: "sha_first" })
+    const second: AttachmentRef = ref({
+      id: "sha_second",
+      displayName: "two.png",
+    })
+    const gates = new Map<string, () => void>()
+    const client = createFakeIpcClient({
+      pickUploads: async () => ({
+        ok: true,
+        value: { uploads: [first, second] },
+      }),
+      readUploadThumbnail: async () => ({
+        ok: true,
+        value: { dataUrl: "data:image/png;base64,AAAA" },
+      }),
+      readUploadDataUrl: async (p: unknown) => {
+        const { id } = p as { id: string }
+        await new Promise<void>((resolve) => gates.set(id, resolve))
+        return { ok: true, value: { dataUrl: `data:image/png;base64,${id}` } }
+      },
+    })
+    const { result } = renderHook(
+      () =>
+        useUploads(
+          { image: true, pdf: false, binary: false },
+          () => {},
+          () => {},
+        ),
+      {
+        wrapper: ({ children }) => (
+          <IpcClientProvider client={client}>{children}</IpcClientProvider>
+        ),
+      },
+    )
+    await act(async () => {
+      await result.current.pick()
+    })
+    let resolved: AttachmentRefWithBytes[] = []
+    await act(async () => {
+      const p = result.current.resolveForSend()
+      // Release in REVERSE order — output must still follow pending order.
+      await new Promise((r) => setTimeout(r, 0))
+      gates.get("sha_second")?.()
+      gates.get("sha_first")?.()
+      resolved = await p
+    })
+    expect(resolved.map((a) => a.id)).toEqual(["sha_first", "sha_second"])
+  })
 })

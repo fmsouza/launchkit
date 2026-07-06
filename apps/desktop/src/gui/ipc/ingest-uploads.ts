@@ -50,7 +50,7 @@ export type IngestResult = {
 
 const displayNameOf = (source: UploadSource): string =>
   source.kind === "path"
-    ? (source.path.split("/").pop() ?? source.path)
+    ? (source.path.split(/[\\/]/).pop() ?? source.path)
     : source.displayName
 
 const mimeOf = (source: UploadSource, displayName: string): string =>
@@ -58,11 +58,16 @@ const mimeOf = (source: UploadSource, displayName: string): string =>
     ? source.mime
     : mimeFromExt(displayName)
 
-type PerFileOutcome = {
-  upload?: AttachmentRef
-  rejected?: { displayName: string; reason: "unsupported-kind" }
-  error?: { displayName: string; reason: "io-failed" | "too-large" }
-}
+type PerFileOutcome =
+  | { readonly kind: "saved"; readonly upload: AttachmentRef }
+  | {
+      readonly kind: "rejected"
+      readonly rejected: { displayName: string; reason: "unsupported-kind" }
+    }
+  | {
+      readonly kind: "errored"
+      readonly error: { displayName: string; reason: "io-failed" | "too-large" }
+    }
 
 /**
  * Canonical upload ingestion shared by the native file picker and composer
@@ -86,7 +91,10 @@ export const ingestUploads = async (params: {
       const mime = mimeOf(source, displayName)
       const kind = inferKind(mime, displayName)
       if (!accepted.has(kind)) {
-        return { rejected: { displayName, reason: "unsupported-kind" } }
+        return {
+          kind: "rejected",
+          rejected: { displayName, reason: "unsupported-kind" },
+        }
       }
       const res =
         source.kind === "path"
@@ -102,7 +110,7 @@ export const ingestUploads = async (params: {
               displayName,
               maxBytes: MAX_UPLOAD_BYTES,
             })
-      if (res.ok) return { upload: res.value.ref }
+      if (res.ok) return { kind: "saved", upload: res.value.ref }
       // Effect-boundary log: the webview gets a typed error entry; the log keeps the detail.
       log.error("upload save failed", {
         displayName,
@@ -110,6 +118,7 @@ export const ingestUploads = async (params: {
         detail: res.error.detail,
       })
       return {
+        kind: "errored",
         error: {
           displayName,
           reason: res.error.kind === "too-large" ? "too-large" : "io-failed",
@@ -117,15 +126,11 @@ export const ingestUploads = async (params: {
       }
     }),
   )
-  const uploads = perFile.flatMap((f) =>
-    f.upload === undefined ? [] : [f.upload],
-  )
+  const uploads = perFile.flatMap((f) => (f.kind === "saved" ? [f.upload] : []))
   const rejected = perFile.flatMap((f) =>
-    f.rejected === undefined ? [] : [f.rejected],
+    f.kind === "rejected" ? [f.rejected] : [],
   )
-  const errors = perFile.flatMap((f) =>
-    f.error === undefined ? [] : [f.error],
-  )
+  const errors = perFile.flatMap((f) => (f.kind === "errored" ? [f.error] : []))
   log.debug("ingested uploads", {
     total: sources.length,
     saved: uploads.length,

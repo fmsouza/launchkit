@@ -1,6 +1,12 @@
 import { describe, expect, it } from "bun:test"
 import type { ModelRoute } from "@spectrum/types"
-import { cleanup, fireEvent, render, screen } from "@testing-library/react"
+import {
+  cleanup,
+  createEvent,
+  fireEvent,
+  render,
+  screen,
+} from "@testing-library/react"
 import { Composer, growTextareaHeight, resolveMaxHeightPx } from "./Composer"
 
 describe("Composer", () => {
@@ -467,6 +473,57 @@ describe("Composer", () => {
       fileDrag([new File(["a"], "a.png", { type: "image/png" })]),
     )
     expect(calls).toBe(0)
+    cleanup()
+  })
+
+  it("stays inert after an unbalanced dragLeave and still activates on the next dragEnter", () => {
+    render(
+      <Composer
+        onSend={() => {}}
+        attachmentCapabilities={caps}
+        onDropFiles={() => {}}
+      />,
+    )
+    // Leave with no prior enter: the depth clamp keeps state at 0 (no class)…
+    fireEvent.dragLeave(composerEl(), fileDrag())
+    expect(composerEl()).not.toHaveClass("lk-composer--drop-active")
+    // …and ONE subsequent enter is enough to highlight (state never went negative).
+    fireEvent.dragEnter(composerEl(), fileDrag())
+    expect(composerEl()).toHaveClass("lk-composer--drop-active")
+    cleanup()
+  })
+
+  it("accepts the drag on dragOver by preventing default and requesting a copy effect", () => {
+    render(
+      <Composer
+        onSend={() => {}}
+        attachmentCapabilities={caps}
+        onDropFiles={() => {}}
+      />,
+    )
+    const dt = { types: ["Files"], files: [], dropEffect: "none" }
+    const event = createEvent.dragOver(composerEl())
+    Object.defineProperty(event, "dataTransfer", { value: dt })
+    fireEvent(composerEl(), event)
+    expect(event.defaultPrevented).toBe(true)
+    expect(dt.dropEffect).toBe("copy")
+    cleanup()
+  })
+
+  it("leaves non-file dragOver untouched", () => {
+    render(
+      <Composer
+        onSend={() => {}}
+        attachmentCapabilities={caps}
+        onDropFiles={() => {}}
+      />,
+    )
+    const dt = { types: ["text/plain"], files: [], dropEffect: "none" }
+    const event = createEvent.dragOver(composerEl())
+    Object.defineProperty(event, "dataTransfer", { value: dt })
+    fireEvent(composerEl(), event)
+    expect(event.defaultPrevented).toBe(false)
+    expect(dt.dropEffect).toBe("none")
     cleanup()
   })
 })

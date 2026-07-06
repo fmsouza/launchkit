@@ -552,7 +552,7 @@ describe("RunView", () => {
       selectTab: () => {},
       mountTerminal: () => () => {},
     }
-    render(<RunView {...base} terminal={terminal} cwd="/tmp" />)
+    render(<RunView {...base} terminal={terminal} />)
     const composer = document.querySelector(".lk-composer")
     const pane = document.querySelector(".lk-terminal-pane")
     if (composer === null) throw new Error("expected composer")
@@ -581,7 +581,7 @@ describe("RunView", () => {
       selectTab: () => {},
       mountTerminal: () => () => {},
     }
-    render(<RunView {...base} terminal={terminal} cwd="/tmp" />)
+    render(<RunView {...base} terminal={terminal} />)
     // Collapsing must NOT unmount the pane (that would kill the PTYs); it stays
     // in the DOM but hidden so the running sessions survive.
     const pane = document.querySelector<HTMLElement>(".lk-terminal-pane")
@@ -604,7 +604,7 @@ describe("RunView", () => {
       selectTab: () => {},
       mountTerminal: () => () => {},
     }
-    render(<RunView {...base} terminal={terminal} cwd="/tmp" />)
+    render(<RunView {...base} terminal={terminal} />)
     expect(document.querySelector(".lk-terminal-pane")).toBeNull()
     cleanup()
   })
