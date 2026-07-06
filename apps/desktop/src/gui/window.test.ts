@@ -1,6 +1,13 @@
 import { describe, expect, it, mock } from "bun:test"
 import type { GuiContext } from "../composition"
-import { bindExternalNavigation, bindWebviewReload, openWindow } from "./window"
+import {
+  ORIGIN_LOCK_RULES,
+  bindExternalNavigation,
+  bindNavigationLock,
+  bindWebviewReload,
+  openWindow,
+  realOpenWindowDeps,
+} from "./window"
 import type { OpenWindowDeps, WindowOptions } from "./window"
 import type { WindowBounds } from "./window-bounds"
 import type { WindowBoundsIO } from "./window-bounds-io"
@@ -76,9 +83,10 @@ describe("bindExternalNavigation", () => {
   //
   // This verifies the best-effort side-effect contract only: a will-navigate to
   // an EXTERNAL url calls openExternal. It does NOT (and cannot) verify
-  // navigation prevention — will-navigate is observational in Electrobun 1.18.1
-  // (see bindExternalNavigation's doc comment). A real origin-lock would use
-  // BrowserView.setNavigationRules and is tracked as a follow-up.
+  // navigation prevention — will-navigate remains observational in Electrobun
+  // 1.18.1 (see bindExternalNavigation's doc comment). The actual origin lock is
+  // now implemented natively via BrowserView.setNavigationRules — see the
+  // ORIGIN_LOCK_RULES / bindNavigationLock describes below.
   type NavEvent = { readonly data: { readonly detail: string } }
   const wireNav = (
     openExternal: (url: string) => boolean,
@@ -129,6 +137,43 @@ describe("bindExternalNavigation", () => {
     })
     navHandler({ data: { detail: undefined as unknown as string } })
     expect(called).toBe(false)
+  })
+})
+
+describe("ORIGIN_LOCK_RULES", () => {
+  // Electrobun 1.18.1 navigation rules: `^`-prefixed = DENY, un-prefixed =
+  // ALLOW, glob `*`-only, case-insensitive, whole-URL, LAST-match-wins, and an
+  // unmatched URL defaults to ALLOW. So an origin-lock must deny-all first, then
+  // re-allow only the app origin — order is load-bearing.
+  it("denies every origin, then re-allows only the app's views://main origin", () => {
+    expect(ORIGIN_LOCK_RULES).toEqual(["^*", "views://main/*"])
+  })
+
+  it("allows the configured startup viewUrl (guards rule/viewUrl divergence)", () => {
+    // The allow rule is a glob ending in `*`; strip it to get the origin prefix
+    // and assert the window's real startup URL falls under it. If someone
+    // repoints viewUrl at a different views:// host without updating the lock,
+    // the native rules would deny the app's own load — this test catches that.
+    const allowRule = ORIGIN_LOCK_RULES[1] ?? ""
+    const originPrefix = allowRule.slice(0, -1) // "views://main/*" -> "views://main/"
+    expect(realOpenWindowDeps.viewUrl.startsWith(originPrefix)).toBe(true)
+  })
+})
+
+describe("bindNavigationLock", () => {
+  // Applies the native origin-lock to the window's webview. Pure over the
+  // injected win + a fake `setNavigationRules`, so no real BrowserView is needed.
+  it("sets the origin-lock rules on the window's webview", () => {
+    let captured: readonly string[] | undefined
+    const win = {
+      webview: {
+        setNavigationRules: (rules: string[]) => {
+          captured = rules
+        },
+      },
+    }
+    bindNavigationLock(win)
+    expect(captured).toEqual(["^*", "views://main/*"])
   })
 })
 
