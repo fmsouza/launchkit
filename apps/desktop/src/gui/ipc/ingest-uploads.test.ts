@@ -35,9 +35,8 @@ const fakeStore = (
   return {
     saveCalls,
     saveBytesCalls,
-    save: async ({ sourcePath, mime, maxBytes }) => {
+    save: async ({ sourcePath, mime, displayName, maxBytes }) => {
       saveCalls.push({ sourcePath, mime, maxBytes })
-      const displayName = sourcePath.split("/").pop() ?? sourcePath
       return {
         ok: true,
         value: { ref: refFor(displayName, mime), path: `/up/${displayName}` },
@@ -271,5 +270,16 @@ describe("ingestUploads", () => {
     })
     expect("rejected" in res).toBe(false)
     expect("errors" in res).toBe(false)
+  })
+
+  it("derives the display name from the last segment of a Windows path", async () => {
+    const store = fakeStore()
+    const res = await ingestUploads({
+      sources: [{ kind: "path", path: "C:\\Users\\fred\\Pictures\\shot.png" }],
+      acceptedKinds: ["image"],
+      store,
+      log,
+    })
+    expect(res.uploads.map((u) => u.displayName)).toEqual(["shot.png"])
   })
 })
