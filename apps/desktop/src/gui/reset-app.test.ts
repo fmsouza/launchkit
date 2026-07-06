@@ -32,7 +32,7 @@ const makeDeps = (config: Config) => {
     deleted,
     calls,
     deps: {
-      config: { load: async () => ok(config), save: async () => ok(config) },
+      config: { load: async () => ok(config), save: async () => ok(undefined) },
       secrets: {
         set: async () => ok({ ref: "x" } as SecretRef),
         get: async () => ok("v"),
@@ -46,7 +46,7 @@ const makeDeps = (config: Config) => {
       removeDir: (dir: string) => calls.push(`removeDir:${dir}`),
       relaunch: () => calls.push("relaunch"),
       dataDir: "/data/Spectrum",
-      legacyDirs: [],
+      legacyDirs: [] as readonly string[],
       logger: createNoopLogger(),
     },
   }
@@ -122,7 +122,7 @@ describe("createResetApp", () => {
     const logger = {
       ...createNoopLogger(),
       warn: (msg: string, fields?: Record<string, unknown>) =>
-        warns.push({ msg, fields }),
+        warns.push(fields === undefined ? { msg } : { msg, fields }),
     }
     const base = makeDeps(configWithSecrets(["kc_1"]))
     const reset = createResetApp({

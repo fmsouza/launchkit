@@ -6,6 +6,7 @@ const base = {
   phase: "available" as const,
   currentVersion: "1.0.0",
   latestVersion: "1.1.0",
+  latestHash: null,
   available: true,
   progress: 0,
   error: null,

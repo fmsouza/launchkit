@@ -64,7 +64,7 @@
  */
 
 import { afterEach, describe, expect, it } from "bun:test"
-import type { ProviderView } from "@spectrum/ipc"
+import type { HarnessView, ProviderView } from "@spectrum/ipc"
 import type { HarnessDefinition, ModelRoute, Session } from "@spectrum/types"
 import { act, cleanup, fireEvent, waitFor } from "@testing-library/react"
 import { render } from "@testing-library/react"
@@ -101,12 +101,13 @@ const fakeRunnerClient: RunnerClient = {
 // ---------------------------------------------------------------------------
 
 const harness: HarnessDefinition = {
-  id: "claude",
+  id: "claude" as HarnessDefinition["id"],
   name: "Claude Code",
   command: "claude",
   apiFormat: "anthropic",
   envTemplate: { ANTHROPIC_BASE_URL: "{{proxyUrl}}" },
   builtIn: true,
+  native: true,
 } as unknown as HarnessDefinition
 
 const provider: ProviderView = {
@@ -652,7 +653,10 @@ const renderAllStates = async (): Promise<ReadonlyArray<ParentNode>> => {
         ok: true as const,
         value: allSessions,
       }),
-      getHarnesses: async () => ({ ok: true as const, value: [harness] }),
+      getHarnesses: async () => ({
+        ok: true as const,
+        value: [harness] as unknown as HarnessView[],
+      }),
       getModels: async () => ({ ok: true as const, value: [model] }),
     })
     const { container } = render(
@@ -677,7 +681,10 @@ const renderAllStates = async (): Promise<ReadonlyArray<ParentNode>> => {
   {
     const client = createFakeIpcClient({
       ...baseStubs,
-      getHarnesses: async () => ({ ok: true as const, value: [harness] }),
+      getHarnesses: async () => ({
+        ok: true as const,
+        value: [harness] as unknown as HarnessView[],
+      }),
       getModels: async () => ({ ok: true as const, value: [model] }),
     })
     const { container, getByRole } = render(
@@ -785,7 +792,7 @@ const renderAllStates = async (): Promise<ReadonlyArray<ParentNode>> => {
       ...baseStubs,
       getHarnesses: async () => ({
         ok: true as const,
-        value: [harness],
+        value: [harness] as unknown as HarnessView[],
       }),
     })
     const { container } = render(
@@ -811,6 +818,7 @@ const renderAllStates = async (): Promise<ReadonlyArray<ParentNode>> => {
         phase: "available" as const,
         currentVersion: "1.0.0",
         latestVersion: "1.1.0",
+        latestHash: null,
         available: true,
         progress: 0,
         error: null,
@@ -846,6 +854,7 @@ const renderAllStates = async (): Promise<ReadonlyArray<ParentNode>> => {
         phase: "downloaded" as const,
         currentVersion: "1.0.0",
         latestVersion: "1.1.0",
+        latestHash: null,
         available: true,
         progress: 1,
         error: null,

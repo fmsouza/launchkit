@@ -77,7 +77,10 @@ describe("Spectrum end-to-end", () => {
       port: 0,
       proxyKey: "k",
       router: createRouter(loaded.value),
-      factory: { getModel: async () => ({ ok: true, value: {} }) },
+      factory: {
+        getModel: async () => ({ ok: true, value: {} }),
+        getModelFromResolved: async () => ({ ok: true, value: {} }),
+      },
       gateway: createScriptedGateway([
         { type: "finish", finishReason: "stop" },
       ]),
@@ -123,7 +126,10 @@ describe("Spectrum end-to-end", () => {
       port: 0,
       proxyKey: "k",
       router: createRouter(cfg),
-      factory: { getModel: async () => ({ ok: true, value: {} }) },
+      factory: {
+        getModel: async () => ({ ok: true, value: {} }),
+        getModelFromResolved: async () => ({ ok: true, value: {} }),
+      },
       gateway: slow,
       listModels: () => cfg.models.map((m) => String(m.id)),
     })
@@ -163,7 +169,10 @@ describe("Spectrum end-to-end", () => {
       port: 0,
       proxyKey: "k",
       router: createRouter(getConfig),
-      factory: { getModel: async () => ({ ok: true, value: {} }) },
+      factory: {
+        getModel: async () => ({ ok: true, value: {} }),
+        getModelFromResolved: async () => ({ ok: true, value: {} }),
+      },
       gateway: createScriptedGateway([
         { type: "finish", finishReason: "stop" },
       ]),

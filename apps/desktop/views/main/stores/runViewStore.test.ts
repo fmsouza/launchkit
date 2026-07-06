@@ -178,7 +178,7 @@ describe("runViewStore starting signal", () => {
       runnerId: "r_root" as never,
     })
     expect(store.getState().startingBySession[sid2]).toBeUndefined()
-    expect(store.getState().byId[sid2]?.rootRunnerId).toBe("r_root")
+    expect(store.getState().byId[sid2]?.rootRunnerId).toBe("r_root" as RunnerId)
   })
 
   it("applyEvent clears starting on an errored runner-finished (start failure)", () => {

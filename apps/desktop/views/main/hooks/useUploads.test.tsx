@@ -215,9 +215,9 @@ describe("useUploads", () => {
   })
 
   it("open delegates to the page-level resolver", () => {
-    let seen: { id: string } | null = null
+    const seen: { id: string } = { id: "" }
     const onOpen = (r: AttachmentRef, _d: string | null): void => {
-      seen = { id: r.id }
+      seen.id = r.id
     }
     const client = createFakeIpcClient({})
     const r: AttachmentRef = ref({ id: "sha_abc" })

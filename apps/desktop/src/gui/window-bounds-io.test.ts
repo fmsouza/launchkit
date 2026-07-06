@@ -29,8 +29,8 @@ const makeFakeConfig = (
 
 /** A controllable timer: captures the latest scheduled callback so the test fires it. */
 const makeFakeTimer = (): {
-  setTimer: (fn: () => void, ms: number) => number
-  clearTimer: (handle: number) => void
+  setTimer: (fn: () => void, ms: number) => ReturnType<typeof setTimeout>
+  clearTimer: (handle: ReturnType<typeof setTimeout>) => void
   fire: () => void
   cleared: () => number
 } => {
@@ -39,7 +39,7 @@ const makeFakeTimer = (): {
   return {
     setTimer: (fn) => {
       pending = fn
-      return 1
+      return 1 as unknown as ReturnType<typeof setTimeout>
     },
     clearTimer: () => {
       clears += 1
@@ -155,7 +155,7 @@ describe("createWindowBoundsIO.onBoundsChange", () => {
       log: { ...log, error },
       setTimer: (fn) => {
         fn()
-        return 1
+        return 1 as unknown as ReturnType<typeof setTimeout>
       },
       clearTimer: () => {},
     })

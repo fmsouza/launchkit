@@ -44,7 +44,7 @@ describe("createUiStore", () => {
     const store = createUiStore("sessions")
     store.getState().openSession("s_1" as SessionId)
     store.getState().openSession("s_1" as SessionId)
-    expect(store.getState().openSessionIds).toEqual(["s_1"])
+    expect(store.getState().openSessionIds).toEqual(["s_1"] as SessionId[])
     store.getState().closeSession("s_1" as SessionId)
     expect(store.getState().openSessionIds).toEqual([])
   })

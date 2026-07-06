@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test"
 import { render, screen } from "@testing-library/react"
+import type { JSX } from "react"
 import { IpcClientProvider, useIpcClient } from "./IpcClientContext"
 import { createFakeIpcClient } from "./test/fake-client"
 

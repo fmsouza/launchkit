@@ -39,7 +39,10 @@ describe("sortModelIds", () => {
 
 describe("sortModelRoutes", () => {
   it("orders by provider display name then providerModel", () => {
-    const names = { p_anthropic: "Anthropic", p_openai: "OpenAI" }
+    const names: Record<string, string> = {
+      p_anthropic: "Anthropic",
+      p_openai: "OpenAI",
+    }
     const input = [
       route("m2", "p_openai", "gpt-4o"),
       route("m1", "p_anthropic", "claude-sonnet"),
@@ -61,7 +64,7 @@ describe("sortModelRoutes", () => {
   })
 
   it("sorts case-insensitively and numerically", () => {
-    const names = { p1: "anthropic" }
+    const names: Record<string, string> = { p1: "anthropic" }
     const input = [
       route("m1", "p1", "claude-10"),
       route("m2", "p1", "Claude-3"),

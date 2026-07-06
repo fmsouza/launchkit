@@ -13,7 +13,7 @@ const makeFakeConfig = (
 ): ConfigStore => ({
   load: async () =>
     ok({
-      version: 1 as const,
+      version: 1,
       providers: [],
       models: [],
       settings: {
@@ -30,8 +30,8 @@ const makeFakeConfig = (
         lastByHarness: {},
         ...overrides,
       },
-    }),
-  save: async (cfg) => ok(cfg),
+    } as Config),
+  save: async () => ok(undefined),
 })
 
 describe("buildUpdateState", () => {
@@ -100,7 +100,7 @@ describe("buildUpdateState", () => {
     await updater.check("canary")
     const config: ConfigStore = {
       load: async () => err({ kind: "not-found" }),
-      save: async (cfg) => ok(cfg),
+      save: async () => ok(undefined),
     }
 
     const state = await buildUpdateState({ updater, config })

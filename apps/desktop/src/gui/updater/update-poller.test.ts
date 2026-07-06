@@ -16,10 +16,10 @@ const fakeLogger = (): Logger & { calls: string[] } => {
   const calls: string[] = []
   return {
     calls,
-    info: (msg) => calls.push(`info:${msg}`),
-    warn: (msg) => calls.push(`warn:${msg}`),
-    error: (msg) => calls.push(`error:${msg}`),
-    debug: (msg) => calls.push(`debug:${msg}`),
+    info: (msg: string) => calls.push(`info:${msg}`),
+    warn: (msg: string) => calls.push(`warn:${msg}`),
+    error: (msg: string) => calls.push(`error:${msg}`),
+    debug: (msg: string) => calls.push(`debug:${msg}`),
     child: () => fakeLogger(),
   } as unknown as Logger & { calls: string[] }
 }

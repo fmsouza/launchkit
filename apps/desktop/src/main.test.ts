@@ -57,11 +57,11 @@ describe("module side effects", () => {
 
 describe("buildRealDeps", () => {
   it("produces a RunGuiDeps whose startProxy and openWindow are callable (no runCli)", () => {
-    const deps = buildRealDeps(fakeFactory)
+    const deps = buildRealDeps(fakeFactory as never)
     expect(typeof deps.startProxy).toBe("function")
     expect(typeof deps.openWindow).toBe("function")
     // GUI-only: no runCli field on the deps
-    expect((deps as Record<string, unknown>).runCli).toBeUndefined()
+    expect((deps as unknown as Record<string, unknown>).runCli).toBeUndefined()
   })
 
   it("calls reconcileOrphaned() on the session store when startProxy is invoked (GUI startup)", async () => {
@@ -113,7 +113,7 @@ describe("buildRealDeps", () => {
         log: createNoopLogger(),
       }) as never) as typeof createAppContext
 
-    const deps = buildRealDeps(factoryWithSpy)
+    const deps = buildRealDeps(factoryWithSpy as never)
     // startProxy is the GUI-only path; trigger it and wait for the async load to complete
     deps.startProxy()
     // The async config.load() is deferred; flush the microtask queue
@@ -134,7 +134,9 @@ describe("buildRealDeps", () => {
         error: () => {},
         fatal: () => {},
         warn: (msg: string, fields?: Record<string, unknown>) =>
-          warns.push({ scope, msg, fields }),
+          warns.push(
+            fields === undefined ? { scope, msg } : { scope, msg, fields },
+          ),
         child: () => child(scope),
       })
       return {
@@ -196,7 +198,7 @@ describe("buildRealDeps", () => {
         log: makeCapturingLog(),
       }) as never) as typeof createAppContext
 
-    const deps = buildRealDeps(factoryWithFailingReconcile)
+    const deps = buildRealDeps(factoryWithFailingReconcile as never)
     deps.startProxy()
     await Promise.resolve()
     expect(warns).toHaveLength(1)
@@ -206,7 +208,7 @@ describe("buildRealDeps", () => {
   })
 
   it("startProxy returns a ProxyHandle whose stop() can be invoked", () => {
-    const deps = buildRealDeps(fakeFactory)
+    const deps = buildRealDeps(fakeFactory as never)
     const handle = deps.startProxy()
     expect(typeof handle.stop).toBe("function")
     // Should not throw
@@ -231,7 +233,7 @@ describe("buildRealDeps startProxy PATH enrichment", () => {
       } as never
     }) as never
     try {
-      const deps = buildRealDeps(fakeFactory)
+      const deps = buildRealDeps(fakeFactory as never)
       deps.startProxy()
       expect(syncSpawnObserved).toBe(false)
     } finally {
@@ -240,7 +242,7 @@ describe("buildRealDeps startProxy PATH enrichment", () => {
   })
 
   it("exposes ensureGuiPathResolved which resolves after the async enrichment settles", async () => {
-    const deps = buildRealDeps(fakeFactory)
+    const deps = buildRealDeps(fakeFactory as never)
     expect(typeof deps.ensureGuiPathResolved).toBe("function")
     // No throw; resolves (the real async probe runs, but the memo means it runs once).
     await expect(deps.ensureGuiPathResolved()).resolves.toBeUndefined()
@@ -306,7 +308,7 @@ describe("main startup regression guard", () => {
       } as never
     }) as never
     try {
-      const realDeps = buildRealDeps(fakeFactory)
+      const realDeps = buildRealDeps(fakeFactory as never)
       const deps = {
         startProxy: realDeps.startProxy,
         openWindow: () => {},

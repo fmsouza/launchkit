@@ -107,7 +107,12 @@ describe("createElectrobunUpdater", () => {
     const u = createElectrobunUpdater({
       loadEngine: async () =>
         baseEngine({
-          onStatusChange: (cb) => {
+          onStatusChange: (
+            cb: (e: {
+              status: string
+              details?: { progress?: number }
+            }) => void,
+          ) => {
             emit = cb
           },
           downloadUpdate: () =>
@@ -124,7 +129,9 @@ describe("createElectrobunUpdater", () => {
     // Mid-download: percentage 50 must be normalized to 0.5 (not forwarded verbatim)
     expect(u.getRaw().progress).toBe(0.5)
     // Now complete the download
-    emit?.({ status: "download-complete" })
+    ;(emit as ((e: { status: string }) => void) | null)?.({
+      status: "download-complete",
+    })
     resolveDownload()
     await new Promise((r) => setTimeout(r, 0))
     expect(u.getRaw().phase).toBe("downloaded")
@@ -137,7 +144,12 @@ describe("createElectrobunUpdater", () => {
     const u = createElectrobunUpdater({
       loadEngine: async () =>
         baseEngine({
-          onStatusChange: (cb) => {
+          onStatusChange: (
+            cb: (e: {
+              status: string
+              details?: { progress?: number }
+            }) => void,
+          ) => {
             emit = cb
           },
           downloadUpdate: async () => {
@@ -158,7 +170,12 @@ describe("createElectrobunUpdater", () => {
     const u = createElectrobunUpdater({
       loadEngine: async () =>
         baseEngine({
-          onStatusChange: (cb) => {
+          onStatusChange: (
+            cb: (e: {
+              status: string
+              details?: { progress?: number }
+            }) => void,
+          ) => {
             emit = cb
           },
           downloadUpdate: async () => {

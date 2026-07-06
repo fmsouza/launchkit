@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test"
 import { act, render, waitFor } from "@testing-library/react"
+import type { JSX } from "react"
 import { IpcClientProvider } from "../IpcClientContext"
 import { createFakeIpcClient } from "../test/fake-client"
 import { useDraftConnectionTest } from "./useDraftConnectionTest"

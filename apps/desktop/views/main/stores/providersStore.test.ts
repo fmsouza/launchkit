@@ -1,5 +1,6 @@
 import { describe, expect, it, mock } from "bun:test"
 import type { ProviderView } from "@spectrum/ipc"
+import type { ProviderId } from "@spectrum/types"
 import { createFakeIpcClient } from "../test/fake-client"
 import { createProvidersStore } from "./providersStore"
 
@@ -77,7 +78,7 @@ describe("createProvidersStore", () => {
     const store = createProvidersStore({ client })
     await store.getState().fetch()
     await store.getState().setSecret({
-      providerId: "p_openai",
+      providerId: "p_openai" as ProviderId,
       field: "apiKey",
       value: "sk-123",
     })

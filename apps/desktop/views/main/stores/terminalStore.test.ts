@@ -36,19 +36,35 @@ beforeEach(() => {
   ;(globalThis as { localStorage?: Storage }).localStorage?.clear?.()
 })
 
+// Tiny non-null helper to satisfy `lint/style/noNonNullAssertion`. Reads
+// `useTerminalStore.getState().sessions[id]` and throws if the session is
+// missing — tests assert the precondition holds, not the runtime shape.
+const session = (id: typeof sessionId) => {
+  const s = useTerminalStore.getState().sessions[id]
+  if (!s) throw new Error(`no session ${id}`)
+  return s
+}
+
+// Same non-null helper for `s.tabs[n]`.
+const tab = (s: { tabs: ReadonlyArray<{ id: string }> }, n: number) => {
+  const t = s.tabs[n]
+  if (!t) throw new Error(`no tab ${n}`)
+  return t
+}
+
 describe("terminalStore", () => {
   it("opens the pane for a session with a first tab", () => {
     useTerminalStore.getState().openPane(sessionId)
-    const s = useTerminalStore.getState().sessions[sessionId]
+    const s = session(sessionId)
     expect(s.paneOpen).toBe(true)
     expect(s.tabs).toHaveLength(1)
-    expect(s.activeTabId).toBe(s.tabs[0].id)
+    expect(s.activeTabId).toBe(tab(s, 0).id)
   })
 
   it("closePane sets paneOpen=false but keeps tabs", () => {
     useTerminalStore.getState().openPane(sessionId)
     useTerminalStore.getState().closePane(sessionId)
-    const s = useTerminalStore.getState().sessions[sessionId]
+    const s = session(sessionId)
     expect(s.paneOpen).toBe(false)
     expect(s.tabs.length).toBeGreaterThan(0)
   })
@@ -56,16 +72,16 @@ describe("terminalStore", () => {
   it("newTab adds a tab and activates it", () => {
     useTerminalStore.getState().openPane(sessionId)
     useTerminalStore.getState().newTab(sessionId)
-    const s = useTerminalStore.getState().sessions[sessionId]
+    const s = session(sessionId)
     expect(s.tabs).toHaveLength(2)
-    expect(s.activeTabId).toBe(s.tabs[1].id)
+    expect(s.activeTabId).toBe(tab(s, 1).id)
   })
 
   it("closeTab removes a tab and deactivates the pane when none remain", () => {
     useTerminalStore.getState().openPane(sessionId)
-    const s = useTerminalStore.getState().sessions[sessionId]
-    useTerminalStore.getState().closeTab(sessionId, s.tabs[0].id)
-    const after = useTerminalStore.getState().sessions[sessionId]
+    const s = session(sessionId)
+    useTerminalStore.getState().closeTab(sessionId, tab(s, 0).id)
+    const after = session(sessionId)
     expect(after.tabs).toHaveLength(0)
     expect(after.paneOpen).toBe(false)
   })
@@ -73,9 +89,7 @@ describe("terminalStore", () => {
   it("setHeight updates paneHeightPx", () => {
     useTerminalStore.getState().openPane(sessionId)
     useTerminalStore.getState().setHeight(sessionId, 250)
-    expect(useTerminalStore.getState().sessions[sessionId].paneHeightPx).toBe(
-      250,
-    )
+    expect(session(sessionId).paneHeightPx).toBe(250)
   })
 
   it("persist paneOpen + height across store re-init, but not tabs", () => {
@@ -84,7 +98,7 @@ describe("terminalStore", () => {
     // simulate restart: re-hydrate from localStorage
     useTerminalStore.setState({ sessions: {} })
     useTerminalStore.getState().hydrate(sessionId)
-    const s = useTerminalStore.getState().sessions[sessionId]
+    const s = session(sessionId)
     expect(s.paneOpen).toBe(true)
     expect(s.paneHeightPx).toBe(300)
     expect(s.tabs).toHaveLength(0) // tabs do not persist
