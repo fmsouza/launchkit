@@ -4,7 +4,11 @@ import type { SecretError } from "./backend"
 import type { ProcessRunner } from "./process-runner"
 import { createSecretToolBackend } from "./secret-tool-backend"
 
-type Call = { command: string; args: readonly string[]; stdin?: string }
+type Call = {
+  command: string
+  args: readonly string[]
+  stdin?: string | undefined
+}
 const recordingRunner = (
   results: ReadonlyArray<Result<{ stdout: string }, SecretError>>,
 ) => {
