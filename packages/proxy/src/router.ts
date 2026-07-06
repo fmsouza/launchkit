@@ -1,5 +1,6 @@
 import type { Config } from "@spectrum/config"
 import type { Provider } from "@spectrum/types"
+import { WIRE_ALIAS_PREFIX } from "@spectrum/types"
 import { type Result, err, ok } from "@spectrum/utils"
 import type { ProxyError } from "./types"
 
@@ -12,6 +13,7 @@ export type ResolvedRoute = {
     | "alias"
     | "provider-model"
     | "session-fallback"
+    | "wire-alias"
 }
 
 // Well-known model "family" keywords. A requested id is reduced to the FIRST family keyword it
@@ -72,6 +74,17 @@ const resolveIn = (
   id: string,
   fallbackModelId: string | undefined,
 ): Result<ResolvedRoute, ProxyError> => {
+  // 0. Wire alias: the harness CLI was handed `claude-spectrum-<routeId>` so it treats the
+  //    model as multimodal-capable and ships real image/PDF blocks. Strip back to the exact
+  //    route so the proxy runs against the user's selected model.
+  if (id.startsWith(WIRE_ALIAS_PREFIX)) {
+    const suffix = id.slice(WIRE_ALIAS_PREFIX.length)
+    const viaWire = config.models.find((x) => (x.id as string) === suffix)
+    if (viaWire !== undefined) return toResolved(config, viaWire, "wire-alias")
+    // Unknown suffix: fall through — the full id still participates in the
+    // alias/family/fallback chain below.
+  }
+
   // 1. Exact route-id match (preserves explicit multi-route setups).
   const exact = config.models.find((x) => (x.id as string) === id)
   if (exact !== undefined) return toResolved(config, exact, "exact")
