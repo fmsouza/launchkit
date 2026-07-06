@@ -51,7 +51,7 @@ const ModelField = ({
     <ModelPicker
       id="model-model"
       loading={loading && providerId !== ""}
-      models={discovered}
+      models={discovered.map((d) => d.id)}
       value={value}
       onChange={onChange}
       {...(showMessage

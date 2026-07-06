@@ -256,7 +256,7 @@ export const ProvidersPage = (): ReactElement => {
                     sdkProvider,
                     config,
                     secrets: newSecrets,
-                    providerModel: models[0] ?? "",
+                    providerModel: models[0]?.id ?? "",
                   })
                 })()
               }}

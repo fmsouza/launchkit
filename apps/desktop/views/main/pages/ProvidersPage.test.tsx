@@ -327,7 +327,7 @@ describe("ProvidersPage", () => {
     const client = renderPage({
       listProviderModelsDraft: async () => ({
         ok: true,
-        value: { models: ["gpt-4o"] },
+        value: { models: [{ id: "gpt-4o" }] },
       }),
       testProviderDraft: async () => ({
         ok: true,
@@ -471,7 +471,7 @@ describe("ProvidersPage", () => {
     const client = renderPage({
       listProviderModelsDraft: async () => ({
         ok: true,
-        value: { models: ["m1"] },
+        value: { models: [{ id: "m1" }] },
       }),
       testProviderDraft: async () => ({
         ok: true,

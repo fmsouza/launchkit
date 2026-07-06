@@ -1,5 +1,9 @@
-import { getDescriptor } from "@spectrum/providers"
-import type { SdkProvider } from "@spectrum/types"
+import {
+  attachmentsFromOllamaTag,
+  attachmentsFromOpenAiEntry,
+  getDescriptor,
+} from "@spectrum/providers"
+import type { DiscoveredModel, SdkProvider } from "@spectrum/types"
 import { type Result, err, ok } from "@spectrum/utils"
 import type { ProxyError } from "./types"
 
@@ -54,10 +58,10 @@ export const createFetchHttpGet = (): HttpGet => async (url, headers) => {
 
 // ── Response validators ───────────────────────────────────────────────────────
 
-/** Validate and extract ollama /api/tags response → string[]. */
+/** Validate and extract ollama /api/tags response → DiscoveredModel[]. */
 const parseOllamaTags = (
   body: unknown,
-): Result<readonly string[], ProxyError> => {
+): Result<readonly DiscoveredModel[], ProxyError> => {
   if (
     typeof body !== "object" ||
     body === null ||
@@ -72,7 +76,7 @@ const parseOllamaTags = (
   }
 
   const models = (body as { models: unknown[] }).models
-  const names: string[] = []
+  const out: DiscoveredModel[] = []
   for (const item of models) {
     if (
       typeof item !== "object" ||
@@ -86,15 +90,20 @@ const parseOllamaTags = (
           "unexpected item shape in ollama /api/tags .models: missing .name string",
       })
     }
-    names.push((item as { name: string }).name)
+    const name = (item as { name: string }).name
+    const caps = attachmentsFromOllamaTag(item)
+    out.push(
+      caps === undefined ? { id: name } : { id: name, attachments: caps },
+    )
   }
-  return ok(names)
+  out.sort((a, b) => a.id.localeCompare(b.id))
+  return ok(out)
 }
 
-/** Validate and extract OpenAI /v1/models response → string[]. */
+/** Validate and extract OpenAI /v1/models response → DiscoveredModel[]. */
 const parseOpenAIModels = (
   body: unknown,
-): Result<readonly string[], ProxyError> => {
+): Result<readonly DiscoveredModel[], ProxyError> => {
   if (
     typeof body !== "object" ||
     body === null ||
@@ -108,7 +117,7 @@ const parseOpenAIModels = (
   }
 
   const data = (body as { data: unknown[] }).data
-  const ids: string[] = []
+  const out: DiscoveredModel[] = []
   for (const item of data) {
     if (
       typeof item !== "object" ||
@@ -121,9 +130,12 @@ const parseOpenAIModels = (
         detail: "unexpected item shape in /v1/models .data: missing .id string",
       })
     }
-    ids.push((item as { id: string }).id)
+    const id = (item as { id: string }).id
+    const caps = attachmentsFromOpenAiEntry(item)
+    out.push(caps === undefined ? { id } : { id, attachments: caps })
   }
-  return ok(ids)
+  out.sort((a, b) => a.id.localeCompare(b.id))
+  return ok(out)
 }
 
 // ── ModelLister ───────────────────────────────────────────────────────────────
@@ -140,12 +152,12 @@ export type ModelListerInput = {
 
 /**
  * Lists the models available from a configured provider.
- * Returns `Ok<readonly string[]>` on success or `Err<ProxyError>` when the
- * provider is unsupported, unreachable, or returns an unexpected shape.
+ * Returns `Ok<readonly DiscoveredModel[]>` on success or `Err<ProxyError>` when
+ * the provider is unsupported, unreachable, or returns an unexpected shape.
  */
 export type ModelLister = (
   input: ModelListerInput,
-) => Promise<Result<readonly string[], ProxyError>>
+) => Promise<Result<readonly DiscoveredModel[], ProxyError>>
 
 /**
  * Build a `ModelLister` over an injected `HttpGet`. No network calls in tests:

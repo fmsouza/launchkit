@@ -216,7 +216,7 @@ describe("ModelsPage", () => {
       }),
       listProviderModels: async () => ({
         ok: true,
-        value: { models: ["gpt-4o", "gpt-4o-mini"] },
+        value: { models: [{ id: "gpt-4o" }, { id: "gpt-4o-mini" }] },
       }),
     })
     await waitFor(() =>
@@ -240,7 +240,7 @@ describe("ModelsPage", () => {
     renderPage({
       listProviderModels: async () => ({
         ok: true,
-        value: { models: ["gpt-4o", "gpt-4o-mini"] },
+        value: { models: [{ id: "gpt-4o" }, { id: "gpt-4o-mini" }] },
       }),
     })
     await waitFor(() =>
@@ -312,7 +312,7 @@ describe("ModelsPage", () => {
       }),
       listProviderModels: async () => ({
         ok: true,
-        value: { models: ["gpt-4o", "gpt-4o-mini"] },
+        value: { models: [{ id: "gpt-4o" }, { id: "gpt-4o-mini" }] },
       }),
     })
     await waitFor(() =>
@@ -366,7 +366,7 @@ describe("ModelsPage", () => {
     const client = renderPage({
       listProviderModels: async () => ({
         ok: true,
-        value: { models: ["llama3.2"] },
+        value: { models: [{ id: "llama3.2" }] },
       }),
     })
     await waitFor(() =>
@@ -564,7 +564,8 @@ describe("ModelsPage", () => {
       listProviderModels: async ({ providerId }) => ({
         ok: true,
         value: {
-          models: providerId === "p_openai" ? ["gpt-4o"] : ["llama3"],
+          models:
+            providerId === "p_openai" ? [{ id: "gpt-4o" }] : [{ id: "llama3" }],
         },
       }),
     })

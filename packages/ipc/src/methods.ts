@@ -8,6 +8,7 @@ import {
 } from "@spectrum/agent-events"
 import { ProviderCatalogEntrySchema } from "@spectrum/providers"
 import {
+  DiscoveredModelSchema,
   HarnessDefinitionSchema,
   HarnessIdSchema,
   ModelIdSchema,
@@ -249,7 +250,7 @@ export const ListProviderModelsParamsSchema = z
   .object({ providerId: ProviderIdSchema })
   .strict()
 export const ListProviderModelsResultSchema = z
-  .object({ models: z.array(z.string()) })
+  .object({ models: z.array(DiscoveredModelSchema) })
   .strict()
 
 /**
