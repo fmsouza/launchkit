@@ -18,8 +18,8 @@ import type {
   Session,
   SessionId,
 } from "@spectrum/types"
-import { type Result, err, ok } from "@spectrum/utils"
-import type { AppContext } from "../../composition"
+import { type Result, err, isOk, ok } from "@spectrum/utils"
+import type { GuiContext } from "../../composition"
 import type { ResetError } from "../reset-app"
 import { createFakeUpdater } from "../updater/fake-updater"
 import type { UpdaterAdapter } from "../updater/updater-adapter"
@@ -127,12 +127,13 @@ const makeCtx = (
     uploadStore?: UploadStore
   } = {},
 ): {
-  ctx: AppContext
+  ctx: GuiContext
   saves: Config[]
   secretSets: string[]
   launchParams: unknown[]
   sessionInputs: unknown[]
   pickFolderCalls: unknown[]
+  openExternalUrlCalls: unknown[]
   runnerLaunchInputs: unknown[]
   runEventsIds: string[]
   deletedSessionIds: string[]
@@ -224,9 +225,15 @@ const makeCtx = (
       over.lastSelectedFolder ?? "",
       over.lastSelectedHarnessId ?? "",
       {
-        updateChannel: over.updateChannel,
-        dismissedUpdateVersion: over.dismissedUpdateVersion,
-        dismissedUpdateHash: over.dismissedUpdateHash,
+        ...(over.updateChannel !== undefined
+          ? { updateChannel: over.updateChannel }
+          : {}),
+        ...(over.dismissedUpdateVersion !== undefined
+          ? { dismissedUpdateVersion: over.dismissedUpdateVersion }
+          : {}),
+        ...(over.dismissedUpdateHash !== undefined
+          ? { dismissedUpdateHash: over.dismissedUpdateHash }
+          : {}),
       },
     ),
     ...(over.models !== undefined ? { models: [...over.models] } : {}),
@@ -243,6 +250,9 @@ const makeCtx = (
 
   const ctx = {
     log: over.log ?? createNoopLogger(),
+    // The test stub narrows the error type to a "always-ok" shape (it cannot
+    // fail). The real `ConfigStore` widens it to `ConfigError`; cast on the
+    // *whole* object at the end of the literal matches the real signature.
     config: {
       load: async (): Promise<Result<Config, never>> => ok(current),
       save: async (next: Config): Promise<Result<void, never>> => {
@@ -298,8 +308,7 @@ const makeCtx = (
     listProviderModelsDraft: async (input: unknown) => {
       draftListInputs.push(input)
       return (
-        over.draftListResult ??
-        ok(["gpt-4o", "gpt-4o-mini"] as readonly string[])
+        over.draftListResult ?? ok([{ id: "gpt-4o" }, { id: "gpt-4o-mini" }])
       )
     },
     runtime: {
@@ -381,9 +390,7 @@ const makeCtx = (
       isNative: (harnessId: unknown) =>
         String(harnessId) === (over.nativeHarnessId ?? "claude"),
     },
-    updater:
-      over.updater ??
-      createFakeUpdater({ currentVersion: "1.0.0", latest: undefined }),
+    updater: over.updater ?? createFakeUpdater({ currentVersion: "1.0.0" }),
     dataAdmin: {
       deleteSession: (id: unknown) => {
         deletedSessionIds.push(id as string)
@@ -406,7 +413,7 @@ const makeCtx = (
       return over.pickFilesResult ?? []
     },
     uploadStore: over.uploadStore ?? defaultUploadStore(),
-  } as unknown as AppContext
+  } as unknown as GuiContext
 
   return {
     ctx,
@@ -442,6 +449,16 @@ const mimeToKind = (mime: string): AttachmentKind => {
   return "binary"
 }
 
+/**
+ * Extract the `value` from a `Result` whose `Ok` branch is statically known to
+ * hold (test stubs only). Mirrors `unwrapOr(r, throw)` without leaking `throw`
+ * out of the helper — keeps tests readable when chaining.
+ */
+const unwrap = <T, E>(r: Result<T, E>): T => {
+  if (!isOk(r)) throw new Error("test stub produced Err")
+  return r.value
+}
+
 const sampleSession: Session = {
   id: "s_1",
   harnessId: "claude",
@@ -460,7 +477,7 @@ describe("createIpcHandlers.getProviders", () => {
 
     expect(views).toEqual([
       {
-        id: "p_openai",
+        id: "p_openai" as ProviderId,
         name: "OpenAI",
         sdkProvider: "openai",
         config: { baseUrl: "https://api.openai.com/v1" },
@@ -744,9 +761,11 @@ describe("createIpcHandlers models CRUD", () => {
       id: "mdl_a" as ModelId,
       providerId: "p_openai" as ProviderId,
       providerModel: "gpt-4o",
+      aliases: [] as string[],
+      attachments: {},
     }
     await ctx.config.save({
-      ...(await ctx.config.load()).value,
+      ...unwrap(await ctx.config.load()),
       models: [route],
     } as Config)
     const handlers = createIpcHandlers(ctx)
@@ -761,10 +780,12 @@ describe("createIpcHandlers models CRUD", () => {
     const created = await handlers.addModel({
       providerId: "openai" as ProviderId,
       providerModel: "gpt-4o",
+      aliases: [],
+      attachments: {},
     })
 
     expect(created.providerModel).toBe("gpt-4o")
-    expect(created.providerId).toBe("openai")
+    expect(String(created.providerId)).toBe("openai")
     expect(String(created.id)).toMatch(/^mdl_/)
     expect(saves).toHaveLength(1)
     expect(saves[0]?.models).toEqual([created])
@@ -778,6 +799,7 @@ describe("createIpcHandlers models CRUD", () => {
       providerId: "p_anthropic" as ProviderId,
       providerModel: "claude-haiku-4-5",
       aliases: ["haiku", "fast"],
+      attachments: {},
     })
 
     expect(created.aliases).toEqual(["haiku", "fast"])
@@ -791,9 +813,10 @@ describe("createIpcHandlers models CRUD", () => {
       providerId: "p_openai" as ProviderId,
       providerModel: "gpt-4o",
       aliases: [] as string[],
+      attachments: {},
     }
     await ctx.config.save({
-      ...(await ctx.config.load()).value,
+      ...unwrap(await ctx.config.load()),
       models: [route],
     } as Config)
     const handlers = createIpcHandlers(ctx)
@@ -804,12 +827,13 @@ describe("createIpcHandlers models CRUD", () => {
         providerId: "p_anthropic" as ProviderId,
         providerModel: "opus",
         aliases: ["opus-fast"],
+        attachments: {},
       },
     })
 
     expect(updated).toEqual({
-      id: "mdl_a",
-      providerId: "p_anthropic",
+      id: "mdl_a" as ModelId,
+      providerId: "p_anthropic" as ProviderId,
       providerModel: "opus",
       aliases: ["opus-fast"],
       attachments: {},
@@ -874,7 +898,7 @@ describe("createIpcHandlers models CRUD", () => {
       providerModel: "gpt-4o",
     }
     await ctx.config.save({
-      ...(await ctx.config.load()).value,
+      ...unwrap(await ctx.config.load()),
       models: [route],
     } as Config)
     const handlers = createIpcHandlers(ctx)
@@ -1176,6 +1200,8 @@ describe("createIpcHandlers.launchHarness session-encoded proxy key", () => {
           id: "mdl_sel" as ModelId,
           providerId: "p1" as ProviderId,
           providerModel: "claude-opus",
+          aliases: [],
+          attachments: {},
         } satisfies ModelRoute,
       ],
       mintSessionProxyKey: async (modelId: string) => {
@@ -1447,14 +1473,16 @@ describe("createIpcHandlers.listProviderModels", () => {
   it("returns { models } when ctx.listProviderModels resolves ok", async () => {
     const { ctx } = makeCtx()
     ;(ctx as { listProviderModels: unknown }).listProviderModels = async () =>
-      ok(["gpt-4o", "gpt-4o-mini"])
+      ok([{ id: "gpt-4o" }, { id: "gpt-4o-mini" }])
     const handlers = createIpcHandlers(ctx)
 
     const result = await handlers.listProviderModels({
       providerId: "p_openai" as never,
     })
 
-    expect(result).toEqual({ models: ["gpt-4o", "gpt-4o-mini"] })
+    expect(result).toEqual({
+      models: [{ id: "gpt-4o" }, { id: "gpt-4o-mini" }],
+    })
   })
 
   it("throws so the server surfaces handler-failed when ctx.listProviderModels returns err", async () => {
@@ -1519,7 +1547,7 @@ describe("createIpcHandlers.getRunnerSocketUrl", () => {
   it("returns the runner socket url from the context", async () => {
     const { ctx } = makeCtx({ providers: [provider()] })
     const handlers = createIpcHandlers(ctx)
-    const result = await handlers.getRunnerSocketUrl()
+    const result = await handlers.getRunnerSocketUrl(undefined)
     expect(result).toEqual({ url: "ws://localhost:23456/" })
   })
 })
@@ -1669,7 +1697,7 @@ describe("createIpcHandlers.updateHarnessPrefs", () => {
 describe("createIpcHandlers.launchHarness (persisted mode)", () => {
   it("forwards the persisted permission mode for the harness to runner.launch", async () => {
     const { ctx, runnerLaunchInputs } = makeCtx({ providers: [provider()] })
-    const loaded = (await ctx.config.load()).value
+    const loaded = unwrap(await ctx.config.load())
     await ctx.config.save({
       ...loaded,
       settings: {
@@ -1699,7 +1727,7 @@ describe("createIpcHandlers.launchHarness (persisted mode)", () => {
 describe("createIpcHandlers.launchHarness (persisted thinkingEffort)", () => {
   it("forwards the persisted thinkingEffort pref for the harness to runner.launch", async () => {
     const { ctx, runnerLaunchInputs } = makeCtx({ providers: [provider()] })
-    const loaded = (await ctx.config.load()).value
+    const loaded = unwrap(await ctx.config.load())
     await ctx.config.save({
       ...loaded,
       settings: {
@@ -1727,7 +1755,7 @@ describe("createIpcHandlers.launchHarness (persisted thinkingEffort)", () => {
 
   it("omits thinkingEffort when the stored value is not a valid tier", async () => {
     const { ctx, runnerLaunchInputs } = makeCtx({ providers: [provider()] })
-    const loaded = (await ctx.config.load()).value
+    const loaded = unwrap(await ctx.config.load())
     await ctx.config.save({
       ...loaded,
       settings: {
@@ -1747,7 +1775,7 @@ describe("createIpcHandlers.launchHarness (persisted thinkingEffort)", () => {
 describe("createIpcHandlers.launchHarness (persisted model)", () => {
   it("uses the persisted per-harness modelId when the launch carries none", async () => {
     const { ctx, runnerLaunchInputs } = makeCtx({ providers: [provider()] })
-    const loaded = (await ctx.config.load()).value
+    const loaded = unwrap(await ctx.config.load())
     await ctx.config.save({
       ...loaded,
       settings: {
@@ -1765,7 +1793,7 @@ describe("createIpcHandlers.launchHarness (persisted model)", () => {
 
   it("prefers an explicit launch modelId over the persisted one", async () => {
     const { ctx, runnerLaunchInputs } = makeCtx({ providers: [provider()] })
-    const loaded = (await ctx.config.load()).value
+    const loaded = unwrap(await ctx.config.load())
     await ctx.config.save({
       ...loaded,
       settings: {
@@ -1789,7 +1817,7 @@ describe("createIpcHandlers.launchHarness (persisted model)", () => {
 describe("createIpcHandlers.launchHarness (model default fallback)", () => {
   it("defaults the launch model to the first configured model when none is remembered", async () => {
     const { ctx, runnerLaunchInputs } = makeCtx({ providers: [provider()] })
-    const loaded = (await ctx.config.load()).value
+    const loaded = unwrap(await ctx.config.load())
     await ctx.config.save({
       ...loaded,
       models: [
@@ -1797,6 +1825,8 @@ describe("createIpcHandlers.launchHarness (model default fallback)", () => {
           id: "mdl_a" as ModelId,
           providerId: "p1" as ProviderId,
           providerModel: "m",
+          aliases: [] as string[],
+          attachments: {},
         } satisfies ModelRoute,
       ],
       settings: { ...loaded.settings, lastByHarness: {} },
@@ -1811,7 +1841,7 @@ describe("createIpcHandlers.launchHarness (model default fallback)", () => {
 
   it("keeps the explicit default (no model) when the remembered model is the empty sentinel", async () => {
     const { ctx, runnerLaunchInputs } = makeCtx({ providers: [provider()] })
-    const loaded = (await ctx.config.load()).value
+    const loaded = unwrap(await ctx.config.load())
     await ctx.config.save({
       ...loaded,
       models: [
@@ -1819,6 +1849,8 @@ describe("createIpcHandlers.launchHarness (model default fallback)", () => {
           id: "mdl_a" as ModelId,
           providerId: "p1" as ProviderId,
           providerModel: "m",
+          aliases: [] as string[],
+          attachments: {},
         } satisfies ModelRoute,
       ],
       settings: {
@@ -2061,7 +2093,6 @@ describe("createIpcHandlers update handlers", () => {
   it("setUpdateChannel does NOT relaunch on a same-channel switch (canary→canary)", async () => {
     const fakeUpdater = createFakeUpdater({
       currentVersion: "1.8.0-canary.2",
-      latest: undefined,
       buildChannel: "canary",
     })
     const { ctx } = makeCtx({
@@ -2083,7 +2114,6 @@ describe("createIpcHandlers update handlers", () => {
     // treated as a preference persist, not a migration. Dev is update-disabled.
     const fakeUpdater = createFakeUpdater({
       currentVersion: "1.8.0",
-      buildChannel: undefined,
     })
     const { ctx, saves } = makeCtx({
       updater: fakeUpdater,
@@ -2141,7 +2171,6 @@ describe("createIpcHandlers.getUpdateState (config-load resilience)", () => {
   it("returns a stable-channel state when config cannot load", async () => {
     const fakeUpdater = createFakeUpdater({
       currentVersion: "1.2.0",
-      latest: undefined,
     })
     const { ctx } = makeCtx({ updater: fakeUpdater })
     ;(ctx.config as { load: unknown }).load = async () =>
@@ -2250,7 +2279,7 @@ describe("createIpcHandlers.resetApp", () => {
 
   it("throws so the server surfaces handler-failed when the reset fails", async () => {
     const { ctx } = makeCtx({
-      resetAppResult: err({ kind: "reset-failed" }),
+      resetAppResult: err({ kind: "reset-failed", detail: "test" }),
     })
     const handlers = createIpcHandlers(ctx)
 
@@ -2381,7 +2410,7 @@ describe("createIpcHandlers.listProviderModelsDraft", () => {
       config: {},
       secrets: { apiKey: "sk-x" },
     })
-    expect(r).toEqual({ models: ["gpt-4o", "gpt-4o-mini"] })
+    expect(r).toEqual({ models: [{ id: "gpt-4o" }, { id: "gpt-4o-mini" }] })
     expect(draftListInputs).toEqual([
       { sdkProvider: "openai", config: {}, secrets: { apiKey: "sk-x" } },
     ])
@@ -2455,7 +2484,7 @@ describe("createIpcHandlers.getTimeoutSettings", () => {
 
   it("returns the persisted timeout values when config has non-default values", async () => {
     const { ctx } = makeCtx()
-    const loaded = (await ctx.config.load()).value
+    const loaded = unwrap(await ctx.config.load())
     await ctx.config.save({
       ...loaded,
       settings: {
@@ -2509,7 +2538,7 @@ describe("createIpcHandlers.updateTimeoutSettings", () => {
 describe("createIpcHandlers.getSessionNamingSettings", () => {
   it("returns the configured id when one has been persisted", async () => {
     const { ctx } = makeCtx()
-    const loaded = (await ctx.config.load()).value
+    const loaded = unwrap(await ctx.config.load())
     await ctx.config.save({
       ...loaded,
       settings: { ...loaded.settings, sessionNameModelId: "mdl_1" },
@@ -2546,7 +2575,7 @@ describe("createIpcHandlers.updateSessionNamingSettings", () => {
 
   it("persists null (off) when the caller clears the session name model", async () => {
     const { ctx, saves } = makeCtx()
-    const loaded = (await ctx.config.load()).value
+    const loaded = unwrap(await ctx.config.load())
     await ctx.config.save({
       ...loaded,
       settings: { ...loaded.settings, sessionNameModelId: "mdl_will_clear" },

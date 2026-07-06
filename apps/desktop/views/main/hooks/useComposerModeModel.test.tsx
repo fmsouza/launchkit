@@ -25,7 +25,7 @@ const renderWith = (
     readonly seed?: ComposerSeed
     readonly forward?: ComposerForward
     /** Pass `null` to render with `harnessId: undefined`. Omit to use `hid`. */
-    readonly harnessId?: typeof hid | null
+    readonly harnessId?: typeof hid | null | undefined
   } = {},
 ) => {
   const resolvedHarnessId =

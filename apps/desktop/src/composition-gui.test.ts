@@ -23,10 +23,10 @@ interface FakeRunnerSocket {
 /** Captures the RunManager shape so we can assert wiring without spawning. */
 const captureBaseRunner = (): RunManager => {
   return {
-    launch: () => ({ ok: true, value: { pid: 1, exited: Promise.resolve(0) } }),
-    cancel: () => {},
+    launch: () => ({ ok: true, value: { sessionId: "s1" as never } }),
     handleInbound: () => {},
     bindSend: () => {},
+    markUserNamed: () => {},
   } as RunManager
 }
 
@@ -39,7 +39,10 @@ const fakeGuiDeps = (): CreateGuiContextDeps & {
       calls.createRunManagerDeps = deps
       return captureBaseRunner()
     },
-    startRunnerSocket: (manager, hooks) => {
+    startRunnerSocket: (
+      manager,
+      hooks: { onConnect?: () => void; onDisconnect?: () => void } = {},
+    ) => {
       calls.startRunnerSocketArgs = { manager, hooks }
       // The real seam binds on connect and disconnects via hooks — call them now
       // so any handler-installed side effect (e.g. the watchdog tap) is exercised.
@@ -51,7 +54,10 @@ const fakeGuiDeps = (): CreateGuiContextDeps & {
       }
       return next
     },
-    startTerminalSocket: (manager, hooks) => {
+    startTerminalSocket: (
+      manager,
+      hooks: { onConnect?: () => void; onDisconnect?: () => void } = {},
+    ) => {
       calls.startTerminalSocketArgs = { manager, hooks }
       hooks.onConnect?.()
       hooks.onDisconnect?.()
@@ -120,11 +126,11 @@ describe("createGuiContext", () => {
   it("composes runner + socket url + watchdog + updater + resetApp over the shared AppContext", () => {
     const gui = createGuiContext(shared(), fakeGuiDeps()) as GuiContext
 
-    // Runner: returned object has the RunManager shape (launch/cancel/handleInbound/bindSend).
+    // Runner: returned object has the RunManager shape (launch/handleInbound/bindSend/markUserNamed).
     expect(typeof gui.runner.launch).toBe("function")
-    expect(typeof gui.runner.cancel).toBe("function")
     expect(typeof gui.runner.handleInbound).toBe("function")
     expect(typeof gui.runner.bindSend).toBe("function")
+    expect(typeof gui.runner.markUserNamed).toBe("function")
     // Socket: ws://localhost:<port>/ — exactly the loopback scheme the webview's CSP allows.
     expect(gui.runnerSocketUrl).toMatch(/^ws:\/\/localhost:\d+\/$/)
     // Watchdog: built with timers + logger + onGiveUp (all three injected).

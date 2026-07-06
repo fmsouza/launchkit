@@ -1,7 +1,13 @@
 import { describe, expect, it } from "bun:test"
 import type { RunnerOutbound } from "@spectrum/agent-driver"
 import type { StoredEvent } from "@spectrum/agent-events"
-import type { SessionId } from "@spectrum/types"
+import type {
+  HarnessId,
+  ModelId,
+  ProjectId,
+  ProviderId,
+  SessionId,
+} from "@spectrum/types"
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { App } from "./app"
 import { type RunnerClient, createRunnerClient } from "./runner/runnerClient"
@@ -195,22 +201,31 @@ describe("App view model", () => {
         ok: true as const,
         value: [
           {
-            id: "claude",
+            id: "claude" as HarnessId,
             name: "Claude Code",
             command: "claude",
             apiFormat: "anthropic",
             envTemplate: {},
             builtIn: true,
+            native: true,
           },
         ],
       }),
       getModels: async () => ({
         ok: true as const,
-        value: [{ id: "m_1", providerId: "p_openai", providerModel: "gpt-4o" }],
+        value: [
+          {
+            id: "m_1" as ModelId,
+            providerId: "p_openai" as ProviderId,
+            providerModel: "gpt-4o",
+            aliases: [],
+            attachments: {},
+          },
+        ],
       }),
       launchHarness: async () => ({
         ok: true as const,
-        value: { sessionId: "s_new" },
+        value: { sessionId: "s_new" as SessionId },
       }),
     })
     render(
@@ -248,18 +263,27 @@ describe("App view model", () => {
         ok: true as const,
         value: [
           {
-            id: "claude",
+            id: "claude" as HarnessId,
             name: "Claude Code",
             command: "claude",
             apiFormat: "anthropic",
             envTemplate: {},
             builtIn: true,
+            native: true,
           },
         ],
       }),
       getModels: async () => ({
         ok: true as const,
-        value: [{ id: "m_1", providerId: "p_openai", providerModel: "gpt-4o" }],
+        value: [
+          {
+            id: "m_1" as ModelId,
+            providerId: "p_openai" as ProviderId,
+            providerModel: "gpt-4o",
+            aliases: [],
+            attachments: {},
+          },
+        ],
       }),
       launchHarness: async () => ({
         ok: false as const,
@@ -294,22 +318,31 @@ describe("App view model", () => {
         ok: true as const,
         value: [
           {
-            id: "claude",
+            id: "claude" as HarnessId,
             name: "Claude Code",
             command: "claude",
             apiFormat: "anthropic",
             envTemplate: {},
             builtIn: true,
+            native: true,
           },
         ],
       }),
       getModels: async () => ({
         ok: true as const,
-        value: [{ id: "m_1", providerId: "p_openai", providerModel: "gpt-4o" }],
+        value: [
+          {
+            id: "m_1" as ModelId,
+            providerId: "p_openai" as ProviderId,
+            providerModel: "gpt-4o",
+            aliases: [],
+            attachments: {},
+          },
+        ],
       }),
       launchHarness: async () => ({
         ok: true as const,
-        value: { sessionId: "s_new" },
+        value: { sessionId: "s_new" as SessionId },
       }),
     })
     render(
@@ -336,22 +369,31 @@ describe("App view model", () => {
         ok: true as const,
         value: [
           {
-            id: "claude",
+            id: "claude" as HarnessId,
             name: "Claude Code",
             command: "claude",
             apiFormat: "anthropic",
             envTemplate: {},
             builtIn: true,
+            native: true,
           },
         ],
       }),
       getModels: async () => ({
         ok: true as const,
-        value: [{ id: "m_1", providerId: "p_openai", providerModel: "gpt-4o" }],
+        value: [
+          {
+            id: "m_1" as ModelId,
+            providerId: "p_openai" as ProviderId,
+            providerModel: "gpt-4o",
+            aliases: [],
+            attachments: {},
+          },
+        ],
       }),
       launchHarness: async () => ({
         ok: true as const,
-        value: { sessionId: "s_new" },
+        value: { sessionId: "s_new" as SessionId },
       }),
     })
     render(
@@ -397,9 +439,9 @@ describe("App view model", () => {
   it("requests the next page when 'Show 10 more' is clicked on a project group", async () => {
     // Project reports 15 sessions; first page loads 10 → "Show 10 more" button renders.
     const page = Array.from({ length: 10 }, (_, i) => ({
-      id: `s_${i}`,
-      harnessId: "claude",
-      modelId: "m_1",
+      id: `s_${i}` as SessionId,
+      harnessId: "claude" as HarnessId,
+      modelId: "m_1" as ModelId,
       startedAt: "2026-05-23T10:00:00.000Z",
       endedAt: "2026-05-23T10:05:00.000Z",
       exitCode: 0,
@@ -429,7 +471,7 @@ describe("App view model", () => {
     // Bumping the limit re-runs the session query with the larger page size.
     await waitFor(() =>
       expect(client.calls.getSessions).toContainEqual({
-        projectId: "prj_1",
+        projectId: "prj_1" as ProjectId,
         limit: 20,
       }),
     )
@@ -439,9 +481,9 @@ describe("App view model", () => {
     // Project reports 1 session; loaded page also has 1 → no more to load.
     const page = [
       {
-        id: "s_0",
-        harnessId: "claude",
-        modelId: "m_1",
+        id: "s_0" as SessionId,
+        harnessId: "claude" as HarnessId,
+        modelId: "m_1" as ModelId,
         startedAt: "2026-05-23T10:00:00.000Z",
         endedAt: "2026-05-23T10:05:00.000Z",
         exitCode: 0,
@@ -479,18 +521,27 @@ describe("App view model", () => {
         ok: true as const,
         value: [
           {
-            id: "claude",
+            id: "claude" as HarnessId,
             name: "Claude Code",
             command: "claude",
             apiFormat: "anthropic",
             envTemplate: {},
             builtIn: true,
+            native: true,
           },
         ],
       }),
       getModels: async () => ({
         ok: true as const,
-        value: [{ id: "m_1", providerId: "p_openai", providerModel: "gpt-4o" }],
+        value: [
+          {
+            id: "m_1" as ModelId,
+            providerId: "p_openai" as ProviderId,
+            providerModel: "gpt-4o",
+            aliases: [],
+            attachments: {},
+          },
+        ],
       }),
     })
     render(
@@ -526,18 +577,27 @@ describe("App view model", () => {
         ok: true as const,
         value: [
           {
-            id: "claude",
+            id: "claude" as HarnessId,
             name: "Claude Code",
             command: "claude",
             apiFormat: "anthropic",
             envTemplate: {},
             builtIn: true,
+            native: true,
           },
         ],
       }),
       getModels: async () => ({
         ok: true as const,
-        value: [{ id: "m_1", providerId: "p_openai", providerModel: "gpt-4o" }],
+        value: [
+          {
+            id: "m_1" as ModelId,
+            providerId: "p_openai" as ProviderId,
+            providerModel: "gpt-4o",
+            aliases: [],
+            attachments: {},
+          },
+        ],
       }),
       pickFolder: async () => ({
         ok: true as const,
@@ -571,18 +631,27 @@ describe("App view model", () => {
         ok: true as const,
         value: [
           {
-            id: "claude",
+            id: "claude" as HarnessId,
             name: "Claude Code",
             command: "claude",
             apiFormat: "anthropic",
             envTemplate: {},
             builtIn: true,
+            native: true,
           },
         ],
       }),
       getModels: async () => ({
         ok: true as const,
-        value: [{ id: "m_1", providerId: "p_openai", providerModel: "gpt-4o" }],
+        value: [
+          {
+            id: "m_1" as ModelId,
+            providerId: "p_openai" as ProviderId,
+            providerModel: "gpt-4o",
+            aliases: [],
+            attachments: {},
+          },
+        ],
       }),
       getSettings: async () => ({
         ok: true as const,
@@ -618,27 +687,35 @@ describe("App view model", () => {
         ok: true as const,
         value: [
           {
-            id: "claude",
+            id: "claude" as HarnessId,
             name: "Claude Code",
             command: "claude",
             apiFormat: "anthropic",
             envTemplate: {},
             builtIn: true,
+            native: true,
           },
           {
-            id: "codex",
+            id: "codex" as HarnessId,
             name: "Codex",
             command: "codex",
             apiFormat: "openai",
             envTemplate: {},
             builtIn: true,
+            native: true,
           },
         ],
       }),
       getModels: async () => ({
         ok: true as const,
         value: [
-          { id: "mdl_fast", providerId: "p_openai", providerModel: "gpt-4o" },
+          {
+            id: "mdl_fast" as ModelId,
+            providerId: "p_openai" as ProviderId,
+            providerModel: "gpt-4o",
+            aliases: [],
+            attachments: {},
+          },
         ],
       }),
       getSettings: async () => ({
@@ -676,18 +753,27 @@ describe("App view model", () => {
         ok: true as const,
         value: [
           {
-            id: "claude",
+            id: "claude" as HarnessId,
             name: "Claude Code",
             command: "claude",
             apiFormat: "anthropic",
             envTemplate: {},
             builtIn: true,
+            native: true,
           },
         ],
       }),
       getModels: async () => ({
         ok: true as const,
-        value: [{ id: "m_1", providerId: "p_openai", providerModel: "gpt-4o" }],
+        value: [
+          {
+            id: "m_1" as ModelId,
+            providerId: "p_openai" as ProviderId,
+            providerModel: "gpt-4o",
+            aliases: [],
+            attachments: {},
+          },
+        ],
       }),
       pickFolder: async () => ({
         ok: false as const,
@@ -719,18 +805,27 @@ describe("App view model", () => {
         ok: true as const,
         value: [
           {
-            id: "claude",
+            id: "claude" as HarnessId,
             name: "Claude Code",
             command: "claude",
             apiFormat: "anthropic",
             envTemplate: {},
             builtIn: true,
+            native: true,
           },
         ],
       }),
       getModels: async () => ({
         ok: true as const,
-        value: [{ id: "m_1", providerId: "p_openai", providerModel: "gpt-4o" }],
+        value: [
+          {
+            id: "m_1" as ModelId,
+            providerId: "p_openai" as ProviderId,
+            providerModel: "gpt-4o",
+            aliases: [],
+            attachments: {},
+          },
+        ],
       }),
       pickFolder: async () => ({
         ok: false as const,
@@ -903,14 +998,8 @@ describe("App — skipAttach is sticky across resume (no double-replay)", () => 
           {
             id: "p1",
             name: "Project",
-            sessions: [
-              {
-                id: "s_v" as SessionId,
-                harnessId: "claude",
-                cwd: "/tmp",
-                startedAt: "2026-06-16T10:00:00.000Z",
-              },
-            ],
+            path: "/tmp",
+            sessionCount: 1,
           },
         ],
       }),
@@ -998,12 +1087,13 @@ describe("App — reconnect re-attach effect", () => {
         ok: true as const,
         value: [
           {
-            id: "claude",
+            id: "claude" as HarnessId,
             name: "Claude Code",
             command: "claude",
             apiFormat: "anthropic",
             envTemplate: {},
             builtIn: true,
+            native: true,
           },
         ],
       }),
@@ -1113,14 +1203,8 @@ describe("App — firehose populates runViewStore (defense-in-depth)", () => {
           {
             id: "p1",
             name: "Project",
-            sessions: [
-              {
-                id: "s_v" as SessionId,
-                harnessId: "claude",
-                cwd: "/tmp",
-                startedAt: "2026-06-16T10:00:00.000Z",
-              },
-            ],
+            path: "/tmp",
+            sessionCount: 1,
           },
         ],
       }),

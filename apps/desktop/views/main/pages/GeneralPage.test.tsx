@@ -1,4 +1,5 @@
 import { describe, expect, it, mock } from "bun:test"
+import type { ModelId, ProviderId } from "@spectrum/types"
 import { ok } from "@spectrum/utils"
 import { fireEvent, screen, waitFor } from "@testing-library/react"
 import { createFakeIpcClient } from "../test/fake-client"
@@ -6,27 +7,34 @@ import { renderWithProviders } from "../test/renderWithProviders"
 import { GeneralPage } from "./GeneralPage"
 
 const sampleModels = [
-  { id: "mdl_1", providerId: "prv_1", providerModel: "gpt-4o", aliases: [] },
   {
-    id: "mdl_2",
-    providerId: "prv_2",
+    id: "mdl_1" as ModelId,
+    providerId: "prv_1" as ProviderId,
+    providerModel: "gpt-4o",
+    aliases: [] as string[],
+    attachments: {},
+  },
+  {
+    id: "mdl_2" as ModelId,
+    providerId: "prv_2" as ProviderId,
     providerModel: "claude-3-5-haiku",
-    aliases: [],
+    aliases: [] as string[],
+    attachments: {},
   },
 ]
 const sampleProviders = [
   {
-    id: "prv_1",
+    id: "prv_1" as ProviderId,
     name: "OpenAI",
-    sdkProvider: "openai",
+    sdkProvider: "openai" as const,
     config: {},
     secretFields: {},
     models: ["gpt-4o"],
   },
   {
-    id: "prv_2",
+    id: "prv_2" as ProviderId,
     name: "Anthropic",
-    sdkProvider: "anthropic",
+    sdkProvider: "anthropic" as const,
     config: {},
     secretFields: {},
     models: ["claude-3-5-haiku"],

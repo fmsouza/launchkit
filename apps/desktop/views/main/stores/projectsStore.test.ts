@@ -176,7 +176,8 @@ describe("projectsStore", () => {
         name: "old",
       } as Session,
     ])
-    client.renameSession = async () => ({ ok: true, value: null })
+    ;(client as { renameSession: typeof client.renameSession }).renameSession =
+      async () => ({ ok: true, value: null })
     const r = await store
       .getState()
       .renameSession("s_1" as SessionId, "new name")

@@ -1,5 +1,7 @@
 import { describe, expect, it } from "bun:test"
+import type { ProviderId } from "@spectrum/types"
 import { render, waitFor } from "@testing-library/react"
+import type { JSX } from "react"
 import { IpcClientProvider } from "../IpcClientContext"
 import { createFakeIpcClient } from "../test/fake-client"
 import { useProviderModels } from "./useProviderModels"
@@ -54,7 +56,7 @@ describe("useProviderModels", () => {
       expect(document.body).toHaveTextContent("models:gpt-4o,gpt-4o-mini"),
     )
     expect(client.calls.listProviderModels[0]).toEqual({
-      providerId: "p_openai",
+      providerId: "p_openai" as ProviderId,
     })
   })
 

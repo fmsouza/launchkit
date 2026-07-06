@@ -1,5 +1,7 @@
 import { describe, expect, it } from "bun:test"
+import type { DiscoveredModel } from "@spectrum/types"
 import { act, render, waitFor } from "@testing-library/react"
+import type { JSX } from "react"
 import { IpcClientProvider } from "../IpcClientContext"
 import { createFakeIpcClient } from "../test/fake-client"
 import { useDraftProviderModels } from "./useDraftProviderModels"
@@ -9,7 +11,7 @@ type ProbeHandle = {
     sdkProvider: "openai"
     config: Record<string, string>
     secrets: Record<string, string>
-  }) => Promise<readonly string[]>
+  }) => Promise<readonly DiscoveredModel[]>
   reset: () => void
 }
 
@@ -25,7 +27,9 @@ const Probe = (): JSX.Element => {
         {hook.error === undefined ? "no-error" : hook.error.kind}
       </span>
       <span data-testid="models">
-        {hook.models.length === 0 ? "empty" : `models:${hook.models.join(",")}`}
+        {hook.models.length === 0
+          ? "empty"
+          : `models:${hook.models.map((m) => m.id).join(",")}`}
       </span>
     </div>
   )
@@ -53,7 +57,7 @@ describe("useDraftProviderModels", () => {
     const client = createFakeIpcClient({
       listProviderModelsDraft: async () => ({
         ok: true,
-        value: { models: ["gpt-4o"] },
+        value: { models: [{ id: "gpt-4o" }] },
       }),
     })
     renderProbe(client)
@@ -107,14 +111,14 @@ describe("useDraftProviderModels", () => {
     const client = createFakeIpcClient({
       listProviderModelsDraft: async () => ({
         ok: true,
-        value: { models: ["gpt-4o"] },
+        value: { models: [{ id: "gpt-4o" }] },
       }),
     })
     renderProbe(client)
     await waitFor(() => expect(handles.length).toBeGreaterThan(0))
     const handle = handles[handles.length - 1]
     if (handle === undefined) throw new Error("probe handle not captured")
-    let returned: readonly string[] = []
+    let returned: readonly { id: string }[] = []
     await act(async () => {
       returned = await handle.discover({
         sdkProvider: "openai",
@@ -122,7 +126,7 @@ describe("useDraftProviderModels", () => {
         secrets: { apiKey: "x" },
       })
     })
-    expect(returned).toEqual(["gpt-4o"])
+    expect(returned).toEqual([{ id: "gpt-4o" }])
   })
 
   it("returns [] from discover() when listProviderModelsDraft returns an error", async () => {
@@ -136,7 +140,7 @@ describe("useDraftProviderModels", () => {
     await waitFor(() => expect(handles.length).toBeGreaterThan(0))
     const handle = handles[handles.length - 1]
     if (handle === undefined) throw new Error("probe handle not captured")
-    let returned: readonly string[] = ["non-empty"]
+    let returned: readonly { id: string }[] = [{ id: "non-empty" }]
     await act(async () => {
       returned = await handle.discover({
         sdkProvider: "openai",
@@ -151,7 +155,7 @@ describe("useDraftProviderModels", () => {
     const client = createFakeIpcClient({
       listProviderModelsDraft: async () => ({
         ok: true,
-        value: { models: ["gpt-4o"] },
+        value: { models: [{ id: "gpt-4o" }] },
       }),
     })
     renderProbe(client)

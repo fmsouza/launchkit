@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test"
 import { defaultConfig } from "@spectrum/config"
+import type { ProviderId } from "@spectrum/types"
 import { runCli } from "./run"
 import { makeFakeDeps } from "./test-support"
 
@@ -139,7 +140,7 @@ describe("add model", () => {
     expect(loaded.value.models).toHaveLength(1)
     const added = loaded.value.models[0]
     expect(added?.id).toMatch(/^mdl_/)
-    expect(added?.providerId).toBe("p_openai")
+    expect(added?.providerId).toBe("p_openai" as ProviderId)
     expect(added?.providerModel).toBe("gpt-4o")
   })
 

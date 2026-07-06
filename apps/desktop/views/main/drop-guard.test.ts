@@ -13,11 +13,21 @@ describe("installGlobalDropGuard", () => {
     uninstall()
   })
 
-  it("stops preventing defaults after uninstall", () => {
+  it("stops preventing dragover defaults after uninstall", () => {
     const uninstall = installGlobalDropGuard(window)
     uninstall()
-    const drop = new Event("drop", { cancelable: true, bubbles: true })
-    window.dispatchEvent(drop)
-    expect(drop.defaultPrevented).toBe(false)
+    const over = new Event("dragover", { cancelable: true, bubbles: true })
+    window.dispatchEvent(over)
+    expect(over.defaultPrevented).toBe(false)
+  })
+
+  it("forces dropEffect none for drags outside drop targets", () => {
+    const uninstall = installGlobalDropGuard(window)
+    const dt = { dropEffect: "copy" }
+    const over = new Event("dragover", { cancelable: true, bubbles: true })
+    Object.defineProperty(over, "dataTransfer", { value: dt })
+    window.dispatchEvent(over)
+    expect(dt.dropEffect).toBe("none")
+    uninstall()
   })
 })

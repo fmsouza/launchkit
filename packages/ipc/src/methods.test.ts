@@ -651,4 +651,38 @@ describe("SaveDroppedUploadsParamsSchema", () => {
     })
     expect(parsed.success).toBe(true)
   })
+
+  it("rejects unknown extra keys at the params and file-entry level (strict)", () => {
+    expect(
+      SaveDroppedUploadsParamsSchema.safeParse({
+        files: [
+          { displayName: "a.png", mime: "image/png", dataBase64: "aGVsbG8=" },
+        ],
+        acceptedKinds: ["image"],
+        extra: 1,
+      }).success,
+    ).toBe(false)
+    expect(
+      SaveDroppedUploadsParamsSchema.safeParse({
+        files: [
+          {
+            displayName: "a.png",
+            mime: "image/png",
+            dataBase64: "aGVsbG8=",
+            sneaky: true,
+          },
+        ],
+        acceptedKinds: ["image"],
+      }).success,
+    ).toBe(false)
+  })
+
+  it("rejects a file entry whose dataBase64 key is entirely absent", () => {
+    expect(
+      SaveDroppedUploadsParamsSchema.safeParse({
+        files: [{ displayName: "a.png", mime: "image/png" }],
+        acceptedKinds: ["image"],
+      }).success,
+    ).toBe(false)
+  })
 })

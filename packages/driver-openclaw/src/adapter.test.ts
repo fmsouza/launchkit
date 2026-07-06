@@ -4,6 +4,8 @@ import type {
   ApprovalDecision,
   ApprovalTarget,
   CanonicalEvent,
+  QuestionAnswer,
+  QuestionPrompt,
   RunnerId,
 } from "@spectrum/agent-events"
 import { createOpenclawAdapter } from "./adapter"
@@ -98,6 +100,12 @@ const setup = (decision: ApprovalDecision = "allow") => {
         target: t,
       })
       return decision
+    },
+    requestQuestion: async (
+      _r: RunnerId,
+      _p: QuestionPrompt,
+    ): Promise<QuestionAnswer> => {
+      throw new Error("requestQuestion not used in these tests")
     },
   }
   const adapter = createOpenclawAdapter({

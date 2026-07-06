@@ -1,12 +1,12 @@
 import { describe, expect, it } from "bun:test"
-import type { TerminalOutbound } from "@spectrum/pty"
+import { TabIdSchema, type TerminalOutbound } from "@spectrum/pty"
 import { SessionIdSchema } from "@spectrum/types"
 import { createTerminalClient } from "./terminalClient"
 
 const sessionId = SessionIdSchema.parse(
   "s_00000000-0000-4000-8000-000000000000",
 )
-const tabId = "11111111-1111-4111-8111-111111111111"
+const tabId = TabIdSchema.parse("11111111-1111-4111-8111-111111111111")
 
 describe("createTerminalClient", () => {
   it("sends a term-open message with cwd, cols, rows", () => {
@@ -59,7 +59,7 @@ describe("createTerminalClient", () => {
 
   it("dispatches term-exited to the per-tab listener with exitCode", () => {
     const c = createTerminalClient(() => {})
-    let exitCode: number | null = null
+    let exitCode: number | undefined
     c.onExited(sessionId, tabId, (code) => {
       exitCode = code
     })

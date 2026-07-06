@@ -202,7 +202,9 @@ describe("useTerminal", () => {
       observe(): void {}
       disconnect(): void {}
     }
-    ;(globalThis as { ResizeObserver: typeof FakeRO }).ResizeObserver = FakeRO
+    ;(
+      globalThis as unknown as { ResizeObserver: typeof FakeRO }
+    ).ResizeObserver = FakeRO
 
     // Stub @xterm/xterm + addon-fit via tryRequire — bun:test runs the test
     // file with require available. We mount through the real path.
@@ -222,8 +224,9 @@ describe("useTerminal", () => {
     // fit() on the real addon, which is a no-op in jsdom (zero size), but
     // the observer wiring itself is what we're verifying.
     for (const cb of observers) cb()
-    ;(globalThis as { ResizeObserver: typeof OriginalRO }).ResizeObserver =
-      OriginalRO
+    ;(
+      globalThis as unknown as { ResizeObserver: typeof OriginalRO }
+    ).ResizeObserver = OriginalRO
     document.body.removeChild(container)
     // We can't assert exact cols/rows from jsdom (container is zero-sized)
     // but the observer must have run without throwing, and the resize
@@ -257,7 +260,9 @@ describe("useTerminal", () => {
       observe(): void {}
       disconnect(): void {}
     }
-    ;(globalThis as { ResizeObserver: typeof FakeRO }).ResizeObserver = FakeRO
+    ;(
+      globalThis as unknown as { ResizeObserver: typeof FakeRO }
+    ).ResizeObserver = FakeRO
 
     const c1 = document.createElement("div")
     const c2 = document.createElement("div")
@@ -271,8 +276,9 @@ describe("useTerminal", () => {
     result.current.mountTerminal("tab-x", c2)
     expect(c2.childElementCount).toBeGreaterThan(0)
     expect(c1.childElementCount).toBe(0)
-    ;(globalThis as { ResizeObserver: typeof OriginalRO }).ResizeObserver =
-      OriginalRO
+    ;(
+      globalThis as unknown as { ResizeObserver: typeof OriginalRO }
+    ).ResizeObserver = OriginalRO
     document.body.removeChild(c1)
     document.body.removeChild(c2)
   })
@@ -291,7 +297,9 @@ describe("useTerminal", () => {
       observe(): void {}
       disconnect(): void {}
     }
-    ;(globalThis as { ResizeObserver: typeof FakeRO }).ResizeObserver = FakeRO
+    ;(
+      globalThis as unknown as { ResizeObserver: typeof FakeRO }
+    ).ResizeObserver = FakeRO
 
     const c1 = document.createElement("div")
     const c2 = document.createElement("div")
@@ -326,8 +334,9 @@ describe("useTerminal", () => {
     h2.result.current.mountTerminal("persist-tab", c2)
     // Same xterm DOM element re-parented into the new container — not recreated.
     expect(c2.firstElementChild).toBe(el1)
-    ;(globalThis as { ResizeObserver: typeof OriginalRO }).ResizeObserver =
-      OriginalRO
+    ;(
+      globalThis as unknown as { ResizeObserver: typeof OriginalRO }
+    ).ResizeObserver = OriginalRO
     document.body.removeChild(c1)
     document.body.removeChild(c2)
   })
@@ -393,14 +402,17 @@ describe("useTerminal", () => {
         disconnected++
       }
     }
-    ;(globalThis as { ResizeObserver: typeof FakeRO }).ResizeObserver = FakeRO
+    ;(
+      globalThis as unknown as { ResizeObserver: typeof FakeRO }
+    ).ResizeObserver = FakeRO
 
     const container = document.createElement("div")
     document.body.appendChild(container)
     result.current.mountTerminal(firstTab.id, container)
     result.current.closeTab(firstTab.id)
-    ;(globalThis as { ResizeObserver: typeof OriginalRO }).ResizeObserver =
-      OriginalRO
+    ;(
+      globalThis as unknown as { ResizeObserver: typeof OriginalRO }
+    ).ResizeObserver = OriginalRO
     document.body.removeChild(container)
     expect(disconnected).toBeGreaterThanOrEqual(1)
   })

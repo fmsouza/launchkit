@@ -9,6 +9,7 @@ import {
   type HarnessId,
   type ModelId,
   type ModelRoute,
+  type ProviderId,
   type SessionId,
   SessionIdSchema,
 } from "@spectrum/types"
@@ -44,9 +45,11 @@ const makeFakeRunner = (): RunnerClient & {
     attach: (sid) => attached.push(sid),
     send: (_sid, turn) => sends.push(turn.text),
     approve: () => {},
+    answer: () => {},
     interrupt: () => {},
     setMode: (sid, mode) => setModes.push({ id: sid, mode }),
     setModel: (sid, modelId) => setModels.push({ id: sid, modelId }),
+    setThinkingEffort: () => {},
     dispatch: (_m: RunnerOutbound) => {},
     onEvent: (_sid, cb) => {
       listener = cb
@@ -63,6 +66,11 @@ const makeFakeRunner = (): RunnerClient & {
     connectionLost: () => {
       for (const cb of connectionLostListeners) cb()
     },
+    reportConnectionState: () => {},
+    onConnectionState: () => () => {},
+    connectionState: () => "connected",
+    getLastFrameMs: () => 0,
+    reconnect: () => {},
     push: (event) => listener?.(event),
   }
 }
@@ -102,9 +110,11 @@ const makeRichFakeRunner = (): RunnerClient & {
     send: (sid, turn, clientSendId) =>
       richSends.push({ id: sid, text: turn.text, clientSendId, turn }),
     approve: () => {},
+    answer: () => {},
     interrupt: () => {},
     setMode: () => {},
     setModel: () => {},
+    setThinkingEffort: () => {},
     dispatch: (_m: RunnerOutbound) => {},
     onEvent: (_sid, cb) => {
       listener = cb
@@ -121,6 +131,11 @@ const makeRichFakeRunner = (): RunnerClient & {
     connectionLost: () => {
       for (const cb of connectionLostListeners) cb()
     },
+    reportConnectionState: () => {},
+    onConnectionState: () => () => {},
+    connectionState: () => "connected",
+    getLastFrameMs: () => 0,
+    reconnect: () => {},
     push: (event) => listener?.(event),
   }
 }
@@ -242,10 +257,13 @@ describe("RunDetail (live)", () => {
 
   it("persists the picked mode per-harness via updateHarnessPrefs", async () => {
     const runner = makeFakeRunner()
-    const prefsCalls: Array<{ harnessId: string; mode?: string }> = []
+    const prefsCalls: Array<{
+      harnessId: HarnessId
+      mode?: string | undefined
+    }> = []
     const client = createFakeIpcClient({
-      updateHarnessPrefs: async (p: { harnessId: string; mode?: string }) => {
-        prefsCalls.push(p)
+      updateHarnessPrefs: async (p) => {
+        prefsCalls.push({ harnessId: p.harnessId, mode: p.mode })
         return { ok: true, value: null }
       },
     })
@@ -272,16 +290,24 @@ describe("RunDetail (live)", () => {
     fireEvent.click(
       screen.getByRole("menuitemradio", { name: /bypass permissions/i }),
     )
-    expect(prefsCalls).toEqual([{ harnessId: "claude", mode: "bypass" }])
+    expect(prefsCalls).toEqual([
+      { harnessId: "claude" as HarnessId, mode: "bypass" },
+    ])
     expect(runner.setModes).toEqual([{ id, mode: "bypass" }])
     cleanup()
   })
 
   it("forwards the default pick (empty string) as a null modelId over the socket", async () => {
     const runner = makeFakeRunner()
-    const models = [
-      { id: "mdl_a", providerId: "p1", providerModel: "sonnet" },
-    ] as readonly ModelRoute[]
+    const models: readonly ModelRoute[] = [
+      {
+        id: "mdl_a" as ModelId,
+        providerId: "p1" as ProviderId,
+        providerModel: "sonnet",
+        aliases: [],
+        attachments: {},
+      },
+    ]
     const providerNames: Readonly<Record<string, string>> = { p1: "Anthropic" }
     renderWithProviders(
       <RunDetail
@@ -315,10 +341,22 @@ describe("RunDetail (live)", () => {
 
   it("renders the model selector pill and calls runnerClient.setModel on pick", async () => {
     const runner = makeFakeRunner()
-    const models = [
-      { id: "mdl_a", providerId: "p1", providerModel: "sonnet" },
-      { id: "mdl_b", providerId: "p1", providerModel: "haiku" },
-    ] as readonly ModelRoute[]
+    const models: readonly ModelRoute[] = [
+      {
+        id: "mdl_a" as ModelId,
+        providerId: "p1" as ProviderId,
+        providerModel: "sonnet",
+        aliases: [],
+        attachments: {},
+      },
+      {
+        id: "mdl_b" as ModelId,
+        providerId: "p1" as ProviderId,
+        providerModel: "haiku",
+        aliases: [],
+        attachments: {},
+      },
+    ]
     const providerNames: Readonly<Record<string, string>> = { p1: "Anthropic" }
     renderWithProviders(
       <RunDetail
@@ -348,29 +386,37 @@ describe("RunDetail (live)", () => {
     fireEvent.click(
       screen.getByRole("menuitemradio", { name: /Anthropic \/ haiku/i }),
     )
-    expect(runner.setModels).toEqual([{ id, modelId: "mdl_b" }])
+    expect(runner.setModels).toEqual([{ id, modelId: "mdl_b" as ModelId }])
     cleanup()
   })
 
   it("persists the picked model per-harness via updateHarnessPrefs", async () => {
     const runner = makeFakeRunner()
-    const models = [
-      { id: "mdl_a", providerId: "p1", providerModel: "sonnet" },
-      { id: "mdl_b", providerId: "p1", providerModel: "haiku" },
-    ] as readonly ModelRoute[]
+    const models: readonly ModelRoute[] = [
+      {
+        id: "mdl_a" as ModelId,
+        providerId: "p1" as ProviderId,
+        providerModel: "sonnet",
+        aliases: [],
+        attachments: {},
+      },
+      {
+        id: "mdl_b" as ModelId,
+        providerId: "p1" as ProviderId,
+        providerModel: "haiku",
+        aliases: [],
+        attachments: {},
+      },
+    ]
     const providerNames: Readonly<Record<string, string>> = { p1: "Anthropic" }
     const prefsCalls: Array<{
-      harnessId: string
-      mode?: string
-      modelId?: string
+      harnessId: HarnessId
+      mode?: string | undefined
+      modelId?: string | undefined
     }> = []
     const client = createFakeIpcClient({
-      updateHarnessPrefs: async (p: {
-        harnessId: string
-        mode?: string
-        modelId?: string
-      }) => {
-        prefsCalls.push(p)
+      updateHarnessPrefs: async (p) => {
+        prefsCalls.push({ harnessId: p.harnessId, modelId: p.modelId })
         return { ok: true, value: null }
       },
     })
@@ -401,8 +447,10 @@ describe("RunDetail (live)", () => {
     fireEvent.click(
       screen.getByRole("menuitemradio", { name: /Anthropic \/ haiku/i }),
     )
-    expect(prefsCalls).toEqual([{ harnessId: "claude", modelId: "mdl_b" }])
-    expect(runner.setModels).toEqual([{ id, modelId: "mdl_b" }])
+    expect(prefsCalls).toEqual([
+      { harnessId: "claude" as HarnessId, modelId: "mdl_b" },
+    ])
+    expect(runner.setModels).toEqual([{ id, modelId: "mdl_b" as ModelId }])
     cleanup()
   })
 
@@ -633,9 +681,15 @@ describe("RunDetail (replay)", () => {
     // Both must render in replay (Composer renders them when supportedModes
     // / models + onChange are present).
     const runner = makeFakeRunner()
-    const models = [
-      { id: "mdl_recorded", providerId: "p1", providerModel: "sonnet" },
-    ] as readonly ModelRoute[]
+    const models: readonly ModelRoute[] = [
+      {
+        id: "mdl_recorded" as ModelId,
+        providerId: "p1" as ProviderId,
+        providerModel: "sonnet",
+        aliases: [],
+        attachments: {},
+      },
+    ]
     const providerNames: Readonly<Record<string, string>> = { p1: "Anthropic" }
     const client = createFakeIpcClient({
       getRunEvents: async () => ({
@@ -723,7 +777,7 @@ describe("RunDetail (replay)", () => {
     // Replay has no live socket — picking a model in the replay composer must
     // persist via the harness pref (when harnessId is forwarded) but never
     // reach the runnerClient.setModel method on the live socket.
-    const setModelSpy = mock(() => {})
+    const setModelSpy = mock((_sid: SessionId, _modelId: ModelId | null) => {})
     const base = makeFakeRunner()
     const runner: typeof base = {
       ...base,
@@ -732,15 +786,27 @@ describe("RunDetail (replay)", () => {
         base.setModel(sid, modelId)
       },
     }
-    const models = [
-      { id: "mdl_recorded", providerId: "p1", providerModel: "sonnet" },
-      { id: "mdl_new", providerId: "p1", providerModel: "haiku" },
-    ] as readonly ModelRoute[]
+    const models: readonly ModelRoute[] = [
+      {
+        id: "mdl_recorded" as ModelId,
+        providerId: "p1" as ProviderId,
+        providerModel: "sonnet",
+        aliases: [],
+        attachments: {},
+      },
+      {
+        id: "mdl_new" as ModelId,
+        providerId: "p1" as ProviderId,
+        providerModel: "haiku",
+        aliases: [],
+        attachments: {},
+      },
+    ]
     const providerNames: Readonly<Record<string, string>> = { p1: "Anthropic" }
     const prefsCalls: Array<{
-      harnessId: string
-      mode?: string
-      modelId?: string
+      harnessId: HarnessId
+      mode?: string | undefined
+      modelId?: string | undefined
     }> = []
     const client = createFakeIpcClient({
       getRunEvents: async () => ({
@@ -756,12 +822,8 @@ describe("RunDetail (replay)", () => {
           ],
         },
       }),
-      updateHarnessPrefs: async (p: {
-        harnessId: string
-        mode?: string
-        modelId?: string
-      }) => {
-        prefsCalls.push(p)
+      updateHarnessPrefs: async (p) => {
+        prefsCalls.push({ harnessId: p.harnessId, modelId: p.modelId })
         return { ok: true, value: null }
       },
     })
@@ -790,7 +852,9 @@ describe("RunDetail (replay)", () => {
     // The harness pref IS still persisted so the next live session opens with
     // the user's pick.
     await waitFor(() =>
-      expect(prefsCalls).toEqual([{ harnessId: "claude", modelId: "mdl_new" }]),
+      expect(prefsCalls).toEqual([
+        { harnessId: "claude" as HarnessId, modelId: "mdl_new" },
+      ]),
     )
     cleanup()
   })

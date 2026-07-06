@@ -6,7 +6,7 @@ import { createInMemoryConfigFile } from "./file"
 import { CURRENT_CONFIG_VERSION, defaultConfig } from "./schema"
 import { createFileConfigStore } from "./store"
 
-type Captured = { msg: string; fields?: Record<string, unknown> }
+type Captured = { msg: string; fields?: Record<string, unknown> | undefined }
 
 const makeFakeLogger = (): { logger: Logger; errors: Captured[] } => {
   const errors: Captured[] = []

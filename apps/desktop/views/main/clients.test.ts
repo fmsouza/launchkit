@@ -1,3 +1,8 @@
+function sock(h: ReturnType<typeof harness>, n: number) {
+  const s = h.sockets[n]
+  if (!s) throw new Error(`no socket ${n}`)
+  return s
+}
 import { describe, expect, it } from "bun:test"
 import { createWsRunnerClient } from "./clients"
 
@@ -66,7 +71,7 @@ describe("createWsRunnerClient", () => {
     const seen: string[] = []
     h.client.onConnectionState((s) => seen.push(s))
     expect(h.client.connectionState()).toBe("connecting")
-    h.sockets[0].open()
+    sock(h, 0).open()
     expect(h.client.connectionState()).toBe("connected")
     expect(seen).toEqual(["connected"])
   })
@@ -74,29 +79,29 @@ describe("createWsRunnerClient", () => {
   it("buffers sends until open then flushes them", () => {
     const h = harness()
     h.client.attach("s_1" as never)
-    expect(h.sockets[0].sent).toEqual([]) // not open yet
-    h.sockets[0].open()
-    expect(h.sockets[0].sent).toEqual([
+    expect(sock(h, 0).sent).toEqual([]) // not open yet
+    sock(h, 0).open()
+    expect(sock(h, 0).sent).toEqual([
       JSON.stringify({ type: "run-attach", id: "s_1" }),
     ])
   })
 
   it("reconnects with a new socket after a close", () => {
     const h = harness()
-    h.sockets[0].open()
-    h.sockets[0].close()
+    sock(h, 0).open()
+    sock(h, 0).close()
     expect(h.client.connectionState()).toBe("reconnecting")
     h.fireTimers() // fire the scheduled backoff reconnect
     expect(h.sockets.length).toBe(2)
-    h.sockets[1].open()
+    sock(h, 1).open()
     expect(h.client.connectionState()).toBe("connected")
   })
 
   it("updates getLastFrameMs when a frame arrives", () => {
     const h = harness()
-    h.sockets[0].open()
+    sock(h, 0).open()
     h.setClock(5_000)
-    h.sockets[0].fire("message", {
+    sock(h, 0).fire("message", {
       data: JSON.stringify({
         type: "runner-event",
         id: "s_1",
@@ -113,24 +118,24 @@ describe("createWsRunnerClient", () => {
 
   it("flushes the outbox on a reconnect open, not just the first open", () => {
     const h = harness()
-    h.sockets[0].open() // first connect
-    h.sockets[0].close() // drop → schedules a reconnect
+    sock(h, 0).open() // first connect
+    sock(h, 0).close() // drop → schedules a reconnect
     h.fireTimers() // reconnect creates socket 2 (still connecting)
     h.client.attach("s_2" as never) // queued: socket 2 is not open yet
-    expect(h.sockets[1].sent).toEqual([])
-    h.sockets[1].open() // reconnect open must flush the outbox
-    expect(h.sockets[1].sent).toEqual([
+    expect(sock(h, 1).sent).toEqual([])
+    sock(h, 1).open() // reconnect open must flush the outbox
+    expect(sock(h, 1).sent).toEqual([
       JSON.stringify({ type: "run-attach", id: "s_2" }),
     ])
   })
 
   it("reconnect() drops the current socket and opens a fresh one", () => {
     const h = harness()
-    h.sockets[0].open()
+    sock(h, 0).open()
     h.client.reconnect()
     expect(h.sockets.length).toBe(2)
     // The stale socket's late close must NOT schedule another reconnect.
-    h.sockets[0].fire("close")
+    sock(h, 0).fire("close")
     h.fireTimers()
     expect(h.sockets.length).toBe(2)
   })

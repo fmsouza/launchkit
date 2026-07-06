@@ -4,7 +4,7 @@ import { runCli } from "./run"
 import { makeFakeDeps } from "./test-support"
 import { createMemoryWriter } from "./writer"
 
-type Captured = { msg: string; fields?: Record<string, unknown> }
+type Captured = { msg: string; fields?: Record<string, unknown> | undefined }
 
 const makeFakeLogger = (): { logger: Logger; errors: Captured[] } => {
   const errors: Captured[] = []

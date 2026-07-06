@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test"
+import type { ProviderId } from "@spectrum/types"
 import { createFakeIpcClient } from "./fake-client"
 
 describe("createFakeIpcClient", () => {
@@ -18,12 +19,12 @@ describe("createFakeIpcClient", () => {
       setProviderSecret: async () => ({ ok: true, value: null }),
     })
     await client.setProviderSecret({
-      providerId: "p_openai",
+      providerId: "p_openai" as ProviderId,
       field: "apiKey",
       value: "sk-x",
     })
     expect(client.calls.setProviderSecret).toEqual([
-      { providerId: "p_openai", field: "apiKey", value: "sk-x" },
+      { providerId: "p_openai" as ProviderId, field: "apiKey", value: "sk-x" },
     ])
   })
 

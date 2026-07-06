@@ -1,7 +1,13 @@
 import { describe, expect, it, mock } from "bun:test"
 import type { RunnerOutbound } from "@spectrum/agent-driver"
 import type { StoredEvent } from "@spectrum/agent-events"
-import type { ModelRoute, Session, SessionId } from "@spectrum/types"
+import type {
+  ModelId,
+  ModelRoute,
+  ProviderId,
+  Session,
+  SessionId,
+} from "@spectrum/types"
 import {
   cleanup,
   fireEvent,
@@ -22,9 +28,11 @@ import { SessionsView, sessionModelLabel } from "./SessionsView"
 
 const routes: readonly ModelRoute[] = [
   {
-    id: "mdl_1" as ModelRoute["id"],
-    providerId: "p_o" as ModelRoute["providerId"],
+    id: "mdl_1" as ModelId,
+    providerId: "p_o" as ProviderId,
     providerModel: "kimi-k2.7-code:cloud",
+    aliases: [],
+    attachments: {},
   },
 ]
 const providerNames = { p_o: "ollama" }
@@ -60,7 +68,11 @@ const makeFakeRunner = (): RunnerClient & {
     attach: (sid) => attached.push(sid),
     send: () => {},
     approve: () => {},
+    answer: () => {},
     interrupt: () => {},
+    setMode: () => {},
+    setModel: () => {},
+    setThinkingEffort: () => {},
     dispatch: (_m: RunnerOutbound) => {},
     onEvent: (_sid, _cb: (event: StoredEvent) => void) => {},
     onAny: () => () => {},
@@ -68,6 +80,11 @@ const makeFakeRunner = (): RunnerClient & {
     onResumeToken: () => () => {},
     connectionLost: () => {},
     onConnectionLost: () => () => {},
+    reportConnectionState: () => {},
+    onConnectionState: () => () => {},
+    connectionState: () => "connected",
+    getLastFrameMs: () => 0,
+    reconnect: () => {},
   }
 }
 
@@ -84,7 +101,6 @@ describe("SessionsView", () => {
   it("renders an empty state in the detail when nothing is selected", () => {
     const client = createFakeIpcClient({})
     const { detail } = SessionsView({
-      selectedSessionId: undefined,
       openSessionIds: [],
       projects: [project],
       sessionsByProject: { prj_1: [running] },
@@ -109,7 +125,6 @@ describe("SessionsView", () => {
   it("renders the sessions handed in via props in the master as project groups", () => {
     const client = createFakeIpcClient({})
     const { master } = SessionsView({
-      selectedSessionId: undefined,
       openSessionIds: [],
       projects: [project],
       sessionsByProject: { prj_1: [running] },
@@ -138,7 +153,6 @@ describe("SessionsView", () => {
     const client = createFakeIpcClient({})
     const onDeleteSession = mock((_id: SessionId) => {})
     const { master } = SessionsView({
-      selectedSessionId: undefined,
       openSessionIds: [],
       projects: [project],
       sessionsByProject: { prj_1: [running] },
@@ -170,12 +184,13 @@ describe("SessionsView", () => {
   it("shows the resolved provider/model label in the master when routes + providerNames are passed", () => {
     const client = createFakeIpcClient({})
     const modelRoute: ModelRoute = {
-      id: "m_1" as ModelRoute["id"],
-      providerId: "p_o" as ModelRoute["providerId"],
+      id: "m_1" as ModelId,
+      providerId: "p_o" as ProviderId,
       providerModel: "kimi-k2.7-code:cloud",
+      aliases: [],
+      attachments: {},
     }
     const { master } = SessionsView({
-      selectedSessionId: undefined,
       openSessionIds: [],
       projects: [project],
       sessionsByProject: { prj_1: [running] },

@@ -5,18 +5,19 @@ import type {
   RunnerInbound,
   RunnerOutbound,
 } from "@spectrum/agent-driver"
+import type { SessionId } from "@spectrum/types"
 import { withNotifierTap } from "./runner-sink"
 
 // A structurally valid outbound frame. The tap's fan-out is identity-agnostic, so the exact event
 // payload is irrelevant — only that the SAME reference reaches both sinks exactly once.
 const frame: RunnerOutbound = {
   type: "runner-event",
-  id: "session-1",
+  id: "session-1" as SessionId,
   event: {
     seq: 0,
-    sessionId: "session-1",
-    ts: 0,
-    event: { type: "runner-started", runnerId: "r1" },
+    sessionId: "session-1" as SessionId,
+    ts: "1970-01-01T00:00:00.000Z",
+    event: { type: "runner-started", runnerId: "r1" as never },
   },
 }
 
@@ -41,6 +42,7 @@ const makeFakeBase = (): {
     bindSend: (send) => {
       captured = send
     },
+    markUserNamed: () => {},
   }
   return { base, capturedSink: () => captured, launch, handleInbound }
 }

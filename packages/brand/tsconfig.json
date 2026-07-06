@@ -5,6 +5,5 @@
     "outDir": "dist",
     "types": ["bun", "react"]
   },
-  "include": ["src"],
-  "exclude": ["src/**/*.test.ts", "src/**/*.test.tsx"]
+  "include": ["src"]
 }

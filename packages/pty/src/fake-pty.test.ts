@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test"
+import type { FakePtyHandle } from "./fake-pty"
 import { createFakePtySpawner } from "./fake-pty"
 
 const baseInput = {
@@ -36,11 +37,12 @@ describe("createFakePtySpawner", () => {
     const spawner = createFakePtySpawner()
     const handle = spawner.spawn(baseInput)
     if (!handle.ok) throw new Error("spawn failed")
-    let exitCode: number | null = null
-    handle.value.onExit((code) => {
+    const fakeHandle = handle.value as FakePtyHandle
+    let exitCode = -1
+    fakeHandle.onExit((code) => {
       exitCode = code
     })
-    handle.value.kill()
+    fakeHandle.kill()
     expect(exitCode).toBe(0)
   })
 
@@ -48,7 +50,8 @@ describe("createFakePtySpawner", () => {
     const spawner = createFakePtySpawner()
     const handle = spawner.spawn(baseInput)
     if (!handle.ok) throw new Error("spawn failed")
-    handle.value.resize(120, 40)
-    expect(handle.value._resizeCalls).toEqual([{ cols: 120, rows: 40 }])
+    const fakeHandle = handle.value as FakePtyHandle
+    fakeHandle.resize(120, 40)
+    expect(fakeHandle._resizeCalls).toEqual([{ cols: 120, rows: 40 }])
   })
 })

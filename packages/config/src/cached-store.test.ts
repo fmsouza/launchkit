@@ -76,7 +76,11 @@ describe("createCachedConfigStore", () => {
 
     const updated: Config = {
       ...defaultConfig(),
-      settings: { proxyPort: 5123, proxyHost: "127.0.0.1" },
+      settings: {
+        ...defaultConfig().settings,
+        proxyPort: 5123,
+        proxyHost: "127.0.0.1",
+      },
     }
     const saved = await cached.save(updated)
     expect(saved).toEqual({ ok: true, value: undefined })
@@ -101,7 +105,11 @@ describe("createCachedConfigStore", () => {
 
     const updated: Config = {
       ...defaultConfig(),
-      settings: { proxyPort: 9999, proxyHost: "127.0.0.1" },
+      settings: {
+        ...defaultConfig().settings,
+        proxyPort: 9999,
+        proxyHost: "127.0.0.1",
+      },
     }
     const result = await cached.save(updated)
 

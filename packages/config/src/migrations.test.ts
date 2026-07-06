@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test"
+import type { ModelId, ProviderId } from "@spectrum/types"
 import { isOk } from "@spectrum/utils"
 import { migrations, runMigrations } from "./migrations"
 import { CURRENT_CONFIG_VERSION, ConfigSchema } from "./schema"
@@ -198,8 +199,8 @@ describe("v3 → v4 (aliases → models)", () => {
     expect(result.value.version).toBe(CURRENT_CONFIG_VERSION)
     expect(result.value.models).toEqual([
       {
-        id: "fast",
-        providerId: "openai",
+        id: "fast" as ModelId,
+        providerId: "openai" as ProviderId,
         providerModel: "gpt-4o-mini",
         aliases: [],
         attachments: {},

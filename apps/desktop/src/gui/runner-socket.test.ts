@@ -24,6 +24,7 @@ const makeManager = (): {
     bindSend: (send) => {
       bound.push(send)
     },
+    markUserNamed: () => {},
   }
   return { manager, bound, inbound }
 }
@@ -42,7 +43,7 @@ describe("makeRunnerSocketHandlers", () => {
         seq: 0,
         sessionId: id,
         ts: "2026-06-08T12:00:00.000Z",
-        event: { type: "runner-started", runnerId: "r" },
+        event: { type: "runner-started", runnerId: "r" as never },
       },
     }
     bound[0]?.(frame)

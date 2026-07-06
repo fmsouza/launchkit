@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test"
 import type { ProviderView } from "@spectrum/ipc"
 import type { ProviderCatalogEntry } from "@spectrum/providers"
+import type { ProviderId } from "@spectrum/types"
 import { fireEvent, screen, waitFor, within } from "@testing-library/react"
 import { Toasts } from "../test/Toasts"
 import { createFakeIpcClient } from "../test/fake-client"
@@ -216,7 +217,7 @@ describe("ProvidersPage", () => {
 
     await waitFor(() => expect(client.calls.setProviderSecret.length).toBe(1))
     expect(client.calls.setProviderSecret[0]).toEqual({
-      providerId: "p_openai",
+      providerId: "p_openai" as ProviderId,
       field: "apiKey",
       value: "sk-secret-123",
     })
@@ -638,7 +639,7 @@ describe("ProvidersPage", () => {
 
     const client = renderPage({
       getProviders: async () => ({ ok: true, value: [customView] }),
-      updateProvider: async () => ({ ok: true, value: undefined }),
+      updateProvider: async () => ({ ok: true, value: customView }),
     })
 
     await waitFor(() =>

@@ -1,11 +1,16 @@
 import { describe, expect, it } from "bun:test"
 import type { ProviderView } from "@spectrum/ipc"
+import { ModelIdSchema, ProviderIdSchema } from "@spectrum/types"
 import type { ModelRoute } from "@spectrum/types"
 import { fireEvent, screen, waitFor } from "@testing-library/react"
 import { Toasts } from "../test/Toasts"
 import { createFakeIpcClient } from "../test/fake-client"
 import { renderWithProviders } from "../test/renderWithProviders"
 import { ModelsPage } from "./ModelsPage"
+
+// Branded ids shared across tests.
+const providerIdOpenAi = ProviderIdSchema.parse("p_openai")
+const modelId1 = ModelIdSchema.parse("m_1")
 
 const model = {
   id: "m_1",
@@ -159,7 +164,7 @@ describe("ModelsPage", () => {
 
     await waitFor(() => expect(client.calls.addModel.length).toBe(1))
     expect(client.calls.addModel[0]).toEqual({
-      providerId: "p_openai",
+      providerId: providerIdOpenAi,
       providerModel: "gpt-4o",
       aliases: [],
       attachments: { image: true, pdf: false },
@@ -176,7 +181,7 @@ describe("ModelsPage", () => {
     )
     fireEvent.click(screen.getByRole("button", { name: /delete/i }))
     await waitFor(() => expect(client.calls.deleteModel.length).toBe(1))
-    expect(client.calls.deleteModel[0]).toEqual({ id: "m_1" })
+    expect(client.calls.deleteModel[0]).toEqual({ id: modelId1 })
   })
 
   it("seeds the edit form and calls updateModel when an existing model is edited", async () => {
@@ -199,9 +204,9 @@ describe("ModelsPage", () => {
 
     await waitFor(() => expect(client.calls.updateModel.length).toBe(1))
     expect(client.calls.updateModel[0]).toEqual({
-      id: "m_1",
+      id: modelId1,
       input: {
-        providerId: "p_openai",
+        providerId: providerIdOpenAi,
         providerModel: "gpt-4o",
         aliases: ["haiku", "small"],
         attachments: { image: true, pdf: false },
@@ -236,7 +241,7 @@ describe("ModelsPage", () => {
       expect(client.calls.listProviderModels.length).toBeGreaterThan(0),
     )
     expect(client.calls.listProviderModels[0]).toEqual({
-      providerId: "p_openai",
+      providerId: providerIdOpenAi,
     })
   })
 
@@ -339,7 +344,7 @@ describe("ModelsPage", () => {
 
     await waitFor(() => expect(client.calls.addModel.length).toBe(1))
     expect(client.calls.addModel[0]).toEqual({
-      providerId: "p_openai",
+      providerId: providerIdOpenAi,
       providerModel: "gpt-4o",
       aliases: [],
       attachments: { image: true, pdf: false },
@@ -385,7 +390,7 @@ describe("ModelsPage", () => {
       expect(client.calls.listProviderModels.length).toBeGreaterThan(0),
     )
     expect(client.calls.listProviderModels[0]).toEqual({
-      providerId: "p_openai",
+      providerId: providerIdOpenAi,
     })
 
     await waitFor(() => {
@@ -523,7 +528,7 @@ describe("ModelsPage", () => {
 
     await waitFor(() => expect(client.calls.addModel.length).toBe(1))
     expect(client.calls.addModel[0]).toEqual({
-      providerId: "p_openai",
+      providerId: providerIdOpenAi,
       providerModel: "gpt-4o",
       aliases: ["haiku", "small"],
       attachments: { image: true, pdf: false },

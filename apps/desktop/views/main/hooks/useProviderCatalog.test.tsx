@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test"
 import type { ProviderCatalogEntry } from "@spectrum/providers"
 import { render, waitFor } from "@testing-library/react"
+import type { JSX } from "react"
 import { IpcClientProvider } from "../IpcClientContext"
 import { createFakeIpcClient } from "../test/fake-client"
 import { useProviderCatalog } from "./useProviderCatalog"

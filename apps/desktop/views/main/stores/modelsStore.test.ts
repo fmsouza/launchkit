@@ -1,13 +1,15 @@
 import { describe, expect, it, mock } from "bun:test"
-import type { ModelRoute } from "@spectrum/types"
+import type { ModelId, ModelRoute, ProviderId } from "@spectrum/types"
 import { createFakeIpcClient } from "../test/fake-client"
 import { createModelsStore } from "./modelsStore"
 
-const route = {
-  id: "m_1",
-  providerId: "p_openai",
+const route: ModelRoute = {
+  id: "m_1" as ModelId,
+  providerId: "p_openai" as ProviderId,
   providerModel: "gpt-4o",
-} as ModelRoute
+  aliases: [],
+  attachments: {},
+}
 
 describe("createModelsStore", () => {
   it("loads model routes via fetch", async () => {
@@ -28,9 +30,12 @@ describe("createModelsStore", () => {
     })
     const store = createModelsStore({ client })
     await store.getState().fetch()
-    await store
-      .getState()
-      .add({ providerId: "p_openai", providerModel: "gpt-4o" })
+    await store.getState().add({
+      providerId: "p_openai" as ProviderId,
+      providerModel: "gpt-4o",
+      aliases: [],
+      attachments: {},
+    })
     expect(client.calls.addModel.length).toBe(1)
     expect(getModels).toHaveBeenCalledTimes(2)
   })
@@ -43,7 +48,7 @@ describe("createModelsStore", () => {
     })
     const store = createModelsStore({ client })
     await store.getState().fetch()
-    await store.getState().remove("m_1")
+    await store.getState().remove("m_1" as ModelId)
     expect(client.calls.deleteModel[0]).toMatchObject({ id: "m_1" })
     expect(getModels).toHaveBeenCalledTimes(2)
   })
@@ -65,7 +70,7 @@ describe("createModelsStore", () => {
               providerId: "p_anthropic",
               providerModel: "claude-haiku",
             },
-          ] as unknown as readonly ModelRoute[],
+          ] as unknown as ModelRoute[],
         }),
       }),
       providerNameResolver: () => ({
@@ -78,7 +83,7 @@ describe("createModelsStore", () => {
       "m_haiku",
       "m_sonnet",
       "m_openai",
-    ])
+    ] as ModelId[])
   })
 
   it("falls back to providerId when the resolver returns an empty map", async () => {
@@ -89,13 +94,16 @@ describe("createModelsStore", () => {
           value: [
             { id: "m2", providerId: "p_zeta", providerModel: "z-model" },
             { id: "m1", providerId: "p_alpha", providerModel: "a-model" },
-          ] as unknown as readonly ModelRoute[],
+          ] as unknown as ModelRoute[],
         }),
       }),
       providerNameResolver: () => ({}),
     })
     await store.getState().fetch()
-    expect(store.getState().data?.map((m) => m.id)).toEqual(["m1", "m2"])
+    expect(store.getState().data?.map((m) => m.id)).toEqual([
+      "m1",
+      "m2",
+    ] as ModelId[])
   })
 
   it("sorts by providerId fallback when no resolver is supplied", async () => {
@@ -106,11 +114,14 @@ describe("createModelsStore", () => {
           value: [
             { id: "m2", providerId: "p_zeta", providerModel: "z" },
             { id: "m1", providerId: "p_alpha", providerModel: "a" },
-          ] as unknown as readonly ModelRoute[],
+          ] as unknown as ModelRoute[],
         }),
       }),
     })
     await store.getState().fetch()
-    expect(store.getState().data?.map((m) => m.id)).toEqual(["m1", "m2"])
+    expect(store.getState().data?.map((m) => m.id)).toEqual([
+      "m1",
+      "m2",
+    ] as ModelId[])
   })
 })

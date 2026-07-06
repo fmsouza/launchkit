@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test"
+import type { ModelId, ProviderId } from "@spectrum/types"
 import {
   CURRENT_CONFIG_VERSION,
   ConfigSchema,
@@ -7,9 +8,9 @@ import {
 } from "./schema"
 
 const validProvider = {
-  id: "p_openai",
+  id: "p_openai" as ProviderId,
   name: "OpenAI",
-  sdkProvider: "openai",
+  sdkProvider: "openai" as const,
   config: { baseUrl: "https://api.openai.com/v1" },
   secrets: { apiKey: { ref: "kc_openai" } },
   models: ["gpt-4o", "gpt-4o-mini"],
@@ -150,20 +151,20 @@ describe("ConfigSchema", () => {
       providers: [validProvider],
       models: [
         {
-          id: "fast",
-          providerId: "p_openai",
+          id: "fast" as ModelId,
+          providerId: "p_openai" as ProviderId,
           providerModel: "gpt-4o-mini",
           aliases: [],
         },
       ],
       settings: {
         proxyPort: 4000,
-        proxyHost: "127.0.0.1",
+        proxyHost: "127.0.0.1" as const,
         lastSelectedFolder: "",
         lastSelectedHarnessId: "",
         collapsedProjects: [],
         lastByHarness: {},
-        updateChannel: "stable",
+        updateChannel: "stable" as const,
         dismissedUpdateVersion: null,
         dismissedUpdateHash: null,
         firstTokenTimeoutMs: 120000,
@@ -172,9 +173,11 @@ describe("ConfigSchema", () => {
         sessionNameModelId: null,
       },
     }
+    const firstModel = config.models[0]
+    if (firstModel === undefined) throw new Error("fixture missing first model")
     expect(ConfigSchema.parse(config)).toEqual({
       ...config,
-      models: [{ ...config.models[0], attachments: {} }],
+      models: [{ ...firstModel, attachments: {} }],
     })
   })
 
