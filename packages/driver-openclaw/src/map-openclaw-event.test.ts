@@ -112,7 +112,7 @@ describe("mapOpenclawEvent", () => {
     expect(out).toEqual([
       {
         type: "runner-started",
-        runnerId: "rnr_child_1",
+        runnerId: "rnr_child_1" as RunnerId,
         parentRunnerId: ROOT,
         spawnedByCallId: "c-1",
         agentType: "researcher",
@@ -135,7 +135,7 @@ describe("mapOpenclawEvent", () => {
     expect(childDelta).toEqual([
       {
         type: "text-delta",
-        runnerId: "rnr_child_1",
+        runnerId: "rnr_child_1" as RunnerId,
         messageId: "cm-1",
         text: "hi",
       },
