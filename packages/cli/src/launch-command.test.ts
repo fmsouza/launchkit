@@ -1,7 +1,11 @@
 import { describe, expect, it } from "bun:test"
 import type { LaunchParams } from "@spectrum/harnesses"
 import { createInMemoryRuntimeState, decodeSessionToken } from "@spectrum/proxy"
-import { type HarnessDefinition, HarnessIdSchema } from "@spectrum/types"
+import {
+  type HarnessDefinition,
+  type HarnessId,
+  HarnessIdSchema,
+} from "@spectrum/types"
 import type { StartProxyDeps } from "./deps"
 import { runCli } from "./run"
 import { makeFakeDeps } from "./test-support"
@@ -250,7 +254,7 @@ describe("launch", () => {
 
     expect(result).toEqual({ ok: true, value: undefined })
     expect(launchCalls).toHaveLength(1)
-    expect(launchCalls[0]?.harness.id).toBe("claude")
+    expect(launchCalls[0]?.harness.id).toBe("claude" as HarnessId)
     const route = launchCalls[0]?.route
     expect(route?.kind).toBe("proxied")
     if (route?.kind === "proxied") {
@@ -266,7 +270,9 @@ describe("launch", () => {
     // A session row was persisted with the model id.
     const sessionsList = deps.sessions.query()
     expect(sessionsList.ok && sessionsList.value).toHaveLength(1)
-    expect(sessionsList.ok && sessionsList.value[0]?.harnessId).toBe("claude")
+    expect(sessionsList.ok && sessionsList.value[0]?.harnessId).toBe(
+      "claude" as HarnessId,
+    )
     expect(sessionsList.ok && String(sessionsList.value[0]?.modelId)).toBe(
       "fast",
     )
