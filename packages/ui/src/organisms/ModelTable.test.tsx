@@ -9,12 +9,14 @@ const models = [
     providerId: "p_openai",
     providerModel: "gpt-4o-mini",
     aliases: ["haiku", "small"],
+    attachments: {},
   },
   {
     id: "mdl_smart",
     providerId: "p_anthropic",
     providerModel: "claude-3-5-sonnet",
     aliases: [],
+    attachments: { image: true, pdf: true },
   },
 ] as unknown as readonly ModelRoute[]
 
@@ -45,6 +47,44 @@ describe("ModelTable", () => {
     expect(
       screen.getByRole("columnheader", { name: "Actions" }),
     ).toBeInTheDocument()
+  })
+
+  it("formats attachment capabilities per row", () => {
+    render(
+      <ModelTable
+        models={
+          [
+            {
+              id: "m1",
+              providerId: "p_openai",
+              providerModel: "gpt-4o",
+              aliases: [],
+              attachments: { image: true, pdf: true },
+            },
+            {
+              id: "m2",
+              providerId: "p_openai",
+              providerModel: "gpt-4o-mini",
+              aliases: [],
+              attachments: { image: true },
+            },
+            {
+              id: "m3",
+              providerId: "p_anthropic",
+              providerModel: "kimi-k2.7-code",
+              aliases: [],
+              attachments: {},
+            },
+          ] as unknown as readonly ModelRoute[]
+        }
+        providerNames={{}}
+        onEdit={() => {}}
+        onDelete={() => {}}
+      />,
+    )
+    expect(screen.getByText("images + PDFs")).toBeInTheDocument()
+    expect(screen.getByText("images")).toBeInTheDocument()
+    expect(screen.getByText("—")).toBeInTheDocument()
   })
   it("renders joined aliases for a model row", () => {
     render(

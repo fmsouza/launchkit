@@ -12,6 +12,7 @@ const model = {
   providerId: "p_openai",
   providerModel: "gpt-4o-mini",
   aliases: ["haiku", "small"],
+  attachments: {},
 } as unknown as ModelRoute
 const view = {
   id: "p_openai",
@@ -161,6 +162,8 @@ describe("ModelsPage", () => {
       providerId: "p_openai",
       providerModel: "gpt-4o",
       aliases: [],
+      attachments: { image: true, pdf: false },
+      attachmentsSource: "auto",
     })
   })
 
@@ -201,7 +204,8 @@ describe("ModelsPage", () => {
         providerId: "p_openai",
         providerModel: "gpt-4o",
         aliases: ["haiku", "small"],
-        attachments: {},
+        attachments: { image: true, pdf: false },
+        attachmentsSource: "auto",
       },
     })
   })
@@ -338,6 +342,8 @@ describe("ModelsPage", () => {
       providerId: "p_openai",
       providerModel: "gpt-4o",
       aliases: [],
+      attachments: { image: true, pdf: false },
+      attachmentsSource: "auto",
     })
   })
 
@@ -520,6 +526,8 @@ describe("ModelsPage", () => {
       providerId: "p_openai",
       providerModel: "gpt-4o",
       aliases: ["haiku", "small"],
+      attachments: { image: true, pdf: false },
+      attachmentsSource: "auto",
     })
   })
 
@@ -601,5 +609,110 @@ describe("ModelsPage", () => {
           .value,
       ).toBe("")
     })
+  })
+
+  // ── Attachment capabilities tests ─────────────────────────────────────────
+
+  it("prefills capability toggles from discovery and submits them with source auto", async () => {
+    const client = createFakeIpcClient({
+      getModels: async () => ({ ok: true, value: [] }),
+      getProviders: async () => ({ ok: true, value: [view] }),
+      listProviderModels: async () => ({
+        ok: true,
+        value: {
+          models: [
+            { id: "llava:13b", attachments: { image: true, pdf: false } },
+          ],
+        },
+      }),
+      addModel: async (p) => ({
+        ok: true,
+        value: { id: "m_2", ...p } as unknown as ModelRoute,
+      }),
+    })
+    renderWithProviders(
+      <>
+        <ModelsPage />
+        <Toasts />
+      </>,
+      client,
+    )
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: /add model/i }),
+      ).toBeInTheDocument(),
+    )
+    fireEvent.click(screen.getByRole("button", { name: /add model/i }))
+    fireEvent.change(screen.getByLabelText("Provider"), {
+      target: { value: "p_openai" },
+    })
+    await waitFor(() =>
+      expect(screen.getByLabelText("Model")).toBeInTheDocument(),
+    )
+    fireEvent.change(screen.getByLabelText("Model"), {
+      target: { value: "llava:13b" },
+    })
+    await waitFor(() =>
+      expect(
+        (screen.getByLabelText("Accepts images") as HTMLInputElement).checked,
+      ).toBe(true),
+    )
+    fireEvent.click(screen.getByRole("button", { name: /save model/i }))
+    await waitFor(() => expect(client.calls.addModel.length).toBe(1))
+    const sent = client.calls.addModel[0] as {
+      attachments?: { image?: boolean; pdf?: boolean }
+      attachmentsSource?: string
+    }
+    expect(sent.attachments).toEqual({ image: true, pdf: false })
+    expect(sent.attachmentsSource).toBe("auto")
+  })
+
+  it("marks capabilities as user-set when the toggles are touched", async () => {
+    const client = createFakeIpcClient({
+      getModels: async () => ({ ok: true, value: [] }),
+      getProviders: async () => ({ ok: true, value: [view] }),
+      listProviderModels: async () => ({
+        ok: true,
+        value: {
+          models: [
+            { id: "llava:13b", attachments: { image: true, pdf: false } },
+          ],
+        },
+      }),
+      addModel: async (p) => ({
+        ok: true,
+        value: { id: "m_2", ...p } as unknown as ModelRoute,
+      }),
+    })
+    renderWithProviders(
+      <>
+        <ModelsPage />
+        <Toasts />
+      </>,
+      client,
+    )
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: /add model/i }),
+      ).toBeInTheDocument(),
+    )
+    fireEvent.click(screen.getByRole("button", { name: /add model/i }))
+    fireEvent.change(screen.getByLabelText("Provider"), {
+      target: { value: "p_openai" },
+    })
+    await waitFor(() =>
+      expect(screen.getByLabelText("Model")).toBeInTheDocument(),
+    )
+    fireEvent.change(screen.getByLabelText("Model"), {
+      target: { value: "llava:13b" },
+    })
+    await waitFor(() =>
+      expect(screen.getByLabelText("Accepts PDFs")).toBeInTheDocument(),
+    )
+    fireEvent.click(screen.getByLabelText("Accepts PDFs"))
+    fireEvent.click(screen.getByRole("button", { name: /save model/i }))
+    await waitFor(() => expect(client.calls.addModel.length).toBe(1))
+    const sent = client.calls.addModel[0] as { attachmentsSource?: string }
+    expect(sent.attachmentsSource).toBe("user")
   })
 })

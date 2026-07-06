@@ -6,6 +6,7 @@ export type ModelRowProps = {
   readonly provider: string
   readonly model: string
   readonly aliases: string
+  readonly capabilities: string
   readonly onEdit: (id: string) => void
   readonly onDelete: (id: string) => void
 }
@@ -15,6 +16,7 @@ export const ModelRow = ({
   provider,
   model,
   aliases,
+  capabilities,
   onEdit,
   onDelete,
 }: ModelRowProps): ReactElement => (
@@ -22,6 +24,7 @@ export const ModelRow = ({
     <td>{provider}</td>
     <td>{model}</td>
     <td>{aliases}</td>
+    <td>{capabilities}</td>
     <td className="lk-cell-actions">
       <Button variant="secondary" onClick={() => onEdit(id)}>
         Edit
