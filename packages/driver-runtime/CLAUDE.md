@@ -13,6 +13,10 @@ populate the `runner-started.supportedModes` field emitted up-front on every run
 **Depends on:** `@spectrum/agent-driver` (the seam + ports), `@spectrum/agent-events` (CanonicalEvent),
 `@spectrum/utils` (Result, IdGen). NO harness SDKs — this package is PURE of harness specifics.
 
+**Consumers:** `@spectrum/driver-acp` — the single ACP client driver, and the only `DriverAdapter`
+implementation in the repo since the bespoke per-harness drivers were retired. A harness is added
+by declaring an `acp` launch config on its `HarnessDefinition`, not by writing a new adapter.
+
 **Effect owned:** none — pure logic. The async adapter start runs via an injected `scheduler`
 (defaults to `queueMicrotask`; tests pass `(fn) => fn()`). `idGen` is injected (mints `rnr`/`apr`).
 
