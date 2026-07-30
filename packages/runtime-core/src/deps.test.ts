@@ -40,8 +40,6 @@ describe("CreateAppContextDeps", () => {
       "createFileRuntimeState",
       "createRunStore",
       "createFakeDriver",
-      "createCodexDriver",
-      "createOpencodeDriver",
       "createAcpDriver",
       "createDataAdmin",
       "demoHarnessEnabled",

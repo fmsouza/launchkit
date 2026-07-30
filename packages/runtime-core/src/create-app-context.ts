@@ -23,8 +23,6 @@ import type {
 import { demoScript } from "@spectrum/agent-driver"
 import { ThinkingEffortSchema } from "@spectrum/agent-events"
 import { defaultConfig } from "@spectrum/config"
-import { createClaudeDriver } from "@spectrum/driver-claude"
-import { createOpenclawDriver } from "@spectrum/driver-openclaw"
 import {
   type LaunchParams,
   createInMemoryHarnessFileSource,
@@ -485,7 +483,6 @@ export const createAppContext = (
   // `ctx.reportResumeToken`, the runtime binds the current Spectrum `sessionId` and calls this
   // sink — which persists via the SessionStore. A failure is logged but never crashes the run:
   // the session simply loses the ability to true-resume (manager still emits a fresh-restart toast).
-  const idGen = deps.createCryptoIdGen()
   const driverIdGen = deps.createCryptoIdGen()
   const setResumeIdLog = log.child("runner")
   const setResumeId: (id: SessionId, token: string) => void = (id, token) => {
@@ -497,29 +494,19 @@ export const createAppContext = (
       })
   }
 
-  // The ACP (Agent Client Protocol) driver — shared across all ACP-mode harnesses.
-  // When a harness's driver mode is "acp", the routing driver dispatches to this instance
-  // instead of the bespoke native driver. Default mode is "native" (no behavior change).
+  // The ACP (Agent Client Protocol) driver — the single driver for all supported harnesses.
+  // All four harnesses (claude, codex, opencode, openclaw) route to this driver via
+  // resolveDriverMode. The bespoke native drivers have been retired (#123); the driver
+  // registry now holds only the dev-only demo FakeDriver.
   const acpDriver = deps.createAcpDriver({ idGen: driverIdGen, setResumeId })
 
   const driverRegistry: DriverRegistry = createDriverRegistry({
-    claude: createClaudeDriver({
-      idGen,
-      logger: log.child("driver.claude"),
-      setResumeId,
-    }),
-    codex: deps.createCodexDriver({ idGen: driverIdGen, setResumeId }),
-    opencode: deps.createOpencodeDriver({ idGen: driverIdGen, setResumeId }),
-    // Plan 4 (UNVERIFIED): OpenClaw gateway driver. No installed binary / published @openclaw/sdk; the
-    // real connector throws (→ runner-finished:errored) until wired, but it routes native like the others.
-    openclaw: createOpenclawDriver({ idGen, setResumeId }),
     ...(deps.demoHarnessEnabled
       ? { [DEMO_HARNESS_ID]: deps.createFakeDriver({ script: demoScript }) }
       : {}),
   })
 
-  // One AgentDriver for the RunManager: route start() to the registered driver for the harness,
-  // selecting between the bespoke native driver and the shared ACP driver by driver mode.
+  // One AgentDriver for the RunManager: route start() to the ACP driver (or the demo driver).
   const routingDriver: AgentDriver = {
     start: (input) => {
       const mode = resolveDriverMode(input.harnessId)
