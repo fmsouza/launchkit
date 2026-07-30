@@ -29,7 +29,7 @@ Test-first (RED observed) → implemented (GREEN) → refactored → `bun run ty
 - `@spectrum/run-store` — append-only run-event persistence (depends on db, agent-events, types, utils)
 - `@spectrum/agent-driver` — driver seam + run manager + socket protocol + FakeDriver (depends on agent-events, types, utils)
 - `@spectrum/driver-runtime` — reusable driver core: createDriver(adapter) → AgentDriver (depends on agent-driver, agent-events, utils; no harness SDK)
-- `@spectrum/driver-acp` — ACP client adapter: createAcpDriver + pure mapAcpUpdate (depends on driver-runtime, agent-events, agent-driver, types, utils, zod). Drives all ACP-compatible harnesses (Claude, Codex, OpenCode, OpenClaw, and any future ACP agent) over JSON-RPC 2.0 / stdio.
+- `@spectrum/driver-acp` — the ONE agent driver: an ACP client — createAcpDriver + pure mapAcpUpdate + pure negotiation helpers, over a real stdio JSON-RPC transport (depends on driver-runtime, agent-events, agent-driver, types, utils, zod, @agentclientprotocol/sdk). Drives every harness that declares an `acp` launch config (Claude, Codex, OpenCode, OpenClaw, Gemini, and any future ACP agent); adding one is a harness definition, not a package. See `docs/01-conventions/acp-architecture.md`.
 
 ## Project skills
 `.agents/skills/spectrum-new-package` — creating a new internal package under `packages/`. Invoke it when it applies.

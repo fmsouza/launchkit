@@ -15,61 +15,102 @@ Spectrum previously had four bespoke, harness-native driver packages — each wi
 
 This bespoke-per-harness approach had real costs: N drivers to maintain, harness churn breaking drivers (Codex binding drift tripwire), divergent feature semantics, and ecosystem isolation.
 
-ACP (Agent Client Protocol) is the Zed-led open standard (JSON-RPC 2.0 over stdio) for editor↔coding-agent communication, now at v1 stable. Every agent Spectrum supports ships an ACP server. The migration replaced four bespoke drivers with one shared `@spectrum/driver-acp` package.
+ACP is the open standard (JSON-RPC 2.0 over stdio) for editor↔coding-agent communication, now at v1 stable. Every agent Spectrum supports ships an ACP server. The migration replaced four bespoke drivers with one shared `@spectrum/driver-acp` package.
 
 ## The ACP driver
 
-`@spectrum/driver-acp` is a single `DriverAdapter` that wraps the `@agentclientprotocol/sdk` TypeScript client:
+`@spectrum/driver-acp` is a single `DriverAdapter` over the `@agentclientprotocol/sdk` TypeScript client. All of the logic is pure; exactly one file performs effects.
 
-- **`acp-client.ts`** — `AcpConnect`/`AcpClient`/`AcpConnection` port interfaces (injected transport) + zod schemas for the ACP `session/update` discriminated union (7 update kinds: `agent_message_chunk`, `thought`, `tool_call`, `tool_call_update`, `plan`, `usage_update`, `mode`).
-- **`map-acp-update.ts`** — the pure mapper (`mapAcpUpdate(notif, state) -> CanonicalEvent[]`). Fixture-tested, no IO, deterministic.
-- **`adapter.ts`** — `createAcpAdapter(deps): DriverAdapter`. The ACP client adapter: `initialize` handshake, `session/new`/`session/load`, `session/prompt` (fire-and-forget per the `AdapterHandle.send(): void` contract; the adapter awaits internally and emits `turn-finished` on `stopReason`), `session/update` streaming -> `mapAcpUpdate` -> `ctx.emit`, `session/request_permission` -> `ctx.requestApproval` bridge, `elicitation/create` -> `ctx.requestQuestion` bridge, `session/cancel` for interrupt, `session/set_mode` for mode switch, `session/close` for close.
-- **`driver.ts`** — `createAcpDriver(deps): AgentDriver` factory wrapping `@spectrum/driver-runtime`'s `createDriver`.
+| File | Role |
+|---|---|
+| `acp-client.ts` | Port types + zod schemas for the ACP wire subset. No logic. |
+| `map-acp-update.ts` | PURE mapper: one `session/update` → 0..n `CanonicalEvent`. |
+| `session-modes.ts` | PURE: Spectrum `PermissionMode` ↔ agent-defined ACP mode ids. |
+| `permission-outcome.ts` | PURE: `ApprovalDecision` → the `optionId` to answer with. |
+| `prompt-blocks.ts` | PURE: text + attachments → ACP content blocks. |
+| `elicitation.ts` | PURE: elicitation ↔ question card. |
+| `config-options.ts` | PURE: find the agent's model / effort / mode config option. |
+| `real-connect.ts` | The ONLY effectful file: spawn + ndjson stdio + SDK client. |
+| `adapter.ts` | Thin glue: handshake → capabilities → stream pump → handle. |
+| `driver.ts` | `createAcpDriver` factory. |
+
+The transport is tested against a real SDK **agent** connected in-process (`clientApp.connect(agentApp)`), so no unit test spawns a process. `acp-agent.integration.test.ts` runs the real spawn + handshake against whichever agent binaries are installed, skipping the rest.
 
 ## ACP ↔ CanonicalEvent mapping
+
+The v1 `sessionUpdate` union is modeled in full, so a new kind is a type error rather than a silent drop.
 
 | ACP `session/update` kind | `CanonicalEvent` |
 |---|---|
 | `agent_message_chunk` | `text-delta` (role: assistant, keyed by messageId) |
-| `thought` | `reasoning-delta` (keyed by messageId) |
-| `tool_call` (pending) | `tool-call-started` (dedup by toolCallId) |
+| `agent_thought_chunk` | `reasoning-delta` (keyed by messageId) |
+| `tool_call` | `tool-call-started` (dedup by toolCallId) |
 | `tool_call_update` (in_progress) | `tool-output-delta` |
 | `tool_call_update` (completed) | `tool-call-finished` (status: ok) |
 | `tool_call_update` (failed) | `tool-call-finished` (status: error) |
-| `plan` | `plan-update` (replace semantics keyed by planId) |
+| `plan`, `plan_update` | `plan-update` (REPLACE semantics; one stable planId per runner) |
 | `usage_update` | `usage` (with contextUsed/contextSize) |
-| `mode` | `annotation` (kind: mode-change) |
+| `current_mode_update` | `annotation` (kind: mode-change) |
+| `user_message_chunk` | — (the runtime already echoed the user's turn) |
+| `available_commands_update`, `session_info_update`, `config_option_update`, `plan_removed` | — (no Spectrum surface yet) |
 | unknown | `[]` (defensive) |
 
 ## Turn correlation
 
-Spectrum's `AgentSession.send` is fire-and-forget (`void`); ACP's `session/prompt` is request/response (returns `{ stopReason }`). The adapter reconciles this: `handle.send` fires `client.sessionPrompt(...)` without awaiting; internally the adapter holds the prompt promise and emits `turn-finished` on resolution. This preserves Spectrum's push-streamed UX while honoring ACP's request/response turn model.
+Spectrum's `AgentSession.send` is fire-and-forget (`void`); ACP's `session/prompt` is request/response (returns `{ stopReason }`). The adapter reconciles this: `handle.send` fires `session/prompt` without awaiting; internally the adapter holds the promise and emits `turn-finished` on resolution. `refusal`, `max_tokens` and `max_turn_requests` carry an error detail; `end_turn` and `cancelled` are clean endings.
+
+## Capability negotiation
+
+One driver instance serves every harness, so capabilities cannot be static. The adapter re-emits `runner-started` after the handshake carrying what THIS agent negotiated — the reducer merges `runner-started` field-by-field (`event.x ?? existing?.x`):
+
+- **Attachments** ← `initialize`'s `promptCapabilities` (`image`, `embeddedContext`). Attachment kinds the agent did not advertise are dropped rather than sent: an unsupported content block fails the whole turn.
+- **Modes** ← `session/new`'s `modes.availableModes`, **or** a `category: "mode"` config option. Agents use both surfaces; OpenCode uses only the latter, so reading only `modes` reports no modes at all.
+- **Model / thinking effort** ← `session/set_config_option`, found by the agent's own `category` (`"model"`, `"thought_level"`).
+
+Mode ids are agent-defined strings, mapped by best-match. Observed live:
+
+| Agent | Mode ids |
+|---|---|
+| Claude | `auto`, `default`, `acceptEdits`, `plan`, `dontAsk`, `bypassPermissions` |
+| Codex | `read-only`, `agent`, `agent-full-access` |
+| OpenCode | `build`, `plan` (as a config option, not `modes`) |
+
+**The run's permission mode is applied at session start**, defaulting to `manual`. This is a safety requirement, not a nicety: `claude-agent-acp` opens sessions in `bypassPermissions`, which auto-approves every tool call and never consults the permission callback — inheriting it would silently disable Spectrum's approval cards.
+
+## Launching an ACP agent
+
+| Harness | ACP entry point | Install |
+|---|---|---|
+| OpenCode | `opencode acp` (native) | — |
+| OpenClaw | `openclaw acp` (native) | — |
+| Gemini CLI | `gemini --acp` (native) | `npm i -g @google/gemini-cli` |
+| Claude Code | `claude-agent-acp` (separate binary) | `npm i -g @agentclientprotocol/claude-agent-acp` |
+| Codex | `codex-acp` (separate binary) | `npm i -g @agentclientprotocol/codex-acp` |
+
+Neither `claude --acp` nor `codex acp` exists — both are adapter binaries, which is why `HarnessDefinition.acp` carries an optional `command` override. The older `@zed-industries/*` packages are deprecated; `@zed-industries/claude-code-acp` in particular fails at `session/new`.
 
 ## How to add a new ACP-compatible agent
 
-Adding a new ACP agent is a config-only entry — no new driver package needed:
+Config only — no new driver package, and no composition-root edit:
 
-1. Add a harness definition in `packages/harnesses/src/builtin/<agent>.ts` with an `acp: { args: [...], native: true }` field.
-2. Add the harness to `packages/harnesses/src/builtin/index.ts` `builtinHarnesses`.
-3. Add the harness id to `ACP_HARNESSES` in `packages/runtime-core/src/create-app-context.ts`.
+1. Add a harness definition in `packages/harnesses/src/builtin/<agent>.ts` with an `acp` field.
+2. Add it to `builtinHarnesses` in `packages/harnesses/src/builtin/index.ts`.
 
-The ACP driver handles the rest: spawn, handshake, streaming, approvals, elicitation, interrupt, resume.
+The composition root derives its ACP harness set from the definitions (a harness is ACP-routed iff it declares an `acp` config), so the driver, the registry and the launch path pick it up automatically. `packages/harnesses/src/builtin/gemini.ts` is the worked example.
+
+**Verify the flag against the real binary before shipping it.** Every ACP flag in this repo was wrong on first writing.
 
 See the ACP agent registry: https://agentclientprotocol.com/get-started/agents
 
 ## Accepted regressions
 
-Per-harness feature drops documented during the migration:
+- **Sub-agent trees flatten.** ACP v1's `session/update` has no child-session concept, so Claude's `Agent`/`Task` calls render as tool calls on the root runner rather than child runners.
+- **Mid-turn steering (Codex `turn/steer`) is gone.** ACP v1 is one prompt → one `stopReason`. (`claude-agent-acp` advertises `_meta.steering.supported`, so this may be reachable later via `_meta`.)
+- **Codex sandbox granularity is coarsened** to the three modes Codex advertises (`read-only`, `agent`, `agent-full-access`).
+- **Model switching depends on the agent.** It works where the agent advertises a `category: "model"` config option (OpenCode, Codex, Claude). Spectrum's own route ids will not match an agent's model list, so switching the Spectrum route still takes effect through the proxy env on the next session rather than mid-session.
+- **User-JSON harnesses declaring `acp` are not auto-registered.** The driver registry is built once at startup while the harness registry hot-reloads from disk. Builtins only.
 
-**Codex:**
-- Mid-turn steering (`turn/steer`) — ACP v1 has no equivalent.
-- Sandbox policy granularity — coarsened to ACP modes.
-- Reasoning effort tiers — pending ACP `model_config` verification.
-
-**Claude:**
-- Streaming-input mode — ACP's `session/prompt` is request/response, not push-stream.
-- `refusal_fallback_prompt` — may be dropped if the Zed adapter shim doesn't map it.
-- Adaptive thinking `effort` — may become a no-op if not exposed via ACP `model_config`.
+Reasoning effort is **not** a regression: both Claude (`thought_level`) and Codex (`reasoning_effort`) expose it as a session config option, and `setThinkingEffort` drives it.
 
 ## References
 
