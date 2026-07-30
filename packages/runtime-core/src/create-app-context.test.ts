@@ -909,7 +909,7 @@ describe("createAppContext ACP driver wiring", () => {
     expect(nativeStartCalled).toBe(false)
   })
 
-  it("still routes claude to the native driver (Phase 4 — not yet migrated)", () => {
+  it("routes claude to the ACP driver (Phase 4 — richest bespoke integration migrated)", () => {
     let acpStartCalled = false
     const { deps } = makeFakeDeps()
     ;(deps as { createAcpDriver: unknown }).createAcpDriver = (() => ({
@@ -919,17 +919,37 @@ describe("createAppContext ACP driver wiring", () => {
       },
     })) as never
     const ctx = createAppContext(deps)
-    // claude's native driver (createClaudeDriver) is imported directly, not via deps.
-    // We just verify ACP is NOT called for claude.
-    try {
-      ctx.routingDriver.start({
-        harnessId: "claude" as never,
-        cwd: "/tmp",
-        env: {},
-      })
-    } catch {
-      // The real claude driver may fail in tests; we only care that ACP wasn't called.
-    }
-    expect(acpStartCalled).toBe(false)
+    ctx.routingDriver.start({
+      harnessId: "claude" as never,
+      cwd: "/tmp",
+      env: {},
+    })
+    expect(acpStartCalled).toBe(true)
+  })
+
+  it("routes codex to the ACP driver (Phase 3 — JSON-RPC vocabulary swap)", () => {
+    let acpStartCalled = false
+    let nativeStartCalled = false
+    const { deps } = makeFakeDeps()
+    ;(deps as { createAcpDriver: unknown }).createAcpDriver = (() => ({
+      start: () => {
+        acpStartCalled = true
+        return ok({}) as never
+      },
+    })) as never
+    ;(deps as { createCodexDriver: unknown }).createCodexDriver = (() => ({
+      start: () => {
+        nativeStartCalled = true
+        return ok({}) as never
+      },
+    })) as never
+    const ctx = createAppContext(deps)
+    ctx.routingDriver.start({
+      harnessId: "codex" as never,
+      cwd: "/tmp",
+      env: {},
+    })
+    expect(acpStartCalled).toBe(true)
+    expect(nativeStartCalled).toBe(false)
   })
 })
