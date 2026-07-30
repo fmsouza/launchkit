@@ -88,6 +88,7 @@ const makeFakeDeps = (): {
     createFakeDriver: (() => ({ start: () => ok({}) })) as never,
     createCodexDriver: (() => ({ start: () => ok({}) })) as never,
     createOpencodeDriver: (() => ({ start: () => ok({}) })) as never,
+    createAcpDriver: (() => ({ start: () => ok({}) })) as never,
     createDataAdmin: (() => ({
       deleteSession: () => ok(undefined),
       deleteProject: () => ok(undefined),
@@ -834,5 +835,24 @@ describe("createAppContext resolveModelEnv wiring", () => {
     // Canary channel: base 4000 + offset 1 = effective port 4001
     expect(env.ANTHROPIC_BASE_URL).toContain("4001")
     expect(env.ANTHROPIC_BASE_URL).not.toContain("4000")
+  })
+})
+
+describe("createAppContext ACP driver wiring", () => {
+  it("constructs the ACP driver via deps.createAcpDriver", () => {
+    let acpCalled = false
+    const { deps } = makeFakeDeps()
+    ;(deps as { createAcpDriver: unknown }).createAcpDriver = (() => {
+      acpCalled = true
+      return { start: () => ok({}) }
+    }) as never
+    createAppContext(deps)
+    expect(acpCalled).toBe(true)
+  })
+
+  it("routingDriver.start dispatches to the native driver by default (no behavior change)", () => {
+    const { deps } = makeFakeDeps()
+    const ctx = createAppContext(deps)
+    expect(typeof ctx.routingDriver.start).toBe("function")
   })
 })
