@@ -56,6 +56,9 @@ describe("builtinHarnesses", () => {
     expect(claude.envTemplate).toEqual({
       ANTHROPIC_BASE_URL: "{{proxyUrl}}",
       ANTHROPIC_AUTH_TOKEN: "{{proxyKey}}",
+      // Claude Code prefers its cached OAuth token over ANTHROPIC_AUTH_TOKEN; an explicit
+      // Authorization header overrides it. See the harness definition.
+      ANTHROPIC_CUSTOM_HEADERS: "Authorization: Bearer {{proxyKey}}",
       ANTHROPIC_MODEL: "{{model}}",
       ANTHROPIC_SMALL_FAST_MODEL: "{{model}}",
       CLAUDE_CODE_MAX_RETRIES: "2",
@@ -150,6 +153,18 @@ describe("builtin ACP configs", () => {
     expect(opencode.acp?.native).toBe(true)
     expect(opencode.acp?.command).toBeUndefined()
     expect(opencode.acp?.args).toEqual(["acp"])
+  })
+
+  it("claude sends the proxy key as an explicit Authorization header", () => {
+    // Claude Code prefers its cached subscription OAuth token over ANTHROPIC_AUTH_TOKEN, so a
+    // proxied session 401s. An explicit Authorization custom header OVERRIDES the OAuth one —
+    // the same mechanism the ACP adapter itself uses for custom gateways. Verified live against a
+    // header-logging endpoint: with it, Claude Code sends Spectrum's token; without it, an
+    // sk-ant-oat OAuth token.
+    expect(claude.envTemplate.ANTHROPIC_CUSTOM_HEADERS).toBe(
+      "Authorization: Bearer {{proxyKey}}",
+    )
+    expect(claude.envTemplate.ANTHROPIC_AUTH_TOKEN).toBe("{{proxyKey}}")
   })
 
   it("ships gemini as a builtin ACP harness", () => {

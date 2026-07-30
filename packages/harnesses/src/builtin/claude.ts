@@ -8,26 +8,29 @@ export const claude: HarnessDefinition = {
   envTemplate: {
     ANTHROPIC_BASE_URL: "{{proxyUrl}}",
     // Use ANTHROPIC_AUTH_TOKEN (the Bearer auth for a custom gateway), not
-    // ANTHROPIC_API_KEY: it takes precedence over a cached Max/Pro subscription
-    // OAuth login, so Claude Code sends our proxy key. ANTHROPIC_API_KEY does
-    // not (the subscription wins), which caused a 401 retry loop. We omit
-    // ANTHROPIC_API_KEY to avoid the precedence ambiguity / approval prompt.
+    // ANTHROPIC_API_KEY: ANTHROPIC_API_KEY loses to a cached subscription login and caused a 401
+    // retry loop. We omit it to avoid the precedence ambiguity / approval prompt.
     ANTHROPIC_AUTH_TOKEN: "{{proxyKey}}",
+    // ...and send the key as an EXPLICIT Authorization header too, because
+    // ANTHROPIC_AUTH_TOKEN alone is no longer enough: Claude Code (2.1.220) prefers its cached
+    // subscription OAuth token, so a proxied session 401s. Captured against a header-logging
+    // endpoint — without this header Claude sends `Bearer sk-ant-oat…` (115 chars) plus
+    // `anthropic-beta: …oauth-2025-04-20…`; with it, it sends Spectrum's key.
+    //
+    // This is the same mechanism the ACP adapter uses for custom gateways: it sets
+    // ANTHROPIC_BASE_URL + ANTHROPIC_CUSTOM_HEADERS and a placeholder ANTHROPIC_AUTH_TOKEN "to
+    // bypass claude login requirement". A custom header WINS over the OAuth one, which
+    // `x-api-key` would not (the proxy prefers Authorization when both are present).
+    //
+    // SECURITY: this carries the per-run proxy key, exactly like ANTHROPIC_AUTH_TOKEN. The
+    // rendered env is never logged, and the key is registered for redaction.
+    ANTHROPIC_CUSTOM_HEADERS: "Authorization: Bearer {{proxyKey}}",
     ANTHROPIC_MODEL: "{{model}}",
     // Claude Code uses a separate small/fast model for background work (topic/title
     // detection, etc.) and routes it through ANTHROPIC_BASE_URL. Without this it would
     // request its default haiku id, which our router does not know (unknown-model).
     // Pin it to the SAME selected route id so every request resolves through the proxy.
     ANTHROPIC_SMALL_FAST_MODEL: "{{model}}",
-    // KNOWN ISSUE: Claude Code 2.1.220 ignores ANTHROPIC_AUTH_TOKEN and sends its cached
-    // subscription OAuth token instead, so a proxied session 401s against the Spectrum proxy
-    // (captured live: `Bearer sk-ant-oat…`, `anthropic-beta: …oauth-2025-04-20…`). Setting
-    // ANTHROPIC_API_KEY as well does not change it. The one verified lever is
-    // `CLAUDE_CODE_SIMPLE=1` (what `--bare` sets: auth becomes strictly ANTHROPIC_API_KEY /
-    // apiKeyHelper), but simple mode also disables CLAUDE.md discovery, hooks, LSP and
-    // auto-memory — a trade-off for the user to make, not one to bake in.
-    // See docs/01-conventions/acp-architecture.md and the tracking issue.
-    //
     // Claude Code's default API retry policy (~10 attempts with growing backoff)
     // is tuned for the real Anthropic API. Against our loopback proxy it turns a
     // hard provider failure (e.g. exhausted rate-limit quota) into minutes of
