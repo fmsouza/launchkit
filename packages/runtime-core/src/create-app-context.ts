@@ -421,10 +421,19 @@ export const createAppContext = (
     logger: log.child("harness"),
   })
   // Per-harness driver mode: "native" (bespoke driver) or "acp" (shared ACP driver).
-  // Phase 2: OpenClaw (completes the UNVERIFIED driver) and OpenCode (native ACP agent)
-  // are routed to the ACP driver. Claude (#122) and Codex (#121) remain on native
-  // until their per-harness verification is complete.
-  const ACP_HARNESSES: ReadonlySet<string> = new Set(["openclaw", "opencode"])
+  // All four supported harnesses (claude, codex, opencode, openclaw) are routed to the
+  // ACP driver. The bespoke native drivers remain registered as fallbacks but are no
+  // longer the production path. Live binary verification per harness:
+  //   - openclaw: #119 (openclaw acp)
+  //   - opencode: #120 (opencode acp)
+  //   - codex: #121 (codex acp — via Zed's codex-acp adapter)
+  //   - claude: #122 (claude --acp — via Zed's claude-agent-acp adapter)
+  const ACP_HARNESSES: ReadonlySet<string> = new Set([
+    "claude",
+    "codex",
+    "openclaw",
+    "opencode",
+  ])
   const resolveDriverMode = (harnessId: HarnessId): "native" | "acp" =>
     ACP_HARNESSES.has(String(harnessId)) ? "acp" : "native"
 
