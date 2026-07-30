@@ -102,14 +102,20 @@ The composition root derives its ACP harness set from the definitions (a harness
 
 See the ACP agent registry: https://agentclientprotocol.com/get-started/agents
 
-## Known issue: Claude Code ignores the proxy token
+## Resume
 
-**A proxied Claude session fails to authenticate against the Spectrum proxy.** This is NOT an ACP
-issue — the native spawn path fails identically — but it is the one thing standing between a Claude
-session and a Spectrum-routed model.
+`session/load` reloads a harness-native session. Verified against all three installed agents; note
+that **Codex only knows a session once it has had a turn** — `session/load` (and `session/resume`)
+of a never-prompted session fails with *"no rollout found for thread id"*, because Codex persists
+the transcript, not the id. Spectrum captures its resume token at session creation, so that case is
+reachable: open a session, close it without prompting, reopen. The adapter therefore falls back to
+a fresh `session/new` when a load fails, and reports the new id.
 
-Claude Code 2.1.220 sends its cached subscription OAuth token instead of `ANTHROPIC_AUTH_TOKEN`.
-Captured against a header-logging endpoint with `ANTHROPIC_AUTH_TOKEN` set to a known value:
+## Solved: Claude Code and the proxy token
+
+Claude Code 2.1.220 prefers its cached subscription OAuth token over `ANTHROPIC_AUTH_TOKEN`, so a
+proxied session used to 401 — the user's model choice was silently ignored. Captured against a
+header-logging endpoint with `ANTHROPIC_AUTH_TOKEN` set to a known value:
 
 ```
 authorization: "Bearer sk-an…(len 115)"        <- an sk-ant-oat OAuth token, not ours
@@ -117,21 +123,18 @@ anthropic-beta: …,oauth-2025-04-20,…
 user-agent:     claude-cli/2.1.220
 ```
 
-The harness definition's comment asserts the opposite precedence, which was presumably true when it
-was written. Setting `ANTHROPIC_API_KEY` as well does not change it. The proxy is not at fault: it
-accepts both the master key and a session-encoded key, over `Authorization: Bearer` and `x-api-key`,
-returning 200 and a real stream.
+**The fix**: send the key as an explicit `Authorization` custom header, which overrides the OAuth
+one. `claude`'s `envTemplate` sets `ANTHROPIC_CUSTOM_HEADERS: "Authorization: Bearer {{proxyKey}}"`
+alongside `ANTHROPIC_AUTH_TOKEN`. This is the same mechanism the ACP adapter uses for custom
+gateways — it sets `ANTHROPIC_BASE_URL` + `ANTHROPIC_CUSTOM_HEADERS` with a placeholder
+`ANTHROPIC_AUTH_TOKEN` *"to bypass claude login requirement"*.
 
-**The one verified lever** is Claude Code's simple mode — `CLAUDE_CODE_SIMPLE=1` (what `--bare`
-sets), documented as *"Anthropic auth is strictly ANTHROPIC_API_KEY or apiKeyHelper via --settings
-(OAuth and keychain are never read)"*. With it set, Claude Code sends Spectrum's token. It is not
-enabled here because simple mode also disables **CLAUDE.md auto-discovery**, hooks, LSP, plugin
-sync and auto-memory — a serious downgrade for a coding session, and a trade-off for the user to
-make rather than one to bake in silently.
-
-Adding `CLAUDE_CODE_SIMPLE: "1"` to `claude`'s `envTemplate` would scope it correctly if that
-trade-off is accepted: `envTemplate` renders only for proxied routes, so a "default" (direct)
-session would stay fully featured.
+Alternatives probed against the header endpoint, all of which still sent the OAuth token:
+`ANTHROPIC_API_KEY`, `CLAUDE_CODE_ASSUME_FIRST_PARTY_BASE_URL=0`, and `apiKeyHelper` via
+`--settings`. `CLAUDE_CODE_SIMPLE=1` (what `--bare` sets) does work, but simple mode also disables
+CLAUDE.md discovery, hooks, LSP and auto-memory — rejected for that reason. An `x-api-key` header
+does not work either: the OAuth `Authorization` header survives, and the proxy prefers it when both
+are present.
 
 ## Accepted regressions
 
@@ -139,10 +142,6 @@ session would stay fully featured.
 - **Mid-turn steering (Codex `turn/steer`) is gone.** ACP v1 is one prompt → one `stopReason`. (`claude-agent-acp` advertises `_meta.steering.supported`, so this may be reachable later via `_meta`.)
 - **Codex sandbox granularity is coarsened** to the three modes Codex advertises (`read-only`, `agent`, `agent-full-access`).
 - **Model switching depends on the agent.** It works where the agent advertises a `category: "model"` config option (OpenCode, Codex, Claude). Spectrum's own route ids will not match an agent's model list, so switching the Spectrum route still takes effect through the proxy env on the next session rather than mid-session.
-- **Codex resume is unresolved.** `codex-acp` advertises `loadSession: true` and a `resume` session
-  capability, but rejected a `session/load` of a live session with an internal error. OpenCode and
-  Claude both accept it. Needs a follow-up against the adapter's own semantics (it may want
-  `session/resume` rather than `session/load`).
 - **User-JSON harnesses declaring `acp` are not auto-registered.** The driver registry is built once at startup while the harness registry hot-reloads from disk. Builtins only.
 
 Reasoning effort is **not** a regression: both Claude (`thought_level`) and Codex (`reasoning_effort`) expose it as a session config option, and `setThinkingEffort` drives it.

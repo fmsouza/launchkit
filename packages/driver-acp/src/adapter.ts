@@ -90,9 +90,16 @@ export const createAcpAdapter = (deps: AcpAdapterDeps): DriverAdapter => {
       const client = connection.client
 
       const init = await client.initialize()
+      // Resume, falling back to a fresh session when the agent cannot reload the old one.
+      // Spectrum captures the resume token at session CREATION, so a session the user never
+      // prompted has no transcript on the agent's side — Codex answers "no rollout found for
+      // thread id". Failing the whole run over that would strand the user on a session that is
+      // otherwise perfectly usable, so a fresh session is started instead and its id reported.
       const session =
         input.resume !== undefined
-          ? await client.sessionLoad(input.resume, input.cwd)
+          ? await client
+              .sessionLoad(input.resume, input.cwd)
+              .catch(() => client.sessionNew(input.cwd))
           : await client.sessionNew(input.cwd)
 
       ctx.reportResumeToken?.(session.sessionId)

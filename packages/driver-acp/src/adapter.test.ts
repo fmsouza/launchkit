@@ -33,6 +33,7 @@ interface FakeClientOptions {
   /** Hold session/set_mode open until `releaseSetMode()` so ordering can be observed. */
   readonly blockSetMode?: boolean
   readonly rejectSetMode?: boolean
+  readonly rejectSessionLoad?: boolean
 }
 
 /** A recording fake ACP client — unit-tests the adapter with no real agent spawn. */
@@ -128,6 +129,8 @@ const createFakeClient = (options: FakeClientOptions = {}): FakeAcpClient => {
     },
     sessionLoad: async (id) => {
       sessionLoads.push(id)
+      if (options.rejectSessionLoad === true)
+        throw new Error("no rollout found for thread id")
       return sessionInfo
     },
     sessionPrompt: async (sid, prompt) => {
@@ -247,6 +250,30 @@ describe("createAcpAdapter — start", () => {
     const client = createFakeClient()
     await start(client, {}, { resume: "acp-sess-prev" })
     expect(client.sessionLoads).toEqual(["acp-sess-prev"])
+  })
+
+  it("starts a fresh session when the agent cannot resume the old one", async () => {
+    // Spectrum captures the resume token at session CREATION, so a session the user never
+    // prompted has no transcript for the agent to reload — codex answers "no rollout found for
+    // thread id". Failing the run over that would strand the user on a session they can still
+    // use; fall back to a fresh session instead.
+    const client = createFakeClient({ rejectSessionLoad: true })
+    const { events } = await start(client, {}, { resume: "acp-sess-gone" })
+    expect(client.sessionLoads).toEqual(["acp-sess-gone"])
+    expect(client.sessionNews).toBe(1)
+    expect(events.some((e) => e.type === "runner-started")).toBe(true)
+  })
+
+  it("reports the fresh session id when a resume falls back", async () => {
+    const client = createFakeClient({ rejectSessionLoad: true })
+    const { ctx } = createFakeCtx()
+    let reported: string | undefined
+    ctx.reportResumeToken = (t) => {
+      reported = t
+    }
+    const adapter = createAcpAdapter({ connect: createFakeConnect(client) })
+    await adapter.start(startInput({ resume: "acp-sess-gone" }), ctx)
+    expect(reported).toBe("acp-sess-1")
   })
 
   it("reports the resume token via ctx when setResumeId is wired", async () => {
