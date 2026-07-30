@@ -26,6 +26,7 @@ import { defaultConfig } from "@spectrum/config"
 import { createClaudeDriver } from "@spectrum/driver-claude"
 import { createOpenclawDriver } from "@spectrum/driver-openclaw"
 import {
+  type LaunchParams,
   createInMemoryHarnessFileSource,
   resolveHarnessLaunch,
 } from "@spectrum/harnesses"
@@ -419,7 +420,25 @@ export const createAppContext = (
     spawner: deps.createBunProcessSpawner(),
     logger: log.child("harness"),
   })
-  const resolveLaunch = resolveHarnessLaunch({ resolver })
+  // Per-harness driver mode: "native" (bespoke driver) or "acp" (shared ACP driver).
+  // Phase 2: OpenClaw (completes the UNVERIFIED driver) and OpenCode (native ACP agent)
+  // are routed to the ACP driver. Claude (#122) and Codex (#121) remain on native
+  // until their per-harness verification is complete.
+  const ACP_HARNESSES: ReadonlySet<string> = new Set(["openclaw", "opencode"])
+  const resolveDriverMode = (harnessId: HarnessId): "native" | "acp" =>
+    ACP_HARNESSES.has(String(harnessId)) ? "acp" : "native"
+
+  // `resolveLaunch` (resolve command + render proxy env, then hand to `runner.launch`).
+  // For ACP-mode harnesses, passes `mode: "acp"` so the harness's `acp.args` are used
+  // instead of `argsTemplate` (the ACP agent still reaches the LLM through the proxy via env).
+  const resolveLaunchRaw = resolveHarnessLaunch({ resolver })
+  const resolveLaunch = (params: LaunchParams) =>
+    resolveLaunchRaw({
+      ...params,
+      ...(resolveDriverMode(params.harness.id) === "acp"
+        ? { mode: "acp" as const }
+        : {}),
+    })
 
   // proxy provider layer: factory (secrets + lazy SDK loader) + real streamText gateway
   const factory = deps.createProviderFactory({
@@ -473,14 +492,6 @@ export const createAppContext = (
   // When a harness's driver mode is "acp", the routing driver dispatches to this instance
   // instead of the bespoke native driver. Default mode is "native" (no behavior change).
   const acpDriver = deps.createAcpDriver({ idGen: driverIdGen, setResumeId })
-
-  // Per-harness driver mode: "native" (bespoke driver) or "acp" (shared ACP driver).
-  // Default is "native" for all harnesses — no behavior change in Phase 1.
-  // Phases 2-4 flip harnesses to "acp" one at a time via config or hardcoded defaults.
-  const resolveDriverMode = (_harnessId: HarnessId): "native" | "acp" => {
-    // TODO(#119-#122): flip per-harness defaults to "acp" as each is verified.
-    return "native"
-  }
 
   const driverRegistry: DriverRegistry = createDriverRegistry({
     claude: createClaudeDriver({
