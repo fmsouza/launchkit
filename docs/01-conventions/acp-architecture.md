@@ -82,10 +82,15 @@ Mode ids are agent-defined strings, mapped by best-match. Observed live:
 | Harness | ACP entry point | Install |
 |---|---|---|
 | OpenCode | `opencode acp` (native) | — |
-| OpenClaw | `openclaw acp` (native) | — |
+| OpenClaw | `openclaw acp` (native) | needs a running gateway — `openclaw gateway run` |
 | Gemini CLI | `gemini --acp` (native) | `npm i -g @google/gemini-cli` |
 | Claude Code | `claude-agent-acp` (separate binary) | `npm i -g @agentclientprotocol/claude-agent-acp` |
 | Codex | `codex-acp` (separate binary) | `npm i -g @agentclientprotocol/codex-acp` |
+
+`openclaw acp` is a BRIDGE to a running OpenClaw Gateway: without one it exits immediately with
+`ECONNREFUSED 127.0.0.1:18789`. Its model routing comes from the gateway's own agent auth store
+(`openclaw agents add`), not from env — the Spectrum proxy env does not reach it, which is why the
+harness renders none.
 
 Neither `claude --acp` nor `codex acp` exists — both are adapter binaries, which is why `HarnessDefinition.acp` carries an optional `command` override. The older `@zed-industries/*` packages are deprecated; `@zed-industries/claude-code-acp` in particular fails at `session/new`.
 
@@ -101,6 +106,13 @@ The composition root derives its ACP harness set from the definitions (a harness
 **Verify the flag against the real binary before shipping it.** Every ACP flag in this repo was wrong on first writing.
 
 See the ACP agent registry: https://agentclientprotocol.com/get-started/agents
+
+## Silent turns
+
+An agent can answer `stopReason: end_turn` having produced nothing — observed live when an OpenClaw
+gateway had no provider auth configured: the session showed a successful-looking empty turn with no
+explanation. A turn that ends with no text, no reasoning, no tool call and no plan therefore emits
+`turn-finished { error }` saying so, rather than reporting success.
 
 ## Resume
 
