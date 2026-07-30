@@ -55,3 +55,42 @@ describe("canary workflow triggers", () => {
     expect(workflow.concurrency["cancel-in-progress"]).toBe(false)
   })
 })
+
+/** Normalizes `needs` (a bare string or a list in GitHub Actions) to a list. */
+const needsOf = (job: WorkflowJob): readonly string[] =>
+  job.needs === undefined
+    ? []
+    : typeof job.needs === "string"
+      ? [job.needs]
+      : job.needs
+
+describe("canary workflow idle-night guard", () => {
+  it("decides whether to build before spending runner minutes on the gate", () => {
+    expect(needsOf(workflow.jobs.version as WorkflowJob)).toEqual([])
+    expect(needsOf(workflow.jobs.gate as WorkflowJob)).toContain("version")
+  })
+
+  it("publishes a should-build verdict when the version job runs", () => {
+    expect(workflow.jobs.version?.outputs?.["should-build"]).toBe(
+      "${{ steps.version.outputs.should-build }}",
+    )
+  })
+
+  it("skips the pipeline when the verdict says nothing new was merged", () => {
+    expect(workflow.jobs.gate?.if).toBe(
+      "needs.version.outputs.should-build == 'true'",
+    )
+  })
+
+  it("propagates the skip to the build and publish jobs when the gate is skipped", () => {
+    // GitHub skips the dependents of a skipped job, so keeping every heavy job
+    // downstream of `gate` is what makes an idle night cost one short job.
+    expect(needsOf(workflow.jobs["build-cli"] as WorkflowJob)).toContain("gate")
+    expect(needsOf(workflow.jobs["build-desktop"] as WorkflowJob)).toContain(
+      "gate",
+    )
+    const release = needsOf(workflow.jobs.release as WorkflowJob)
+    expect(release).toContain("build-cli")
+    expect(release).toContain("build-desktop")
+  })
+})
