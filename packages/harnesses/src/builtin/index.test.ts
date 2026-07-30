@@ -120,6 +120,18 @@ describe("builtin ACP configs", () => {
     expect(opencode.acp?.args).toEqual(["acp"])
   })
 
+  it("openclaw renders no retired gateway env", () => {
+    // OPENCLAW_GATEWAY_URL / _AGENT_ID were read by the deleted bespoke gateway driver. In ACP
+    // mode they are inert noise, and they crowded out any real env the harness might need.
+    expect(openclaw.envTemplate.OPENCLAW_GATEWAY_URL).toBeUndefined()
+    expect(openclaw.envTemplate.OPENCLAW_AGENT_ID).toBeUndefined()
+  })
+
+  it("openclaw's description does not advertise the retired native driver", () => {
+    expect(openclaw.description ?? "").not.toContain("native driver")
+    expect(openclaw.description ?? "").not.toContain("UNVERIFIED")
+  })
+
   it("openclaw reaches ACP through its own acp subcommand", () => {
     expect(openclaw.acp?.native).toBe(true)
     expect(openclaw.acp?.command).toBeUndefined()
