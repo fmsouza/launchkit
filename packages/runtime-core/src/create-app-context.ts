@@ -468,6 +468,20 @@ export const createAppContext = (
         kind: r.error.kind,
       })
   }
+
+  // The ACP (Agent Client Protocol) driver — shared across all ACP-mode harnesses.
+  // When a harness's driver mode is "acp", the routing driver dispatches to this instance
+  // instead of the bespoke native driver. Default mode is "native" (no behavior change).
+  const acpDriver = deps.createAcpDriver({ idGen: driverIdGen, setResumeId })
+
+  // Per-harness driver mode: "native" (bespoke driver) or "acp" (shared ACP driver).
+  // Default is "native" for all harnesses — no behavior change in Phase 1.
+  // Phases 2-4 flip harnesses to "acp" one at a time via config or hardcoded defaults.
+  const resolveDriverMode = (_harnessId: HarnessId): "native" | "acp" => {
+    // TODO(#119-#122): flip per-harness defaults to "acp" as each is verified.
+    return "native"
+  }
+
   const driverRegistry: DriverRegistry = createDriverRegistry({
     claude: createClaudeDriver({
       idGen,
@@ -484,9 +498,12 @@ export const createAppContext = (
       : {}),
   })
 
-  // One AgentDriver for the RunManager: route start() to the registered driver for the harness.
+  // One AgentDriver for the RunManager: route start() to the registered driver for the harness,
+  // selecting between the bespoke native driver and the shared ACP driver by driver mode.
   const routingDriver: AgentDriver = {
     start: (input) => {
+      const mode = resolveDriverMode(input.harnessId)
+      if (mode === "acp") return acpDriver.start(input)
       const driver = driverRegistry.get(input.harnessId)
       if (driver === undefined)
         return err({
