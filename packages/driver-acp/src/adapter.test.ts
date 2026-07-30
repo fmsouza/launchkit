@@ -30,6 +30,9 @@ interface FakeClientOptions {
   readonly configOptions?: readonly AcpConfigOption[]
   readonly stopReason?: AcpStopReason
   readonly promptRejects?: boolean
+  /** Hold session/set_mode open until `releaseSetMode()` so ordering can be observed. */
+  readonly blockSetMode?: boolean
+  readonly rejectSetMode?: boolean
 }
 
 /** A recording fake ACP client — unit-tests the adapter with no real agent spawn. */
@@ -53,8 +56,11 @@ interface FakeAcpClient extends AcpClient {
   readonly inits: number
   readonly sessionNews: number
   readonly sessionLoads: readonly string[]
+  /** Every mutating call in the order the adapter made it. */
+  readonly callOrder: readonly string[]
   /** Flush the microtasks the fire-and-forget prompt promise resolves through. */
   settle(): Promise<void>
+  releaseSetMode(): void
 }
 
 const createFakeClient = (options: FakeClientOptions = {}): FakeAcpClient => {
@@ -68,6 +74,14 @@ const createFakeClient = (options: FakeClientOptions = {}): FakeAcpClient => {
   }[] = []
   const sessionCloseCalls: string[] = []
   const sessionLoads: string[] = []
+  const callOrder: string[] = []
+  let releaseSetMode: () => void = () => {}
+  const setModeGate =
+    options.blockSetMode === true
+      ? new Promise<void>((resolve) => {
+          releaseSetMode = resolve
+        })
+      : Promise.resolve()
   let inits = 0
   let sessionNews = 0
   const sessionInfo = {
@@ -84,6 +98,7 @@ const createFakeClient = (options: FakeClientOptions = {}): FakeAcpClient => {
     modes,
     configCalls,
     sessionCloseCalls,
+    callOrder,
     get inits() {
       return inits
     },
@@ -94,6 +109,9 @@ const createFakeClient = (options: FakeClientOptions = {}): FakeAcpClient => {
       return sessionLoads
     },
     settle: () => new Promise<void>((r) => setTimeout(r, 0)),
+    releaseSetMode: () => {
+      releaseSetMode()
+    },
     initialize: async () => {
       inits++
       return {
@@ -113,20 +131,25 @@ const createFakeClient = (options: FakeClientOptions = {}): FakeAcpClient => {
       return sessionInfo
     },
     sessionPrompt: async (sid, prompt) => {
+      callOrder.push("prompt")
       prompts.push({ sessionId: sid, prompt: [...prompt] })
       if (options.promptRejects === true) throw new Error("transport died")
       return options.stopReason ?? "end_turn"
     },
-    sessionCancel: (sid) => {
+    sessionCancel: async (sid) => {
       cancels.push(sid)
     },
-    sessionSetMode: (sid, modeId) => {
+    sessionSetMode: async (sid, modeId) => {
+      callOrder.push("setMode")
       modes.push({ sessionId: sid, modeId })
+      await setModeGate
+      if (options.rejectSetMode === true) throw new Error("mode not accepted")
     },
-    sessionSetConfigOption: (sid, configId, valueId) => {
+    sessionSetConfigOption: async (sid, configId, valueId) => {
+      callOrder.push("setConfigOption")
       configCalls.push({ sessionId: sid, configId, valueId })
     },
-    sessionClose: (sid) => {
+    sessionClose: async (sid) => {
       sessionCloseCalls.push(sid)
     },
     onSessionUpdate: (cb) => {
@@ -294,6 +317,40 @@ describe("createAcpAdapter — initial permission mode", () => {
     expect(client.modes).toEqual([
       { sessionId: "acp-sess-1", modeId: "default" },
     ])
+  })
+
+  it("waits for the mode to land before firing the initial prompt", async () => {
+    // Merely CALLING set_mode first is not enough: it is a request, and the agent applies the mode
+    // when it resolves. claude-agent-acp ran an entire first turn in its own default mode
+    // (bypassPermissions — every tool auto-approved) because the prompt overtook it.
+    const client = createFakeClient({
+      availableModeIds: ["default", "acceptEdits", "plan", "bypassPermissions"],
+      blockSetMode: true,
+    })
+    const startPromise = start(
+      client,
+      {},
+      { permissionMode: "plan", initialPrompt: "go" },
+    )
+    await new Promise((r) => setTimeout(r, 10))
+    expect(client.prompts).toHaveLength(0) // still waiting on set_mode
+
+    client.releaseSetMode()
+    await startPromise
+    await client.settle()
+    expect(client.prompts).toHaveLength(1)
+    expect(client.callOrder).toEqual(["setMode", "prompt"])
+  })
+
+  it("still fires the initial prompt when the agent rejects the mode change", async () => {
+    // A mode the agent will not accept must not strand the turn.
+    const client = createFakeClient({
+      availableModeIds: ["default", "plan"],
+      rejectSetMode: true,
+    })
+    await start(client, {}, { permissionMode: "plan", initialPrompt: "go" })
+    await client.settle()
+    expect(client.prompts).toHaveLength(1)
   })
 
   it("does not set a mode when the agent advertises none", async () => {

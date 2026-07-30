@@ -258,14 +258,19 @@ export interface AcpClient {
     sessionId: string,
     prompt: readonly AcpPromptBlock[],
   ): Promise<AcpStopReason>
-  sessionCancel(sessionId: string): void
-  sessionSetMode(sessionId: string, modeId: string): void
+  /**
+   * The session mutators are AWAITABLE. `AdapterHandle` is fire-and-forget, so the handle calls
+   * them with `void` — but `start` must be able to wait for the permission mode to LAND before it
+   * sends the first prompt, or the turn runs in whatever mode the agent opened the session with.
+   */
+  sessionCancel(sessionId: string): Promise<void>
+  sessionSetMode(sessionId: string, modeId: string): Promise<void>
   sessionSetConfigOption(
     sessionId: string,
     configId: string,
     valueId: string,
-  ): void
-  sessionClose(sessionId: string): void
+  ): Promise<void>
+  sessionClose(sessionId: string): Promise<void>
   onSessionUpdate(cb: (notif: AcpSessionUpdateNotification) => void): () => void
   /**
    * `session/request_permission` is a REQUEST: the agent blocks until the client answers. The

@@ -180,9 +180,9 @@ export const createAcpClient = async (deps: {
   const connection = deps.connect(app)
   const agent = connection.agent
 
-  /** Fire-and-forget: the port's mutators return void, so a transport rejection is swallowed. */
-  const fire = (method: string, params: unknown): void => {
-    void agent.request(method, params).catch(() => {})
+  /** The mutators are awaitable so `start` can order them against the first prompt. */
+  const call = async (method: string, params: unknown): Promise<void> => {
+    await agent.request(method, params)
   }
 
   const client: AcpClient = {
@@ -255,21 +255,17 @@ export const createAcpClient = async (deps: {
       return parsed.success ? parsed.data : "end_turn"
     },
 
-    sessionCancel: (sessionId) => {
-      void agent.notify("session/cancel", { sessionId }).catch(() => {})
+    sessionCancel: async (sessionId) => {
+      await agent.notify("session/cancel", { sessionId })
     },
 
-    sessionSetMode: (sessionId, modeId) => {
-      fire("session/set_mode", { sessionId, modeId })
-    },
+    sessionSetMode: async (sessionId, modeId) =>
+      call("session/set_mode", { sessionId, modeId }),
 
-    sessionSetConfigOption: (sessionId, configId, valueId) => {
-      fire("session/set_config_option", { sessionId, configId, value: valueId })
-    },
+    sessionSetConfigOption: async (sessionId, configId, valueId) =>
+      call("session/set_config_option", { sessionId, configId, value: valueId }),
 
-    sessionClose: (sessionId) => {
-      fire("session/close", { sessionId })
-    },
+    sessionClose: async (sessionId) => call("session/close", { sessionId }),
 
     onSessionUpdate: (cb) => {
       updateCb = cb

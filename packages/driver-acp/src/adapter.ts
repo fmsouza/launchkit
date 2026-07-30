@@ -127,28 +127,37 @@ export const createAcpAdapter = (deps: AcpAdapterDeps): DriverAdapter => {
       }
       ctx.emit(rootStarted)
 
-      /** Apply a Spectrum permission mode through whichever surface this agent advertised. */
-      const applyMode = (mode: PermissionMode): void => {
+      /**
+       * Apply a Spectrum permission mode through whichever surface this agent advertised.
+       * Resolves once the agent has ACCEPTED it — or declined it, because a mode the agent will
+       * not take must never strand the turn.
+       */
+      const applyMode = async (mode: PermissionMode): Promise<void> => {
         const modeId = pickAcpModeId(mode, modeIds)
         if (modeId === undefined) return
-        if (useSetMode) {
-          client.sessionSetMode(session.sessionId, modeId)
-          return
+        try {
+          if (useSetMode) {
+            await client.sessionSetMode(session.sessionId, modeId)
+            return
+          }
+          if (modeOption !== undefined)
+            await client.sessionSetConfigOption(
+              session.sessionId,
+              modeOption.id,
+              modeId,
+            )
+        } catch {
+          /* the agent declined the mode; the turn still goes ahead */
         }
-        if (modeOption !== undefined)
-          client.sessionSetConfigOption(
-            session.sessionId,
-            modeOption.id,
-            modeId,
-          )
       }
 
-      // Apply the run's permission mode UP FRONT rather than inheriting the agent's default.
-      // claude-agent-acp opens a session in `bypassPermissions` — every tool call auto-approved
-      // and the permission callback never consulted — so inheriting would silently disable
-      // Spectrum's approval cards. Absent an explicit mode, "manual" is Spectrum's default (and
-      // what the retired bespoke drivers used).
-      applyMode(input.permissionMode ?? "manual")
+      // Apply the run's permission mode UP FRONT rather than inheriting the agent's default, and
+      // AWAIT it before the first prompt. `claude-agent-acp` opens a session in
+      // `bypassPermissions` — every tool call auto-approved and the permission callback never
+      // consulted — and set_mode is a REQUEST, so firing it without awaiting let the prompt
+      // overtake it and the whole first turn ran wide open (observed live). Absent an explicit
+      // mode, "manual" is Spectrum's default, as it was for the retired bespoke drivers.
+      await applyMode(input.permissionMode ?? "manual")
 
       const mapState: AcpMapState = {
         rootRunnerId: ctx.rootRunnerId,
@@ -222,22 +231,18 @@ export const createAcpAdapter = (deps: AcpAdapterDeps): DriverAdapter => {
         },
 
         interrupt(): void {
-          client.sessionCancel(session.sessionId)
+          void client.sessionCancel(session.sessionId).catch(() => {})
         },
 
         close(): void {
-          try {
-            client.sessionClose(session.sessionId)
-          } catch {
-            /* idempotent */
-          }
+          void client.sessionClose(session.sessionId).catch(() => {})
           connection.close()
         },
 
         setMode(mode: PermissionMode): void {
           // Agent-defined mode ids: a no-op when this agent cannot honor the mode. The UI only
           // offers modes from `supportedModes`, so this guard is defense in depth.
-          applyMode(mode)
+          void applyMode(mode)
         },
 
         setModel(modelId: ModelId | null): void {
@@ -247,21 +252,25 @@ export const createAcpAdapter = (deps: AcpAdapterDeps): DriverAdapter => {
           if (modelId === null) return
           const choice = pickModelOption(session.configOptions, String(modelId))
           if (choice !== undefined)
-            client.sessionSetConfigOption(
-              session.sessionId,
-              choice.configId,
-              choice.valueId,
-            )
+            void client
+              .sessionSetConfigOption(
+                session.sessionId,
+                choice.configId,
+                choice.valueId,
+              )
+              .catch(() => {})
         },
 
         setThinkingEffort(effort: ThinkingEffort): void {
           const choice = pickEffortOption(session.configOptions, effort)
           if (choice !== undefined)
-            client.sessionSetConfigOption(
-              session.sessionId,
-              choice.configId,
-              choice.valueId,
-            )
+            void client
+              .sessionSetConfigOption(
+                session.sessionId,
+                choice.configId,
+                choice.valueId,
+              )
+              .catch(() => {})
         },
       }
 
