@@ -27,6 +27,13 @@ export interface LaunchParams {
   readonly route: LaunchRoute
   readonly cwd?: string
   readonly env?: Readonly<Record<string, string>>
+  /**
+   * "native" (default) resolves the harness with its native env/args templates — the bespoke
+   * driver path. "acp" resolves the harness binary with its `acp.args` + the rendered proxy env
+   * (the ACP agent still reaches the LLM through the Spectrum proxy via env vars). A harness
+   * without an `acp` config returns a `no-acp-config` error when `mode: "acp"` is requested.
+   */
+  readonly mode?: "native" | "acp"
 }
 
 export interface ResolvedHarnessLaunch {
@@ -39,10 +46,48 @@ export const resolveHarnessLaunch =
   (deps: { readonly resolver: CommandResolver }) =>
   (params: LaunchParams): Result<ResolvedHarnessLaunch, HarnessError> => {
     const { harness, route } = params
+    const mode = params.mode ?? "native"
 
     // Resolve + validate the command in BOTH modes (rejects relative / `..`).
     const resolved = deps.resolver.resolve(harness.command)
     if (isErr(resolved)) return resolved
+
+    // ACP mode: the harness is launched with its `acp.args` (the ACP-mode flags) + the rendered
+    // proxy env (the ACP agent still reaches the LLM through the Spectrum proxy via env vars).
+    // Direct (bypass) mode is meaningless for ACP — the proxy env is always rendered.
+    if (mode === "acp") {
+      if (harness.acp === undefined) {
+        return err({ kind: "no-acp-config", id: harness.id })
+      }
+      if (route.kind === "direct") {
+        // ACP with a direct route: no proxy env to render; pass through caller env + acp args.
+        return ok({
+          command: resolved.value,
+          args: [...harness.acp.args],
+          env: { ...(params.env ?? {}) },
+        })
+      }
+      const templateCheck = validateEnvTemplate(harness.envTemplate)
+      if (isErr(templateCheck)) return templateCheck
+      const vars: Readonly<Record<string, string>> = {
+        proxyUrl: route.proxyUrl,
+        proxyKey: route.proxyKey,
+        model: route.wireModel ?? String(route.modelId),
+      }
+      const env: Record<string, string> = {}
+      for (const [key, template] of Object.entries(harness.envTemplate)) {
+        const rendered = renderTemplate(template, vars)
+        if (isErr(rendered)) {
+          return err({ kind: "invalid-template", token: rendered.error.token })
+        }
+        env[key] = rendered.value
+      }
+      return ok({
+        command: resolved.value,
+        args: [...harness.acp.args],
+        env: { ...env, ...(params.env ?? {}) },
+      })
+    }
 
     // Direct (bypass) mode: do NOT render the proxy envTemplate. The harness uses its own
     // native credentials/model and the proxy is not involved. Only caller env is passed.

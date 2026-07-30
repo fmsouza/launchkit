@@ -32,4 +32,47 @@ describe("HarnessDefinitionSchema", () => {
         .success,
     ).toBe(false)
   })
+
+  it("parses a harness with an acp config", () => {
+    const parsed = HarnessDefinitionSchema.parse({
+      ...claude,
+      acp: { args: ["--acp"], native: false },
+    })
+    expect(parsed.acp).toEqual({ args: ["--acp"], native: false })
+  })
+
+  it("parses a harness with an acp config that is native", () => {
+    const parsed = HarnessDefinitionSchema.parse({
+      ...claude,
+      acp: { args: ["acp"], native: true },
+    })
+    expect(parsed.acp?.native).toBe(true)
+  })
+
+  it("rejects an acp config missing args", () => {
+    expect(
+      HarnessDefinitionSchema.safeParse({ ...claude, acp: { native: true } })
+        .success,
+    ).toBe(false)
+  })
+
+  it("rejects an acp config missing native", () => {
+    expect(
+      HarnessDefinitionSchema.safeParse({ ...claude, acp: { args: ["acp"] } })
+        .success,
+    ).toBe(false)
+  })
+
+  it("rejects an acp config with an empty args array", () => {
+    expect(
+      HarnessDefinitionSchema.safeParse({
+        ...claude,
+        acp: { args: [], native: true },
+      }).success,
+    ).toBe(false)
+  })
+
+  it("accepts a harness with no acp config (optional)", () => {
+    expect(HarnessDefinitionSchema.safeParse(claude).success).toBe(true)
+  })
 })
