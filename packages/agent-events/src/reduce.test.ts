@@ -876,3 +876,124 @@ describe("reduce — attachments", () => {
     expect(runner?.supportedAttachments).toEqual(caps)
   })
 })
+
+describe("reduce — plan-update", () => {
+  it("appends a PlanItem when a plan-update arrives", () => {
+    const state = fold([
+      started("root"),
+      {
+        type: "plan-update",
+        runnerId: rid("root"),
+        planId: "plan-1",
+        entries: [
+          { content: "Step A", status: "pending" },
+          { content: "Step B", status: "in_progress" },
+        ],
+      },
+    ])
+    const items = state.runners.get(rid("root"))?.items ?? []
+    expect(items).toHaveLength(1)
+    expect(items[0]).toMatchObject({
+      kind: "plan",
+      planId: "plan-1",
+      entries: [
+        { content: "Step A", status: "pending" },
+        { content: "Step B", status: "in_progress" },
+      ],
+    })
+  })
+
+  it("replaces the PlanItem with the same planId on re-emit (idempotent on planId)", () => {
+    const first = fold([
+      started("root"),
+      {
+        type: "plan-update",
+        runnerId: rid("root"),
+        planId: "plan-1",
+        entries: [{ content: "Old", status: "pending" }],
+      },
+    ])
+    const updated = reduce(first, {
+      type: "plan-update",
+      runnerId: rid("root"),
+      planId: "plan-1",
+      entries: [{ content: "New", status: "completed" }],
+    })
+    const items = updated.runners.get(rid("root"))?.items ?? []
+    expect(items).toHaveLength(1)
+    expect(items[0]).toMatchObject({
+      kind: "plan",
+      planId: "plan-1",
+      entries: [{ content: "New", status: "completed" }],
+    })
+  })
+
+  it("is idempotent: folding the same plan-update twice yields the same RunState", () => {
+    const ev: CanonicalEvent = {
+      type: "plan-update",
+      runnerId: rid("root"),
+      planId: "plan-1",
+      entries: [{ content: "Step", status: "pending" }],
+    }
+    const once = fold([started("root"), ev])
+    const twice = reduce(once, ev)
+    expect(twice).toEqual(once)
+  })
+
+  it("keeps multiple distinct plans as separate PlanItems", () => {
+    const state = fold([
+      started("root"),
+      {
+        type: "plan-update",
+        runnerId: rid("root"),
+        planId: "plan-1",
+        entries: [{ content: "A", status: "pending" }],
+      },
+      {
+        type: "plan-update",
+        runnerId: rid("root"),
+        planId: "plan-2",
+        entries: [{ content: "B", status: "pending" }],
+      },
+    ])
+    const items = state.runners.get(rid("root"))?.items ?? []
+    expect(items).toHaveLength(2)
+    expect(items[0]).toMatchObject({ kind: "plan", planId: "plan-1" })
+    expect(items[1]).toMatchObject({ kind: "plan", planId: "plan-2" })
+  })
+
+  it("ignores a plan-update for an unknown runner", () => {
+    const state = fold([
+      started("root"),
+      {
+        type: "plan-update",
+        runnerId: rid("ghost"),
+        planId: "plan-1",
+        entries: [{ content: "x", status: "pending" }],
+      },
+    ])
+    expect(state.runners.has(rid("ghost"))).toBe(false)
+    expect(state.runners.get(rid("root"))?.items).toEqual([])
+  })
+})
+
+describe("reduce — usage with context size", () => {
+  it("folds contextUsed and contextSize into RunnerState.usage", () => {
+    const state = fold([
+      started("root"),
+      {
+        type: "usage",
+        runnerId: rid("root"),
+        usage: {
+          inputTokens: 100,
+          outputTokens: 50,
+          contextUsed: 53000,
+          contextSize: 200000,
+        },
+      },
+    ])
+    const runner = state.runners.get(rid("root"))
+    expect(runner?.usage?.contextUsed).toBe(53000)
+    expect(runner?.usage?.contextSize).toBe(200000)
+  })
+})
