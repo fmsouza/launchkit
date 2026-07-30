@@ -28,6 +28,12 @@ export {
 export { pickAcpModeId, supportedModesFrom } from "./session-modes"
 export { pickPermissionOptionId } from "./permission-outcome"
 export {
+  pickModelOption,
+  pickEffortOption,
+  pickModeOption,
+  type AcpConfigChoice,
+} from "./config-options"
+export {
   toAcpPromptBlocks,
   type ToAcpPromptBlocksInput,
 } from "./prompt-blocks"

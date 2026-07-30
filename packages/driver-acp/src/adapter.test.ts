@@ -532,6 +532,109 @@ describe("createAcpAdapter — attachments", () => {
   })
 })
 
+describe("createAcpAdapter — session config options", () => {
+  const modelOption = {
+    id: "model",
+    name: "Model",
+    category: "model",
+    values: [{ id: "opus", name: "Opus" }],
+  }
+  const effortOption = {
+    id: "reasoning_effort",
+    name: "Reasoning effort",
+    category: "thought_level",
+    values: [{ id: "high", name: "High" }],
+  }
+  const modeOption = {
+    id: "mode",
+    name: "Session Mode",
+    category: "mode",
+    values: [
+      { id: "build", name: "build" },
+      { id: "plan", name: "plan" },
+    ],
+  }
+
+  it("switches the model via session/set_config_option when the agent advertises one", async () => {
+    const client = createFakeClient({ configOptions: [modelOption] })
+    const { handle } = await start(client)
+    handle.setModel?.("opus" as never)
+    expect(client.configCalls).toEqual([
+      { sessionId: "acp-sess-1", configId: "model", valueId: "opus" },
+    ])
+  })
+
+  it("does nothing on setModel when the agent advertises no model option", async () => {
+    const client = createFakeClient({ configOptions: [] })
+    const { handle } = await start(client)
+    handle.setModel?.("opus" as never)
+    expect(client.configCalls).toEqual([])
+  })
+
+  it("does nothing on setModel when the model is cleared to the harness default", async () => {
+    const client = createFakeClient({ configOptions: [modelOption] })
+    const { handle } = await start(client)
+    handle.setModel?.(null)
+    expect(client.configCalls).toEqual([])
+  })
+
+  it("switches the thinking effort via session/set_config_option when advertised", async () => {
+    const client = createFakeClient({ configOptions: [effortOption] })
+    const { handle } = await start(client)
+    handle.setThinkingEffort?.("high")
+    expect(client.configCalls).toEqual([
+      {
+        sessionId: "acp-sess-1",
+        configId: "reasoning_effort",
+        valueId: "high",
+      },
+    ])
+  })
+
+  it("does nothing on setThinkingEffort when the agent advertises no effort option", async () => {
+    const client = createFakeClient({ configOptions: [modelOption] })
+    const { handle } = await start(client)
+    handle.setThinkingEffort?.("high")
+    expect(client.configCalls).toEqual([])
+  })
+
+  it("reports modes advertised as a config option rather than via session/new", async () => {
+    // opencode advertises build/plan as a `category: "mode"` config option and leaves
+    // session/new's `modes` empty — verified against a live `opencode acp` process.
+    const client = createFakeClient({
+      availableModeIds: [],
+      configOptions: [modeOption],
+    })
+    const { events } = await start(client)
+    const started = events.find((e) => e.type === "runner-started")
+    expect(started).toMatchObject({ supportedModes: ["manual", "plan"] })
+  })
+
+  it("switches a config-option mode via session/set_config_option", async () => {
+    const client = createFakeClient({
+      availableModeIds: [],
+      configOptions: [modeOption],
+    })
+    const { handle } = await start(client)
+    handle.setMode?.("plan")
+    expect(client.configCalls).toEqual([
+      { sessionId: "acp-sess-1", configId: "mode", valueId: "plan" },
+    ])
+    expect(client.modes).toEqual([])
+  })
+
+  it("prefers session/set_mode when the agent advertises real session modes", async () => {
+    const client = createFakeClient({
+      availableModeIds: ["default", "plan"],
+      configOptions: [modeOption],
+    })
+    const { handle } = await start(client)
+    handle.setMode?.("plan")
+    expect(client.modes).toEqual([{ sessionId: "acp-sess-1", modeId: "plan" }])
+    expect(client.configCalls).toEqual([])
+  })
+})
+
 describe("createAcpAdapter — session/update streaming", () => {
   it("maps an agent_message_chunk to a text-delta event via ctx.emit", async () => {
     const client = createFakeClient()

@@ -24,6 +24,12 @@ describe("driver-acp barrel", () => {
     expect(typeof exports.pickPermissionOptionId).toBe("function")
   })
 
+  it("exports the pure config-option pickers", () => {
+    expect(typeof exports.pickModelOption).toBe("function")
+    expect(typeof exports.pickEffortOption).toBe("function")
+    expect(typeof exports.pickModeOption).toBe("function")
+  })
+
   it("exports the pure prompt-block builder", () => {
     expect(typeof exports.toAcpPromptBlocks).toBe("function")
   })

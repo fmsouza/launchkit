@@ -8,7 +8,8 @@ import type { PermissionMode } from "@spectrum/agent-events"
  * most-specific-first; comparison ignores case and `-`/`_` separators.
  */
 const CANDIDATES: Readonly<Record<PermissionMode, readonly string[]>> = {
-  manual: ["default", "manual", "normal", "ask", "untrusted"],
+  // "build" is opencode's name for its default working mode (its other mode is "plan").
+  manual: ["default", "manual", "normal", "ask", "untrusted", "build"],
   "auto-edits": ["acceptedits", "autoedits", "onfailure", "auto"],
   plan: ["plan", "planning", "readonly"],
   bypass: ["bypasspermissions", "bypass", "yolo", "fullaccess", "never"],

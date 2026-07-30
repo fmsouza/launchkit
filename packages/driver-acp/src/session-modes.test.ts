@@ -35,6 +35,11 @@ describe("pickAcpModeId", () => {
   it("returns undefined when the agent advertises no modes at all", () => {
     expect(pickAcpModeId("manual", [])).toBeUndefined()
   })
+
+  it("maps manual to opencode's build mode", () => {
+    // opencode names its default working mode "build" and its read-only one "plan".
+    expect(pickAcpModeId("manual", ["build", "plan"])).toBe("build")
+  })
 })
 
 describe("supportedModesFrom", () => {

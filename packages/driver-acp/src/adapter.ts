@@ -5,12 +5,14 @@ import type {
   CanonicalEvent,
   PermissionMode,
   RunnerId,
+  ThinkingEffort,
 } from "@spectrum/agent-events"
 import type {
   AdapterCtx,
   AdapterHandle,
   DriverAdapter,
 } from "@spectrum/driver-runtime"
+import type { ModelId } from "@spectrum/types"
 import type {
   AcpConnect,
   AcpConnection,
@@ -20,6 +22,11 @@ import type {
   AcpSessionUpdateNotification,
   AcpStopReason,
 } from "./acp-client"
+import {
+  pickEffortOption,
+  pickModeOption,
+  pickModelOption,
+} from "./config-options"
 import {
   answerToElicitationResponse,
   elicitationToQuestion,
@@ -91,7 +98,16 @@ export const createAcpAdapter = (deps: AcpAdapterDeps): DriverAdapter => {
       ctx.reportResumeToken?.(session.sessionId)
 
       const capabilities = init.promptCapabilities
-      const supportedModes = supportedModesFrom(session.availableModeIds)
+      // An agent may advertise its modes EITHER via `session/new`'s modes field or as a
+      // `category: "mode"` config option (opencode does the latter, leaving `modes` empty). Read
+      // both, and remember which one to drive so `setMode` uses the matching method.
+      const modeOption = pickModeOption(session.configOptions)
+      const modeIds =
+        session.availableModeIds.length > 0
+          ? session.availableModeIds
+          : (modeOption?.values.map((v) => v.id) ?? [])
+      const useSetMode = session.availableModeIds.length > 0
+      const supportedModes = supportedModesFrom(modeIds)
       // Re-emit the root runner-started, now carrying what THIS agent negotiated. The runtime
       // emitted a capability-less one before `start`; the reducer merges field-by-field
       // (`event.x ?? existing?.x`), so this re-emit is how per-agent capabilities reach the UI
@@ -198,9 +214,42 @@ export const createAcpAdapter = (deps: AcpAdapterDeps): DriverAdapter => {
         setMode(mode: PermissionMode): void {
           // Agent-defined mode ids: no-op when this agent cannot honor the mode. The UI only
           // offers modes from `supportedModes`, so this guard is defense in depth.
-          const modeId = pickAcpModeId(mode, session.availableModeIds)
-          if (modeId !== undefined)
+          const modeId = pickAcpModeId(mode, modeIds)
+          if (modeId === undefined) return
+          if (useSetMode) {
             client.sessionSetMode(session.sessionId, modeId)
+            return
+          }
+          if (modeOption !== undefined)
+            client.sessionSetConfigOption(
+              session.sessionId,
+              modeOption.id,
+              modeId,
+            )
+        },
+
+        setModel(modelId: ModelId | null): void {
+          // ACP v1 has no live model switch of its own; agents expose it as a session config
+          // option. No-op when this agent does not (documented regression, not a silent failure:
+          // the UI keeps the user's pick and the next fresh session honors it via env).
+          if (modelId === null) return
+          const choice = pickModelOption(session.configOptions, String(modelId))
+          if (choice !== undefined)
+            client.sessionSetConfigOption(
+              session.sessionId,
+              choice.configId,
+              choice.valueId,
+            )
+        },
+
+        setThinkingEffort(effort: ThinkingEffort): void {
+          const choice = pickEffortOption(session.configOptions, effort)
+          if (choice !== undefined)
+            client.sessionSetConfigOption(
+              session.sessionId,
+              choice.configId,
+              choice.valueId,
+            )
         },
       }
 
