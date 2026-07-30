@@ -29,13 +29,22 @@ export const noMessageIdChunkFixture: AcpSessionUpdateNotification = {
   },
 }
 
-/** thought chunk (reasoning). */
+/** agent_thought_chunk (reasoning). */
 export const thoughtChunkFixture: AcpSessionUpdateNotification = {
   sessionId: "sess_1",
   update: {
-    sessionUpdate: "thought",
+    sessionUpdate: "agent_thought_chunk",
     messageId: "msg_thought_1",
     content: { type: "text", text: "Let me think about this..." },
+  },
+}
+
+/** user_message_chunk — the agent echoing the user's own turn. */
+export const userMessageChunkFixture: AcpSessionUpdateNotification = {
+  sessionId: "sess_1",
+  update: {
+    sessionUpdate: "user_message_chunk",
+    content: { type: "text", text: "please fix the build" },
   },
 }
 
@@ -128,6 +137,19 @@ export const planFixture: AcpSessionUpdateNotification = {
   },
 }
 
+/** plan_update — a revised plan; replaces the previous one by planId. */
+export const planUpdateFixture: AcpSessionUpdateNotification = {
+  sessionId: "sess_1",
+  update: {
+    sessionUpdate: "plan_update",
+    entries: [
+      { content: "Check syntax", priority: "high", status: "completed" },
+      { content: "Fix types", priority: "medium", status: "in_progress" },
+      { content: "Done step", priority: "low", status: "completed" },
+    ],
+  },
+}
+
 /** usage_update — context + cost. */
 export const usageUpdateFixture: AcpSessionUpdateNotification = {
   sessionId: "sess_1",
@@ -149,13 +171,46 @@ export const usageUpdateNullFixture: AcpSessionUpdateNotification = {
   },
 }
 
-/** mode change from the agent side. */
+/** current_mode_update — the agent changed its mode from its side. */
 export const modeChangeFixture: AcpSessionUpdateNotification = {
   sessionId: "sess_1",
   update: {
-    sessionUpdate: "mode",
-    mode: "plan",
+    sessionUpdate: "current_mode_update",
+    currentModeId: "plan",
   },
+}
+
+/** available_commands_update — the agent's slash-command list. No Spectrum surface renders it. */
+export const availableCommandsUpdateFixture: AcpSessionUpdateNotification = {
+  sessionId: "sess_1",
+  update: {
+    sessionUpdate: "available_commands_update",
+    availableCommands: [{ name: "compact", description: "Compact history" }],
+  },
+}
+
+/** session_info_update — session metadata (title etc). No Spectrum surface renders it. */
+export const sessionInfoUpdateFixture: AcpSessionUpdateNotification = {
+  sessionId: "sess_1",
+  update: {
+    sessionUpdate: "session_info_update",
+    title: "Fix the build",
+  },
+}
+
+/** config_option_update — the agent's session config changed (model/effort). */
+export const configOptionUpdateFixture: AcpSessionUpdateNotification = {
+  sessionId: "sess_1",
+  update: {
+    sessionUpdate: "config_option_update",
+    configId: "model",
+  },
+}
+
+/** plan_removed — the agent dropped its plan. */
+export const planRemovedFixture: AcpSessionUpdateNotification = {
+  sessionId: "sess_1",
+  update: { sessionUpdate: "plan_removed" },
 }
 
 /** Unknown sessionUpdate kind (defensive — should map to []). */

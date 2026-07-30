@@ -36,6 +36,14 @@ const ToolCallStatusSchema = z.enum([
 const PlanPrioritySchema = z.enum(["high", "medium", "low"]).optional()
 const PlanStatusSchema = z.enum(["pending", "in_progress", "completed"])
 
+const PlanEntryShape = z
+  .object({
+    content: z.string(),
+    priority: PlanPrioritySchema,
+    status: PlanStatusSchema,
+  })
+  .passthrough()
+
 export const AcpSessionUpdateSchema = z.discriminatedUnion("sessionUpdate", [
   // agent_message_chunk — streamed assistant text keyed by messageId.
   z
@@ -46,13 +54,19 @@ export const AcpSessionUpdateSchema = z.discriminatedUnion("sessionUpdate", [
     })
     .passthrough(),
 
-  // thought — reasoning/thinking chunk keyed by messageId.
+  // agent_thought_chunk — reasoning/thinking chunk keyed by messageId.
   z
     .object({
-      sessionUpdate: z.literal("thought"),
+      sessionUpdate: z.literal("agent_thought_chunk"),
       messageId: z.string().optional(),
       content: TextContentSchema.optional(),
     })
+    .passthrough(),
+
+  // user_message_chunk — the agent echoing the user's own turn back. The runtime already echoed
+  // it locally before handing the turn to the adapter, so mapping it would duplicate the bubble.
+  z
+    .object({ sessionUpdate: z.literal("user_message_chunk") })
     .passthrough(),
 
   // tool_call — a new tool call announced with a status (default pending).
@@ -84,18 +98,21 @@ export const AcpSessionUpdateSchema = z.discriminatedUnion("sessionUpdate", [
   z
     .object({
       sessionUpdate: z.literal("plan"),
-      entries: z
-        .array(
-          z
-            .object({
-              content: z.string(),
-              priority: PlanPrioritySchema,
-              status: PlanStatusSchema,
-            })
-            .passthrough(),
-        )
-        .min(1),
+      entries: z.array(PlanEntryShape).min(1),
     })
+    .passthrough(),
+
+  // plan_update — a revised plan. Same payload as `plan`; replaces the previous one.
+  z
+    .object({
+      sessionUpdate: z.literal("plan_update"),
+      entries: z.array(PlanEntryShape).min(1),
+    })
+    .passthrough(),
+
+  // plan_removed — the agent dropped its plan. Spectrum keeps the last plan card; nothing to emit.
+  z
+    .object({ sessionUpdate: z.literal("plan_removed") })
     .passthrough(),
 
   // usage_update — current session context + cumulative cost.
@@ -113,13 +130,22 @@ export const AcpSessionUpdateSchema = z.discriminatedUnion("sessionUpdate", [
     })
     .passthrough(),
 
-  // mode — the agent changed its mode from its side.
+  // current_mode_update — the agent changed its mode from its side (client->agent is set_mode).
   z
     .object({
-      sessionUpdate: z.literal("mode"),
-      mode: z.string().optional(),
+      sessionUpdate: z.literal("current_mode_update"),
+      currentModeId: z.string().optional(),
     })
     .passthrough(),
+
+  // Deliberately ignored v1 kinds: no Spectrum surface renders them yet. Declared (rather than
+  // left to the defensive default) so the union stays TOTAL over ACP v1 and a future kind is a
+  // visible type error rather than a silent drop.
+  z
+    .object({ sessionUpdate: z.literal("available_commands_update") })
+    .passthrough(),
+  z.object({ sessionUpdate: z.literal("config_option_update") }).passthrough(),
+  z.object({ sessionUpdate: z.literal("session_info_update") }).passthrough(),
 ])
 export type AcpSessionUpdate = z.infer<typeof AcpSessionUpdateSchema>
 
@@ -234,6 +260,4 @@ export interface AcpMapState {
   readonly newRunnerId: () => RunnerId
   /** Track tool calls that have already been "started" to avoid double-start on re-emitted updates. */
   readonly startedToolCalls: Set<string>
-  /** Counter for synthesizing planIds (ACP v1 has no plan id field). */
-  planCounter: number
 }

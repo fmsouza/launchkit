@@ -140,7 +140,6 @@ export const createAcpAdapter = (deps: AcpAdapterDeps): DriverAdapter => {
         rootRunnerId: ctx.rootRunnerId,
         newRunnerId: ctx.newRunnerId,
         startedToolCalls: new Set<string>(),
-        planCounter: 0,
       }
 
       // Subscribe to session/update notifications → mapAcpUpdate → ctx.emit.

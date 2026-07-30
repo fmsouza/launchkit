@@ -3,10 +3,15 @@ import type { CanonicalEvent } from "@spectrum/agent-events"
 import type { RunnerId } from "@spectrum/types"
 import {
   agentMessageChunkFixture,
+  availableCommandsUpdateFixture,
+  configOptionUpdateFixture,
   emptyTextChunkFixture,
   modeChangeFixture,
   noMessageIdChunkFixture,
   planFixture,
+  planRemovedFixture,
+  planUpdateFixture,
+  sessionInfoUpdateFixture,
   thoughtChunkFixture,
   toolCallCompletedFixture,
   toolCallFailedFixture,
@@ -17,6 +22,7 @@ import {
   unknownUpdateFixture,
   usageUpdateFixture,
   usageUpdateNullFixture,
+  userMessageChunkFixture,
 } from "./fixtures/acp-updates"
 import { type AcpMapState, mapAcpUpdate } from "./map-acp-update"
 
@@ -26,7 +32,6 @@ const newState = (): AcpMapState => ({
   rootRunnerId: rid("rnr_root"),
   newRunnerId: () => rid("rnr_child"),
   startedToolCalls: new Set<string>(),
-  planCounter: 0,
 })
 
 const map = (fixture: typeof agentMessageChunkFixture): CanonicalEvent[] =>
@@ -59,8 +64,8 @@ describe("mapAcpUpdate — agent_message_chunk", () => {
   })
 })
 
-describe("mapAcpUpdate — thought", () => {
-  it("maps a thought chunk to a reasoning-delta", () => {
+describe("mapAcpUpdate — agent_thought_chunk", () => {
+  it("maps an agent_thought_chunk to a reasoning-delta", () => {
     const events = map(thoughtChunkFixture)
     expect(events).toHaveLength(1)
     expect(events[0]).toMatchObject({
@@ -71,12 +76,12 @@ describe("mapAcpUpdate — thought", () => {
     })
   })
 
-  it("drops a thought chunk with empty content", () => {
+  it("drops an agent_thought_chunk with empty content", () => {
     const events = mapAcpUpdate(
       {
         sessionId: "s",
         update: {
-          sessionUpdate: "thought",
+          sessionUpdate: "agent_thought_chunk",
           messageId: "m",
           content: { type: "text", text: "" },
         },
@@ -173,15 +178,46 @@ describe("mapAcpUpdate — plan", () => {
     }
   })
 
-  it("increments the planId counter across multiple plans", () => {
+  it("reuses the same planId across plan revisions so the reducer replaces the plan", () => {
+    // ACP re-sends the WHOLE plan on every revision; Spectrum's plan-update replaces by planId.
+    // A fresh id per revision would append a new plan card for every status change.
     const state = newState()
     const first = mapAcpUpdate(planFixture, state)
-    const second = mapAcpUpdate(planFixture, state)
+    const second = mapAcpUpdate(planUpdateFixture, state)
     expect(first[0]?.type).toBe("plan-update")
     expect(second[0]?.type).toBe("plan-update")
     if (first[0]?.type === "plan-update" && second[0]?.type === "plan-update") {
-      expect(first[0].planId).not.toBe(second[0].planId)
+      expect(second[0].planId).toBe(first[0].planId)
+      expect(second[0].entries[0]?.status).toBe("completed")
     }
+  })
+
+  it("maps a plan_update the same way as a plan", () => {
+    const events = map(planUpdateFixture)
+    expect(events).toHaveLength(1)
+    expect(events[0]?.type).toBe("plan-update")
+  })
+})
+
+describe("mapAcpUpdate — deliberately ignored v1 kinds", () => {
+  it("ignores a user_message_chunk (the runtime already echoed the user turn)", () => {
+    expect(map(userMessageChunkFixture)).toEqual([])
+  })
+
+  it("ignores an available_commands_update", () => {
+    expect(map(availableCommandsUpdateFixture)).toEqual([])
+  })
+
+  it("ignores a session_info_update", () => {
+    expect(map(sessionInfoUpdateFixture)).toEqual([])
+  })
+
+  it("ignores a config_option_update", () => {
+    expect(map(configOptionUpdateFixture)).toEqual([])
+  })
+
+  it("ignores a plan_removed", () => {
+    expect(map(planRemovedFixture)).toEqual([])
   })
 })
 
@@ -205,14 +241,15 @@ describe("mapAcpUpdate — usage_update", () => {
   })
 })
 
-describe("mapAcpUpdate — mode", () => {
-  it("maps a mode change to an annotation event", () => {
+describe("mapAcpUpdate — current_mode_update", () => {
+  it("maps a current_mode_update to a mode-change annotation carrying the mode id", () => {
     const events = map(modeChangeFixture)
     expect(events).toHaveLength(1)
     expect(events[0]).toMatchObject({
       type: "annotation",
       runnerId: "rnr_root",
       kind: "mode-change",
+      data: "plan",
     })
   })
 })
