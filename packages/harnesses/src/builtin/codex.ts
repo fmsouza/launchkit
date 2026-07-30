@@ -11,6 +11,14 @@ export const codex: HarnessDefinition = {
   // key via OPENAI_API_KEY (codex sends it as Bearer; no ChatGPT-login override was observed).
   envTemplate: {
     OPENAI_API_KEY: "{{proxyKey}}",
+    // ACP-mode routing. The `-c` overrides below are ARGS, and ACP mode replaces args with the
+    // adapter's own — so without these the ACP session silently falls back to the user's ChatGPT
+    // login instead of the Spectrum proxy (observed live: "You've hit your usage limit"). The
+    // codex-acp adapter reads MODEL_PROVIDER + CODEX_CONFIG (a JSON object merged into the Codex
+    // session config) and honors OPENAI_API_KEY. Inert on the native path, which uses the args.
+    MODEL_PROVIDER: "spectrum",
+    CODEX_CONFIG:
+      '{"model":"{{model}}","model_providers":{"spectrum":{"name":"Spectrum","base_url":"{{proxyUrl}}/v1","env_key":"OPENAI_API_KEY","wire_api":"responses"}}}',
   },
   argsTemplate: [
     "-c",

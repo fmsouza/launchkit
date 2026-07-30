@@ -6,6 +6,13 @@ describe("driver-acp barrel", () => {
     expect(typeof exports.createAcpDriver).toBe("function")
   })
 
+  it("exports the real transport factories", () => {
+    // The composition root needs `createRealAcpConnect` to inject an enriched baseEnv (the
+    // packaged GUI inherits a minimal launchd PATH), so it belongs on the public surface.
+    expect(typeof exports.createRealAcpConnect).toBe("function")
+    expect(typeof exports.createAcpClient).toBe("function")
+  })
+
   it("exports mapAcpUpdate", () => {
     expect(typeof exports.mapAcpUpdate).toBe("function")
   })

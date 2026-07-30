@@ -82,8 +82,11 @@ describe("builtinHarnesses", () => {
 
   it("wires codex to route through the proxy via -c provider args (Responses API) + the proxy key", () => {
     expect(codex.apiFormat).toBe("openai")
-    // codex ignores OPENAI_BASE_URL, so it gets a `-c` provider override instead; only the key is env.
-    expect(codex.envTemplate).toEqual({ OPENAI_API_KEY: "{{proxyKey}}" })
+    // codex ignores OPENAI_BASE_URL, so the NATIVE path gets a `-c` provider override; the key is
+    // env. (ACP mode cannot pass args, so it routes via MODEL_PROVIDER/CODEX_CONFIG — asserted
+    // separately below. Both are inert on the path that does not read them.)
+    expect(codex.envTemplate.OPENAI_API_KEY).toBe("{{proxyKey}}")
+    expect(codex.envTemplate.OPENAI_BASE_URL).toBeUndefined()
     const args = (codex.argsTemplate ?? []).join(" ")
     expect(args).toContain("model_provider=spectrum")
     expect(args).toContain('base_url="{{proxyUrl}}/v1"')
@@ -115,6 +118,24 @@ describe("builtin ACP configs", () => {
   it("claude reaches ACP through the claude-agent-acp adapter binary", () => {
     expect(claude.acp?.native).toBe(false)
     expect(claude.acp?.command).toBe("claude-agent-acp")
+  })
+
+  it("codex renders the ACP-mode proxy routing env", () => {
+    // In ACP mode `argsTemplate` (the `-c model_providers.spectrum.*` overrides that are codex's
+    // ONLY proxy-routing mechanism) is not passed. The codex-acp adapter reads CODEX_CONFIG +
+    // MODEL_PROVIDER instead, so the same routing has to ride in the env or Codex silently falls
+    // back to the user's own ChatGPT login. Verified live against codex-acp.
+    expect(codex.envTemplate.MODEL_PROVIDER).toBe("spectrum")
+    expect(codex.envTemplate.CODEX_CONFIG).toContain("{{proxyUrl}}/v1")
+    expect(codex.envTemplate.CODEX_CONFIG).toContain("{{model}}")
+    expect(codex.envTemplate.OPENAI_API_KEY).toBe("{{proxyKey}}")
+  })
+
+  it("codex's ACP config env parses as JSON once rendered", () => {
+    const rendered = (codex.envTemplate.CODEX_CONFIG ?? "")
+      .replaceAll("{{proxyUrl}}", "http://127.0.0.1:4000")
+      .replaceAll("{{model}}", "mdl_x")
+    expect(() => JSON.parse(rendered) as unknown).not.toThrow()
   })
 
   it("codex reaches ACP through the codex-acp shim binary", () => {

@@ -1,4 +1,11 @@
 export { createAcpDriver, type AcpDriverDeps } from "./driver"
+export {
+  createAcpClient,
+  createRealAcpConnect,
+  type AcpChildProcess,
+  type AcpSpawn,
+  type AcpSpawnOptions,
+} from "./real-connect"
 export { mapAcpUpdate, type AcpMapState } from "./map-acp-update"
 export {
   type AcpClient,
