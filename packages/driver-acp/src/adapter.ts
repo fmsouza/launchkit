@@ -41,6 +41,17 @@ export interface AcpAdapterDeps {
   readonly connect: AcpConnect
 }
 
+/** Canonical events that count as the agent having produced something during a turn. */
+const PRODUCTIVE_EVENTS: ReadonlySet<CanonicalEvent["type"]> = new Set([
+  "text-delta",
+  "reasoning-delta",
+  "tool-call-started",
+  "tool-output-delta",
+  "tool-call-finished",
+  "plan-update",
+  "file-change",
+])
+
 /**
  * ACP stop reasons that end a turn ABNORMALLY, with the message the UI shows. `end_turn` and
  * `cancelled` are normal endings (the user asked for the cancel), so they carry no error.
@@ -90,9 +101,16 @@ export const createAcpAdapter = (deps: AcpAdapterDeps): DriverAdapter => {
       const client = connection.client
 
       const init = await client.initialize()
+      // Resume, falling back to a fresh session when the agent cannot reload the old one.
+      // Spectrum captures the resume token at session CREATION, so a session the user never
+      // prompted has no transcript on the agent's side — Codex answers "no rollout found for
+      // thread id". Failing the whole run over that would strand the user on a session that is
+      // otherwise perfectly usable, so a fresh session is started instead and its id reported.
       const session =
         input.resume !== undefined
-          ? await client.sessionLoad(input.resume, input.cwd)
+          ? await client
+              .sessionLoad(input.resume, input.cwd)
+              .catch(() => client.sessionNew(input.cwd))
           : await client.sessionNew(input.cwd)
 
       ctx.reportResumeToken?.(session.sessionId)
@@ -165,8 +183,14 @@ export const createAcpAdapter = (deps: AcpAdapterDeps): DriverAdapter => {
         startedToolCalls: new Set<string>(),
       }
 
+      // Count what the agent actually PRODUCED, so a turn that yields nothing can be reported as
+      // such rather than as a clean finish (see `runPrompt`).
+      let output = 0
       client.onSessionUpdate((notif: AcpSessionUpdateNotification) => {
-        for (const event of mapAcpUpdate(notif, mapState)) ctx.emit(event)
+        for (const event of mapAcpUpdate(notif, mapState)) {
+          if (PRODUCTIVE_EVENTS.has(event.type)) output += 1
+          ctx.emit(event)
+        }
       })
 
       // session/request_permission is a REQUEST — the agent blocks until we answer. Resolve with
@@ -205,9 +229,24 @@ export const createAcpAdapter = (deps: AcpAdapterDeps): DriverAdapter => {
           capabilities,
         })
         if (blocks.length === 0) return
+        const outputAtStart = output
         client
           .sessionPrompt(session.sessionId, blocks)
           .then((stopReason) => {
+            // An agent can answer `end_turn` having produced nothing — observed live when an
+            // OpenClaw gateway had no provider auth: the user saw a successful-looking empty turn
+            // and no explanation. Say so instead of reporting success.
+            if (stopReason === "end_turn" && output === outputAtStart) {
+              ctx.emit({
+                type: "turn-finished",
+                runnerId: ctx.rootRunnerId,
+                error: {
+                  detail:
+                    "the agent finished the turn without producing any output",
+                },
+              })
+              return
+            }
             ctx.emit(turnFinishedFor(ctx.rootRunnerId, stopReason))
           })
           .catch((error: unknown) => {

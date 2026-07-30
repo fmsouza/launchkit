@@ -33,6 +33,7 @@ interface FakeClientOptions {
   /** Hold session/set_mode open until `releaseSetMode()` so ordering can be observed. */
   readonly blockSetMode?: boolean
   readonly rejectSetMode?: boolean
+  readonly rejectSessionLoad?: boolean
 }
 
 /** A recording fake ACP client — unit-tests the adapter with no real agent spawn. */
@@ -128,6 +129,8 @@ const createFakeClient = (options: FakeClientOptions = {}): FakeAcpClient => {
     },
     sessionLoad: async (id) => {
       sessionLoads.push(id)
+      if (options.rejectSessionLoad === true)
+        throw new Error("no rollout found for thread id")
       return sessionInfo
     },
     sessionPrompt: async (sid, prompt) => {
@@ -247,6 +250,30 @@ describe("createAcpAdapter — start", () => {
     const client = createFakeClient()
     await start(client, {}, { resume: "acp-sess-prev" })
     expect(client.sessionLoads).toEqual(["acp-sess-prev"])
+  })
+
+  it("starts a fresh session when the agent cannot resume the old one", async () => {
+    // Spectrum captures the resume token at session CREATION, so a session the user never
+    // prompted has no transcript for the agent to reload — codex answers "no rollout found for
+    // thread id". Failing the run over that would strand the user on a session they can still
+    // use; fall back to a fresh session instead.
+    const client = createFakeClient({ rejectSessionLoad: true })
+    const { events } = await start(client, {}, { resume: "acp-sess-gone" })
+    expect(client.sessionLoads).toEqual(["acp-sess-gone"])
+    expect(client.sessionNews).toBe(1)
+    expect(events.some((e) => e.type === "runner-started")).toBe(true)
+  })
+
+  it("reports the fresh session id when a resume falls back", async () => {
+    const client = createFakeClient({ rejectSessionLoad: true })
+    const { ctx } = createFakeCtx()
+    let reported: string | undefined
+    ctx.reportResumeToken = (t) => {
+      reported = t
+    }
+    const adapter = createAcpAdapter({ connect: createFakeConnect(client) })
+    await adapter.start(startInput({ resume: "acp-sess-gone" }), ctx)
+    expect(reported).toBe("acp-sess-1")
   })
 
   it("reports the resume token via ctx when setResumeId is wired", async () => {
@@ -513,6 +540,16 @@ describe("createAcpAdapter — turn outcomes", () => {
     const client = createFakeClient({ stopReason: "end_turn" })
     const { handle, ctx, events } = await start(client)
     handle.send({ text: "hi" })
+    // A real end_turn turn produces something; an empty one is reported as an error instead
+    // (see "silent turns").
+    client.updateHandler?.({
+      sessionId: "acp-sess-1",
+      update: {
+        sessionUpdate: "agent_message_chunk",
+        messageId: "m1",
+        content: { type: "text", text: "hi back" },
+      },
+    })
     await client.settle()
     expect(events.at(-1)).toEqual({
       type: "turn-finished",
@@ -572,6 +609,62 @@ describe("createAcpAdapter — turn outcomes", () => {
     expect(events.at(-1)).toMatchObject({
       type: "turn-finished",
       error: { detail: expect.stringContaining("transport died") },
+    })
+  })
+})
+
+describe("createAcpAdapter — silent turns", () => {
+  it("reports an error when a turn ends having produced nothing at all", async () => {
+    // Observed live: an OpenClaw session whose gateway had no provider auth answered
+    // `stopReason: end_turn` with no content, so the user saw a successful-looking empty turn and
+    // no explanation. A turn that produced no text, no reasoning and no tool call did not work.
+    const client = createFakeClient({ stopReason: "end_turn" })
+    const { handle, events } = await start(client)
+    handle.send({ text: "hi" })
+    await client.settle()
+    expect(events.at(-1)).toMatchObject({
+      type: "turn-finished",
+      error: {
+        detail: "the agent finished the turn without producing any output",
+      },
+    })
+  })
+
+  it("does not report an error when the turn produced assistant text", async () => {
+    const client = createFakeClient({ stopReason: "end_turn" })
+    const { handle, events } = await start(client)
+    handle.send({ text: "hi" })
+    client.updateHandler?.({
+      sessionId: "acp-sess-1",
+      update: {
+        sessionUpdate: "agent_message_chunk",
+        messageId: "m1",
+        content: { type: "text", text: "hello" },
+      },
+    })
+    await client.settle()
+    expect(events.at(-1)).not.toMatchObject({ error: expect.anything() })
+  })
+
+  it("does not report an error when the turn only ran a tool", async () => {
+    const client = createFakeClient({ stopReason: "end_turn" })
+    const { handle, events } = await start(client)
+    handle.send({ text: "hi" })
+    client.updateHandler?.({
+      sessionId: "acp-sess-1",
+      update: { sessionUpdate: "tool_call", toolCallId: "t1", title: "Read" },
+    })
+    await client.settle()
+    expect(events.at(-1)).not.toMatchObject({ error: expect.anything() })
+  })
+
+  it("keeps the agent's own error when the turn ends abnormally and empty", async () => {
+    const client = createFakeClient({ stopReason: "refusal" })
+    const { handle, events } = await start(client)
+    handle.send({ text: "hi" })
+    await client.settle()
+    expect(events.at(-1)).toMatchObject({
+      error: { detail: "the agent refused to continue" },
     })
   })
 })
