@@ -11,6 +11,11 @@ export const UsageSchema = z
     outputTokens: z.number().int().nonnegative(),
     cachedInputTokens: z.number().int().nonnegative().optional(),
     costUsd: z.number().nonnegative().optional(),
+    // Current context tokens consumed (ACP usage_update.used). Optional and additive —
+    // existing emitters (Claude, Codex, OpenCode, OpenClaw mappers) continue to work unchanged.
+    contextUsed: z.number().int().nonnegative().optional(),
+    // Max context window (ACP usage_update.size).
+    contextSize: z.number().int().nonnegative().optional(),
   })
   .strict()
 export type Usage = z.infer<typeof UsageSchema>
@@ -64,6 +69,15 @@ export const QuestionAnswerSchema = z
   .object({ selections: z.array(QuestionSelectionSchema) })
   .strict()
 export type QuestionAnswer = z.infer<typeof QuestionAnswerSchema>
+
+export const PlanEntrySchema = z
+  .object({
+    content: z.string(),
+    priority: z.enum(["high", "medium", "low"]).optional(),
+    status: z.enum(["pending", "in_progress", "completed"]),
+  })
+  .strict()
+export type PlanEntry = z.infer<typeof PlanEntrySchema>
 
 export const PermissionModeSchema = z.enum([
   "manual",
@@ -218,6 +232,16 @@ export const CanonicalEventSchema = z.discriminatedUnion("type", [
       type: z.literal("usage"),
       runnerId: RunnerIdSchema,
       usage: UsageSchema,
+    })
+    .strict(),
+  z
+    .object({
+      // The agent reports an execution plan as a list of entries (ACP session/update "plan").
+      // A full plan is sent as one event (replace semantics keyed by planId), not per-entry deltas.
+      type: z.literal("plan-update"),
+      runnerId: RunnerIdSchema,
+      planId: z.string(),
+      entries: z.array(PlanEntrySchema).min(1),
     })
     .strict(),
   z
