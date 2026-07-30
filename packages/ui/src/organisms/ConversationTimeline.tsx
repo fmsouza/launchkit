@@ -162,6 +162,9 @@ export const ConversationTimeline = ({
                 onAnswer={(a) => onAnswer(item.requestId, a)}
               />
             )
+          case "plan":
+            // Plan rendering is a follow-up UI ticket; for now plans render nothing.
+            return null
           default: {
             const _exhaustive: never = item
             return _exhaustive
