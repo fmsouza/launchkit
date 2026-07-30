@@ -27,4 +27,7 @@ export const codex: HarnessDefinition = {
     "{{model}}",
   ],
   builtIn: true,
+  // ACP launch: Codex exposes ACP via Zed's codex-acp adapter (non-native shim).
+  // The exact launch flag is verified per ticket #121 against the live adapter.
+  acp: { args: ["acp"], native: false },
 } satisfies HarnessDefinition

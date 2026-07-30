@@ -7,3 +7,4 @@ export type HarnessError =
   | { readonly kind: "read-failed"; readonly detail: string }
   | { readonly kind: "write-failed"; readonly detail: string }
   | { readonly kind: "spawn-failed"; readonly detail: string }
+  | { readonly kind: "no-acp-config"; readonly id: string }

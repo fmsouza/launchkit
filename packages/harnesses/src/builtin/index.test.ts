@@ -102,3 +102,31 @@ describe("openclaw (gateway, re-architected)", () => {
     expect(openclaw.builtIn).toBe(true)
   })
 })
+
+describe("builtin ACP configs", () => {
+  it("every builtin declares an acp config", () => {
+    for (const h of builtinHarnesses) {
+      expect(h.acp).toBeDefined()
+      expect(h.acp?.args.length).toBeGreaterThanOrEqual(1)
+      expect(typeof h.acp?.native).toBe("boolean")
+    }
+  })
+
+  it("claude declares a non-native acp config (via Zed adapter shim)", () => {
+    expect(claude.acp?.native).toBe(false)
+    expect(claude.acp?.args.length).toBeGreaterThanOrEqual(1)
+  })
+
+  it("codex declares a non-native acp config (via Zed adapter shim)", () => {
+    expect(codex.acp?.native).toBe(false)
+    expect(codex.acp?.args.length).toBeGreaterThanOrEqual(1)
+  })
+
+  it("opencode declares a native acp config", () => {
+    expect(opencode.acp?.native).toBe(true)
+  })
+
+  it("openclaw declares a native acp config", () => {
+    expect(openclaw.acp?.native).toBe(true)
+  })
+})
