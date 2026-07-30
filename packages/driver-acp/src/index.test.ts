@@ -14,4 +14,23 @@ describe("driver-acp barrel", () => {
     expect(exports.AcpSessionUpdateSchema).toBeDefined()
     expect(exports.AcpStopReasonSchema).toBeDefined()
   })
+
+  it("exports the pure session-mode helpers", () => {
+    expect(typeof exports.pickAcpModeId).toBe("function")
+    expect(typeof exports.supportedModesFrom).toBe("function")
+  })
+
+  it("exports the pure permission-outcome helper", () => {
+    expect(typeof exports.pickPermissionOptionId).toBe("function")
+  })
+
+  it("exports the pure prompt-block builder", () => {
+    expect(typeof exports.toAcpPromptBlocks).toBe("function")
+  })
+
+  it("exports the pure elicitation helpers", () => {
+    expect(typeof exports.elicitationToQuestion).toBe("function")
+    expect(typeof exports.answerToElicitationResponse).toBe("function")
+    expect(typeof exports.firstPropertyName).toBe("function")
+  })
 })

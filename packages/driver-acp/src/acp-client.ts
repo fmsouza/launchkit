@@ -228,6 +228,11 @@ export interface AcpClient {
   close(): void
 }
 
+/**
+ * The ACP `ContentBlock` subset Spectrum sends. An embedded `resource` carries EITHER inline
+ * `text` (a text resource) or base64 `blob` (a binary one) per the ACP `EmbeddedResourceResource`
+ * union — attachments always take the `blob` branch.
+ */
 export type AcpPromptBlock =
   | { readonly type: "text"; readonly text: string }
   | { readonly type: "image"; readonly mimeType: string; readonly data: string }
@@ -235,8 +240,9 @@ export type AcpPromptBlock =
       readonly type: "resource"
       readonly resource: {
         readonly uri: string
-        readonly text: string
         readonly mimeType?: string
+        readonly text?: string
+        readonly blob?: string
       }
     }
 
