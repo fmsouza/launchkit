@@ -226,10 +226,17 @@ export interface AcpInitializeResult {
   readonly promptCapabilities: AcpPromptCapabilities
 }
 
-/** One agent-advertised session config option (ACP `session/set_config_option`). */
+/**
+ * One agent-advertised session config option (ACP `session/set_config_option`). The wire shape
+ * names a select's choices `options[].value`; they are normalized to `values[].id` here so the
+ * pure pickers read one shape. `category` is the agent's own classification
+ * ("model" | "model_config" | "thought_level" | "mode" | ...) and is the reliable way to find the
+ * model / reasoning-effort options without matching on display names.
+ */
 export interface AcpConfigOption {
   readonly id: string
   readonly name: string
+  readonly category?: string
   readonly values: readonly { readonly id: string; readonly name: string }[]
 }
 
