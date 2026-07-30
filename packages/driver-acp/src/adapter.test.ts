@@ -419,6 +419,119 @@ describe("createAcpAdapter — handle", () => {
   })
 })
 
+describe("createAcpAdapter — turn outcomes", () => {
+  it("emits a plain turn-finished when the agent stops with end_turn", async () => {
+    const client = createFakeClient({ stopReason: "end_turn" })
+    const { handle, ctx, events } = await start(client)
+    handle.send({ text: "hi" })
+    await client.settle()
+    expect(events.at(-1)).toEqual({
+      type: "turn-finished",
+      runnerId: ctx.rootRunnerId,
+    })
+  })
+
+  it("emits a plain turn-finished when the turn was cancelled by the user", async () => {
+    const client = createFakeClient({ stopReason: "cancelled" })
+    const { handle, ctx, events } = await start(client)
+    handle.send({ text: "hi" })
+    await client.settle()
+    expect(events.at(-1)).toEqual({
+      type: "turn-finished",
+      runnerId: ctx.rootRunnerId,
+    })
+  })
+
+  it("emits turn-finished with an error when the agent refuses", async () => {
+    const client = createFakeClient({ stopReason: "refusal" })
+    const { handle, events } = await start(client)
+    handle.send({ text: "hi" })
+    await client.settle()
+    expect(events.at(-1)).toMatchObject({
+      type: "turn-finished",
+      error: { detail: "the agent refused to continue" },
+    })
+  })
+
+  it("emits turn-finished with an error when the agent hits its token limit", async () => {
+    const client = createFakeClient({ stopReason: "max_tokens" })
+    const { handle, events } = await start(client)
+    handle.send({ text: "hi" })
+    await client.settle()
+    expect(events.at(-1)).toMatchObject({
+      type: "turn-finished",
+      error: { detail: "the turn stopped at the model's token limit" },
+    })
+  })
+
+  it("emits turn-finished with an error when the agent hits its request limit", async () => {
+    const client = createFakeClient({ stopReason: "max_turn_requests" })
+    const { handle, events } = await start(client)
+    handle.send({ text: "hi" })
+    await client.settle()
+    expect(events.at(-1)).toMatchObject({
+      type: "turn-finished",
+      error: { detail: "the turn stopped at the agent's request limit" },
+    })
+  })
+
+  it("emits turn-finished with an error when the prompt itself fails", async () => {
+    const client = createFakeClient({ promptRejects: true })
+    const { handle, events } = await start(client)
+    handle.send({ text: "hi" })
+    await client.settle()
+    expect(events.at(-1)).toMatchObject({
+      type: "turn-finished",
+      error: { detail: expect.stringContaining("transport died") },
+    })
+  })
+})
+
+describe("createAcpAdapter — attachments", () => {
+  const png = {
+    id: "sha_1",
+    mime: "image/png",
+    displayName: "a.png",
+    kind: "image" as const,
+    bytes: 3,
+    dataUrl: "data:image/png;base64,AAAA",
+  }
+
+  it("sends attachments as ACP content blocks alongside the text", async () => {
+    const client = createFakeClient({
+      promptCapabilities: { image: true, audio: false, embeddedContext: true },
+    })
+    const { handle } = await start(client)
+    handle.send({ text: "look", attachments: [png] })
+    expect(client.prompts.at(-1)?.prompt).toEqual([
+      { type: "text", text: "look" },
+      { type: "image", mimeType: "image/png", data: "AAAA" },
+    ])
+  })
+
+  it("drops attachments the agent did not advertise support for", async () => {
+    const client = createFakeClient({
+      promptCapabilities: {
+        image: false,
+        audio: false,
+        embeddedContext: false,
+      },
+    })
+    const { handle } = await start(client)
+    handle.send({ text: "look", attachments: [png] })
+    expect(client.prompts.at(-1)?.prompt).toEqual([
+      { type: "text", text: "look" },
+    ])
+  })
+
+  it("does not fire a prompt for an empty turn with no attachments", async () => {
+    const client = createFakeClient()
+    const { handle } = await start(client)
+    handle.send({ text: "" })
+    expect(client.prompts).toHaveLength(0)
+  })
+})
+
 describe("createAcpAdapter — session/update streaming", () => {
   it("maps an agent_message_chunk to a text-delta event via ctx.emit", async () => {
     const client = createFakeClient()

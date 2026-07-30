@@ -4,6 +4,7 @@ import type {
   AttachmentRefWithBytes,
   CanonicalEvent,
   PermissionMode,
+  RunnerId,
 } from "@spectrum/agent-events"
 import type {
   AdapterCtx,
@@ -17,6 +18,7 @@ import type {
   AcpPermissionOutcome,
   AcpPermissionRequest,
   AcpSessionUpdateNotification,
+  AcpStopReason,
 } from "./acp-client"
 import {
   answerToElicitationResponse,
@@ -30,6 +32,26 @@ import { pickAcpModeId, supportedModesFrom } from "./session-modes"
 
 export interface AcpAdapterDeps {
   readonly connect: AcpConnect
+}
+
+/**
+ * ACP stop reasons that end a turn ABNORMALLY, with the message the UI shows. `end_turn` and
+ * `cancelled` are normal endings (the user asked for the cancel), so they carry no error.
+ */
+const STOP_ERRORS: Partial<Record<AcpStopReason, string>> = {
+  refusal: "the agent refused to continue",
+  max_tokens: "the turn stopped at the model's token limit",
+  max_turn_requests: "the turn stopped at the agent's request limit",
+}
+
+const turnFinishedFor = (
+  runnerId: RunnerId,
+  stopReason: AcpStopReason,
+): CanonicalEvent => {
+  const detail = STOP_ERRORS[stopReason]
+  return detail === undefined
+    ? { type: "turn-finished", runnerId }
+    : { type: "turn-finished", runnerId, error: { detail } }
 }
 
 /**
@@ -137,8 +159,8 @@ export const createAcpAdapter = (deps: AcpAdapterDeps): DriverAdapter => {
         if (blocks.length === 0) return
         client
           .sessionPrompt(session.sessionId, blocks)
-          .then(() => {
-            ctx.emit({ type: "turn-finished", runnerId: ctx.rootRunnerId })
+          .then((stopReason) => {
+            ctx.emit(turnFinishedFor(ctx.rootRunnerId, stopReason))
           })
           .catch((error: unknown) => {
             ctx.emit({
