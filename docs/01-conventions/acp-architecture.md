@@ -102,6 +102,37 @@ The composition root derives its ACP harness set from the definitions (a harness
 
 See the ACP agent registry: https://agentclientprotocol.com/get-started/agents
 
+## Known issue: Claude Code ignores the proxy token
+
+**A proxied Claude session fails to authenticate against the Spectrum proxy.** This is NOT an ACP
+issue — the native spawn path fails identically — but it is the one thing standing between a Claude
+session and a Spectrum-routed model.
+
+Claude Code 2.1.220 sends its cached subscription OAuth token instead of `ANTHROPIC_AUTH_TOKEN`.
+Captured against a header-logging endpoint with `ANTHROPIC_AUTH_TOKEN` set to a known value:
+
+```
+authorization: "Bearer sk-an…(len 115)"        <- an sk-ant-oat OAuth token, not ours
+anthropic-beta: …,oauth-2025-04-20,…
+user-agent:     claude-cli/2.1.220
+```
+
+The harness definition's comment asserts the opposite precedence, which was presumably true when it
+was written. Setting `ANTHROPIC_API_KEY` as well does not change it. The proxy is not at fault: it
+accepts both the master key and a session-encoded key, over `Authorization: Bearer` and `x-api-key`,
+returning 200 and a real stream.
+
+**The one verified lever** is Claude Code's simple mode — `CLAUDE_CODE_SIMPLE=1` (what `--bare`
+sets), documented as *"Anthropic auth is strictly ANTHROPIC_API_KEY or apiKeyHelper via --settings
+(OAuth and keychain are never read)"*. With it set, Claude Code sends Spectrum's token. It is not
+enabled here because simple mode also disables **CLAUDE.md auto-discovery**, hooks, LSP, plugin
+sync and auto-memory — a serious downgrade for a coding session, and a trade-off for the user to
+make rather than one to bake in silently.
+
+Adding `CLAUDE_CODE_SIMPLE: "1"` to `claude`'s `envTemplate` would scope it correctly if that
+trade-off is accepted: `envTemplate` renders only for proxied routes, so a "default" (direct)
+session would stay fully featured.
+
 ## Accepted regressions
 
 - **Sub-agent trees flatten.** ACP v1's `session/update` has no child-session concept, so Claude's `Agent`/`Task` calls render as tool calls on the root runner rather than child runners.
