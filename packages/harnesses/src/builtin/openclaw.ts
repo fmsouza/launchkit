@@ -29,4 +29,7 @@ export const openclaw: HarnessDefinition = {
     OPENCLAW_AGENT_ID: "default",
   },
   builtIn: true,
+  // ACP launch: OpenClaw exposes ACP natively (docs.openclaw.ai/cli/acp). `openclaw acp` is already
+  // documented as a fallback in packages/driver-openclaw/CLAUDE.md. Verified per ticket #119.
+  acp: { args: ["acp"], native: true },
 } satisfies HarnessDefinition
