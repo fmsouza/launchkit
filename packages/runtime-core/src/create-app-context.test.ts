@@ -855,4 +855,81 @@ describe("createAppContext ACP driver wiring", () => {
     const ctx = createAppContext(deps)
     expect(typeof ctx.routingDriver.start).toBe("function")
   })
+
+  it("routes openclaw to the ACP driver (Phase 2 — completes the UNVERIFIED driver)", () => {
+    let acpStartCalled = false
+    let nativeStartCalled = false
+    const { deps } = makeFakeDeps()
+    ;(deps as { createAcpDriver: unknown }).createAcpDriver = (() => ({
+      start: () => {
+        acpStartCalled = true
+        return ok({}) as never
+      },
+    })) as never
+    ;(deps as { createFakeDriver: unknown }).createFakeDriver = (() => ({
+      start: () => {
+        nativeStartCalled = true
+        return ok({}) as never
+      },
+    })) as never
+    const ctx = createAppContext(deps)
+    ctx.routingDriver.start({
+      harnessId: "openclaw" as never,
+      cwd: "/tmp",
+      env: {},
+    })
+    expect(acpStartCalled).toBe(true)
+    expect(nativeStartCalled).toBe(false)
+  })
+
+  it("routes opencode to the ACP driver (Phase 2 — native ACP agent)", () => {
+    let acpStartCalled = false
+    let nativeStartCalled = false
+    const { deps } = makeFakeDeps()
+    ;(deps as { createAcpDriver: unknown }).createAcpDriver = (() => ({
+      start: () => {
+        acpStartCalled = true
+        return ok({}) as never
+      },
+    })) as never
+    ;(deps as { createOpencodeDriver: unknown }).createOpencodeDriver =
+      (() => ({
+        start: () => {
+          nativeStartCalled = true
+          return ok({}) as never
+        },
+      })) as never
+    const ctx = createAppContext(deps)
+    ctx.routingDriver.start({
+      harnessId: "opencode" as never,
+      cwd: "/tmp",
+      env: {},
+    })
+    expect(acpStartCalled).toBe(true)
+    expect(nativeStartCalled).toBe(false)
+  })
+
+  it("still routes claude to the native driver (Phase 4 — not yet migrated)", () => {
+    let acpStartCalled = false
+    const { deps } = makeFakeDeps()
+    ;(deps as { createAcpDriver: unknown }).createAcpDriver = (() => ({
+      start: () => {
+        acpStartCalled = true
+        return ok({}) as never
+      },
+    })) as never
+    const ctx = createAppContext(deps)
+    // claude's native driver (createClaudeDriver) is imported directly, not via deps.
+    // We just verify ACP is NOT called for claude.
+    try {
+      ctx.routingDriver.start({
+        harnessId: "claude" as never,
+        cwd: "/tmp",
+        env: {},
+      })
+    } catch {
+      // The real claude driver may fail in tests; we only care that ACP wasn't called.
+    }
+    expect(acpStartCalled).toBe(false)
+  })
 })
