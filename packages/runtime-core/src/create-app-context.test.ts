@@ -650,7 +650,9 @@ describe("createAppContext resolveModelEnv wiring", () => {
     const { deps } = makeFakeDeps()
 
     // Override createPathCommandResolver to return a fake that resolves "claude".
-    // The fake maps "claude" -> "/usr/local/bin/claude" (absolute so guard passes).
+    // The fake maps "claude" -> "/usr/local/bin/claude" (absolute so guard passes). It does NOT
+    // map claude's ACP shim (`claude-code-acp`): resolveModelEnv needs only the rendered env, so a
+    // missing shim binary must not strip it and leave the session unrouted.
     ;(
       deps as { createPathCommandResolver: unknown }
     ).createPathCommandResolver = () =>

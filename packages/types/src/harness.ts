@@ -4,8 +4,14 @@ import { HarnessIdSchema } from "./ids"
 
 export const HarnessAcpSchema = z
   .object({
-    // Args to launch the harness in ACP mode, appended to the resolved command.
-    args: z.array(z.string().min(1)).min(1),
+    // The binary that speaks ACP, when it is NOT the harness's own command. Zed's adapter shims
+    // are separate binaries (`claude-code-acp`, `codex-acp`) rather than a flag on the harness
+    // CLI, so a non-native harness names its shim here. Omitted for native ACP agents, which are
+    // launched as `<harness.command> <args>`.
+    command: z.string().min(1).optional(),
+    // Args to launch in ACP mode, appended to the resolved command. May be empty when the command
+    // override is itself the ACP entry point.
+    args: z.array(z.string().min(1)),
     // true if the harness exposes ACP natively; false if via a Zed adapter shim.
     native: z.boolean(),
   })

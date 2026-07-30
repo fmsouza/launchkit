@@ -104,22 +104,42 @@ describe("openclaw (gateway, re-architected)", () => {
 })
 
 describe("builtin ACP configs", () => {
+  it("claude reaches ACP through the claude-code-acp shim binary", () => {
+    expect(claude.acp?.native).toBe(false)
+    expect(claude.acp?.command).toBe("claude-code-acp")
+  })
+
+  it("codex reaches ACP through the codex-acp shim binary", () => {
+    expect(codex.acp?.native).toBe(false)
+    expect(codex.acp?.command).toBe("codex-acp")
+  })
+
+  it("opencode reaches ACP through its own acp subcommand", () => {
+    expect(opencode.acp?.native).toBe(true)
+    expect(opencode.acp?.command).toBeUndefined()
+    expect(opencode.acp?.args).toEqual(["acp"])
+  })
+
+  it("openclaw reaches ACP through its own acp subcommand", () => {
+    expect(openclaw.acp?.native).toBe(true)
+    expect(openclaw.acp?.command).toBeUndefined()
+    expect(openclaw.acp?.args).toEqual(["acp"])
+  })
+
   it("every builtin declares an acp config", () => {
     for (const h of builtinHarnesses) {
       expect(h.acp).toBeDefined()
-      expect(h.acp?.args.length).toBeGreaterThanOrEqual(1)
+      expect(Array.isArray(h.acp?.args)).toBe(true)
       expect(typeof h.acp?.native).toBe("boolean")
     }
   })
 
-  it("claude declares a non-native acp config (via Zed adapter shim)", () => {
-    expect(claude.acp?.native).toBe(false)
-    expect(claude.acp?.args.length).toBeGreaterThanOrEqual(1)
-  })
-
-  it("codex declares a non-native acp config (via Zed adapter shim)", () => {
-    expect(codex.acp?.native).toBe(false)
-    expect(codex.acp?.args.length).toBeGreaterThanOrEqual(1)
+  it("every non-native builtin names the shim binary that speaks ACP", () => {
+    // A non-native harness reaches ACP through a SEPARATE binary; without a command override the
+    // launch would spawn the harness CLI itself, which has no ACP mode.
+    for (const h of builtinHarnesses) {
+      if (h.acp?.native === false) expect(h.acp.command).toBeDefined()
+    }
   })
 
   it("opencode declares a native acp config", () => {

@@ -26,7 +26,10 @@ export const claude: HarnessDefinition = {
     CLAUDE_CODE_MAX_RETRIES: "2",
   },
   builtIn: true,
-  // ACP launch: Claude Code exposes ACP via Zed's claude-agent-acp adapter (non-native shim).
-  // The exact launch flag is verified per ticket #122 against the live adapter.
-  acp: { args: ["--acp"], native: false },
+  // ACP launch: Claude Code has NO ACP mode of its own (verified: `claude --help` has no --acp
+  // flag). It reaches ACP through Zed's adapter, which is a separate binary from the
+  // `@zed-industries/claude-code-acp` package — install with
+  // `npm i -g @zed-industries/claude-code-acp`. The adapter drives Claude Code itself, so the
+  // proxy env below still applies to it.
+  acp: { command: "claude-code-acp", args: [], native: false },
 } satisfies HarnessDefinition

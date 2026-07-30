@@ -27,7 +27,10 @@ export const codex: HarnessDefinition = {
     "{{model}}",
   ],
   builtIn: true,
-  // ACP launch: Codex exposes ACP via Zed's codex-acp adapter (non-native shim).
-  // The exact launch flag is verified per ticket #121 against the live adapter.
-  acp: { args: ["acp"], native: false },
+  // ACP launch: `codex` has NO `acp` subcommand (verified against `codex --help`). It reaches ACP
+  // through Zed's adapter, a separate binary from the `@zed-industries/codex-acp` package —
+  // install with `npm i -g @zed-industries/codex-acp`. NOTE: `argsTemplate` above (the `-c`
+  // provider overrides that route codex through the proxy) is NOT passed in ACP mode; the shim's
+  // provider routing is verified per ticket #121.
+  acp: { command: "codex-acp", args: [], native: false },
 } satisfies HarnessDefinition

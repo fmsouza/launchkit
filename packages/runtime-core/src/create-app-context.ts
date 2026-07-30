@@ -433,8 +433,9 @@ export const createAppContext = (
     acpHarnessIds.has(String(harnessId)) ? "acp" : "native"
 
   // `resolveLaunch` (resolve command + render proxy env, then hand to `runner.launch`).
-  // For ACP-mode harnesses, passes `mode: "acp"` so the harness's `acp.args` are used
-  // instead of `argsTemplate` (the ACP agent still reaches the LLM through the proxy via env).
+  // For ACP-mode harnesses, passes `mode: "acp"` so the harness's ACP entry point (its own binary
+  // plus `acp.args`, or the shim named by `acp.command`) is resolved instead of `argsTemplate`.
+  // The ACP agent still reaches the LLM through the proxy via the same rendered env.
   const resolveLaunchRaw = resolveHarnessLaunch({ resolver })
   const resolveLaunch = (params: LaunchParams) =>
     resolveLaunchRaw({
@@ -443,6 +444,12 @@ export const createAppContext = (
         ? { mode: "acp" as const }
         : {}),
     })
+
+  // Env-only resolution: renders the proxy env WITHOUT resolving an ACP entry point. Both modes
+  // render `envTemplate` identically — only the command/args differ — so callers that just want
+  // env (the in-session model switch) must not fail because an ACP shim binary is missing.
+  const resolveLaunchEnvOnly = (params: LaunchParams) =>
+    resolveLaunchRaw(params)
 
   // proxy provider layer: factory (secrets + lazy SDK loader) + real streamText gateway
   const factory = deps.createProviderFactory({
@@ -542,7 +549,7 @@ export const createAppContext = (
     )
     const wireModel =
       routeModel !== undefined ? wireModelFor(routeModel) : undefined
-    const resolved = resolveLaunch({
+    const resolved = resolveLaunchEnvOnly({
       harness,
       route: {
         kind: "proxied",
