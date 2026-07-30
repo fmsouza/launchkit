@@ -1,18 +1,26 @@
 import { describe, expect, it } from "bun:test"
 import { HarnessDefinitionSchema, HarnessIdSchema } from "@spectrum/types"
 import { ALLOWED_TOKENS } from "../tokens"
-import { builtinHarnesses, claude, codex, openclaw, opencode } from "./index"
+import {
+  builtinHarnesses,
+  claude,
+  codex,
+  gemini,
+  openclaw,
+  opencode,
+} from "./index"
 
 const tokensIn = (s: string): readonly string[] =>
   [...s.matchAll(/\{\{(\w+)\}\}/g)].map((m) => m[1] ?? "")
 
 describe("builtinHarnesses", () => {
-  it("lists all four built-ins in a stable order when imported", () => {
+  it("lists every built-in in a stable order when imported", () => {
     expect(builtinHarnesses.map((h) => h.id)).toEqual([
       HarnessIdSchema.parse("claude"),
       HarnessIdSchema.parse("codex"),
       HarnessIdSchema.parse("opencode"),
       HarnessIdSchema.parse("openclaw"),
+      HarnessIdSchema.parse("gemini"),
     ])
   })
 
@@ -118,6 +126,12 @@ describe("builtin ACP configs", () => {
     expect(opencode.acp?.native).toBe(true)
     expect(opencode.acp?.command).toBeUndefined()
     expect(opencode.acp?.args).toEqual(["acp"])
+  })
+
+  it("ships gemini as a builtin ACP harness", () => {
+    expect(builtinHarnesses.map((h) => String(h.id))).toContain("gemini")
+    expect(gemini.acp?.native).toBe(true)
+    expect(gemini.acp?.args).toEqual(["--acp"])
   })
 
   it("openclaw renders no retired gateway env", () => {

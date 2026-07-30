@@ -941,6 +941,13 @@ describe("createAppContext ACP driver wiring", () => {
     expect(ctx.driverRegistry.isNative("openclaw" as HarnessId)).toBe(true)
   })
 
+  it("routes a newly added ACP harness with no composition-root change", () => {
+    // The whole point of the migration: adding an ACP agent is a harness definition, not a driver.
+    const { deps } = makeFakeDeps()
+    const ctx = createAppContext(deps)
+    expect(ctx.driverRegistry.isNative("gemini" as HarnessId)).toBe(true)
+  })
+
   it("does not report an unknown harness as native", () => {
     const { deps } = makeFakeDeps()
     const ctx = createAppContext(deps)
