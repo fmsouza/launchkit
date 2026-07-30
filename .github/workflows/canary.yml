@@ -1,12 +1,32 @@
 name: Canary Release
 
+# Canary is a NIGHTLY channel: one build per night covering everything merged
+# since the previous canary — never one build per merge. `ci.yml` still runs the
+# full verify gate on every push to main and every PR, so main stays verified
+# per-merge; only the five-platform build + publish is nightly.
 on:
-  push:
-    branches: [main]
+  schedule:
+    # 03:17 UTC. GitHub cron is UTC-only (no DST shift) and scheduled runs fire
+    # on the DEFAULT BRANCH only — i.e. main, the same source the old
+    # `push: branches: [main]` trigger used, so `github.sha` is still main's tip.
+    # The `:17` is deliberate: the scheduler is congested at :00 and delays runs
+    # queued there.
+    # NOTE: GitHub disables scheduled workflows in a repository with no activity
+    # for 60 days. Any push re-enables them.
+    - cron: "17 3 * * *"
+  # Manual "Run workflow" (Actions tab, or `gh workflow run canary.yml`) for an
+  # on-demand canary. A manual run ALWAYS builds — it bypasses the
+  # no-new-commits guard in the `version` job.
+  workflow_dispatch:
 
 concurrency:
   group: canary-release
-  cancel-in-progress: true
+  # Queue, never cancel. Under the per-merge trigger a newer commit legitimately
+  # superseded an in-flight run. Now the realistic collision is a manual dispatch
+  # landing on a running nightly, and killing that between `gh release create`
+  # (tag + release page already published) and the update-feed upload would leave
+  # a half-published canary behind.
+  cancel-in-progress: false
 
 permissions:
   contents: write
