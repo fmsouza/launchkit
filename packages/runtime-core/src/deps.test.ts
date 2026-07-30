@@ -42,6 +42,7 @@ describe("CreateAppContextDeps", () => {
       "createFakeDriver",
       "createCodexDriver",
       "createOpencodeDriver",
+      "createAcpDriver",
       "createDataAdmin",
       "demoHarnessEnabled",
       "genProxyKey",
