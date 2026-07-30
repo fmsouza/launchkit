@@ -51,8 +51,13 @@ describe("createAcpDriver", () => {
       args: ["acp"],
     })
     expect(started.ok).toBe(true)
-    // The adapter start is scheduled off the sync seam; let it run.
-    await new Promise((r) => setTimeout(r, 10))
+    // The adapter start is scheduled off the sync seam, and the transport lazy-imports the ACP
+    // SDK before it spawns — on a cold runner that import alone can outlast a fixed delay, so
+    // poll for the spawn rather than sleeping a guessed number of milliseconds.
+    const deadline = Date.now() + 10_000
+    while (spawned.length === 0 && Date.now() < deadline)
+      await new Promise((r) => setTimeout(r, 10))
+
     expect(spawned[0]?.cmd).toEqual(["/usr/local/bin/opencode", "acp"])
     expect(spawned[0]?.env).toMatchObject({
       PATH: "/usr/bin",
