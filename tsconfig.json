@@ -23,6 +23,7 @@
     { "path": "packages/driver-codex" },
     { "path": "packages/driver-opencode" },
     { "path": "packages/driver-openclaw" },
+    { "path": "packages/driver-acp" },
     { "path": "packages/brand" },
     { "path": "packages/providers" },
     { "path": "packages/runtime-core" }
