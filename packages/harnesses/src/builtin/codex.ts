@@ -11,6 +11,18 @@ export const codex: HarnessDefinition = {
   // key via OPENAI_API_KEY (codex sends it as Bearer; no ChatGPT-login override was observed).
   envTemplate: {
     OPENAI_API_KEY: "{{proxyKey}}",
+    // ACP-mode routing. The `-c` overrides below are ARGS, and ACP mode replaces args with the
+    // adapter's own — so without these the ACP session silently falls back to the user's ChatGPT
+    // login instead of the Spectrum proxy (observed live: "You've hit your usage limit"). The
+    // codex-acp adapter reads MODEL_PROVIDER + CODEX_CONFIG (a JSON object merged into the Codex
+    // session config) and honors OPENAI_API_KEY. Inert on the native path, which uses the args.
+    MODEL_PROVIDER: "spectrum",
+    // NOTE: no "model" key. Pinning Codex to a Spectrum route id makes it print "Model metadata
+    // for `mdl_…` not found" into the conversation; leaving it unset lets Codex ask for its own
+    // default and the proxy routes it via the model encoded in the session key (resolvedVia
+    // "session-fallback"), which is exactly what that encoding is for.
+    CODEX_CONFIG:
+      '{"model_providers":{"spectrum":{"name":"Spectrum","base_url":"{{proxyUrl}}/v1","env_key":"OPENAI_API_KEY","wire_api":"responses"}}}',
   },
   argsTemplate: [
     "-c",
@@ -27,7 +39,11 @@ export const codex: HarnessDefinition = {
     "{{model}}",
   ],
   builtIn: true,
-  // ACP launch: Codex exposes ACP via Zed's codex-acp adapter (non-native shim).
-  // The exact launch flag is verified per ticket #121 against the live adapter.
-  acp: { args: ["acp"], native: false },
+  // ACP launch: `codex` has NO `acp` subcommand (verified against `codex --help`). It reaches ACP
+  // through a separate adapter binary from `@agentclientprotocol/codex-acp` — install with
+  // `npm i -g @agentclientprotocol/codex-acp`. (The older `@zed-industries/codex-acp` is
+  // deprecated but ships the same `codex-acp` binary.) NOTE: `argsTemplate` above (the `-c`
+  // provider overrides that route codex through the proxy) is NOT passed in ACP mode; the shim's
+  // provider routing is verified per ticket #121.
+  acp: { command: "codex-acp", args: [], native: false },
 } satisfies HarnessDefinition

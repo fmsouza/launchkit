@@ -16,4 +16,52 @@ describe("createAcpDriver", () => {
     const driver = createAcpDriver({ idGen: fakeIdGen, connect: fakeConnect })
     expect(typeof driver.start).toBe("function")
   })
+
+  it("builds a real transport when no connect override is supplied", () => {
+    // The production path must NOT be a stub: constructing without `connect` has to yield a
+    // working driver, not one that throws the moment a run starts.
+    const driver = createAcpDriver({ idGen: fakeIdGen })
+    expect(typeof driver.start).toBe("function")
+  })
+
+  it("spawns through the real transport with the injected base env", async () => {
+    const spawned: { cmd: readonly string[]; env: Record<string, string> }[] =
+      []
+    const driver = createAcpDriver({
+      idGen: fakeIdGen,
+      baseEnv: () => ({ PATH: "/usr/bin" }),
+      spawn: (cmd, options) => {
+        spawned.push({ cmd, env: options.env })
+        return {
+          stdout: new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.close()
+            },
+          }),
+          stdin: { write: () => {}, flush: () => {}, end: () => {} },
+          kill: () => {},
+        }
+      },
+    })
+    const started = driver.start({
+      harnessId: "opencode" as never,
+      cwd: "/work",
+      env: { OPENAI_API_KEY: "k" },
+      command: "/usr/local/bin/opencode",
+      args: ["acp"],
+    })
+    expect(started.ok).toBe(true)
+    // The adapter start is scheduled off the sync seam, and the transport lazy-imports the ACP
+    // SDK before it spawns — on a cold runner that import alone can outlast a fixed delay, so
+    // poll for the spawn rather than sleeping a guessed number of milliseconds.
+    const deadline = Date.now() + 10_000
+    while (spawned.length === 0 && Date.now() < deadline)
+      await new Promise((r) => setTimeout(r, 10))
+
+    expect(spawned[0]?.cmd).toEqual(["/usr/local/bin/opencode", "acp"])
+    expect(spawned[0]?.env).toMatchObject({
+      PATH: "/usr/bin",
+      OPENAI_API_KEY: "k",
+    })
+  })
 })

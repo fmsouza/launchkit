@@ -71,7 +71,7 @@ export const mapAcpUpdate = (
       ]
     }
 
-    case "thought": {
+    case "agent_thought_chunk": {
       const t = text(update.content)
       if (t === "") return []
       const messageId =
@@ -162,9 +162,12 @@ export const mapAcpUpdate = (
       return []
     }
 
-    case "plan": {
-      const planId = `plan-${state.rootRunnerId}-${state.planCounter}`
-      state.planCounter += 1
+    case "plan":
+    case "plan_update": {
+      // ACP re-sends the WHOLE plan on every revision; Spectrum's plan-update REPLACES by planId
+      // (reduce.ts). The id is therefore stable per runner — minting a fresh one per revision
+      // would append a new plan card for every status change.
+      const planId = `plan-${state.rootRunnerId}`
       return [
         {
           type: "plan-update",
@@ -195,16 +198,26 @@ export const mapAcpUpdate = (
       return [usage]
     }
 
-    case "mode": {
+    case "current_mode_update": {
       return [
         {
           type: "annotation",
           runnerId: runnerIdValue,
           kind: "mode-change",
-          data: update.mode ?? null,
+          data: update.currentModeId ?? null,
         },
       ]
     }
+
+    // Known v1 kinds with no Spectrum surface. `user_message_chunk` is the agent echoing the
+    // user's own turn, which the runtime already rendered locally; the rest carry agent metadata
+    // (slash commands, session title, config changes, plan removal) nothing renders today.
+    case "user_message_chunk":
+    case "available_commands_update":
+    case "config_option_update":
+    case "session_info_update":
+    case "plan_removed":
+      return []
 
     default:
       // Unknown sessionUpdate kind — defensive, return no events.

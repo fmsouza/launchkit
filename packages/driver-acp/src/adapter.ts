@@ -1,111 +1,82 @@
 import type { AgentStartInput } from "@spectrum/agent-driver"
 import type {
   ApprovalTarget,
+  AttachmentRefWithBytes,
   CanonicalEvent,
   PermissionMode,
-  QuestionAnswer,
-  QuestionPrompt,
+  RunnerId,
+  ThinkingEffort,
 } from "@spectrum/agent-events"
 import type {
   AdapterCtx,
   AdapterHandle,
   DriverAdapter,
 } from "@spectrum/driver-runtime"
+import type { ModelId } from "@spectrum/types"
 import type {
   AcpConnect,
   AcpConnection,
   AcpMapState,
-  AcpPromptBlock,
+  AcpPermissionOutcome,
+  AcpPermissionRequest,
   AcpSessionUpdateNotification,
+  AcpStopReason,
 } from "./acp-client"
+import {
+  pickEffortOption,
+  pickModeOption,
+  pickModelOption,
+} from "./config-options"
+import {
+  answerToElicitationResponse,
+  elicitationToQuestion,
+  firstPropertyName,
+} from "./elicitation"
 import { mapAcpUpdate } from "./map-acp-update"
+import { pickPermissionOptionId } from "./permission-outcome"
+import { toAcpPromptBlocks } from "./prompt-blocks"
+import { pickAcpModeId, supportedModesFrom } from "./session-modes"
 
 export interface AcpAdapterDeps {
   readonly connect: AcpConnect
-  readonly supportedModes?: readonly PermissionMode[]
 }
 
-const toAcpMode = (mode: PermissionMode): string => {
-  switch (mode) {
-    case "manual":
-      return "manual"
-    case "auto-edits":
-      return "auto-edits"
-    case "plan":
-      return "plan"
-    case "bypass":
-      return "bypass"
-  }
+/**
+ * ACP stop reasons that end a turn ABNORMALLY, with the message the UI shows. `end_turn` and
+ * `cancelled` are normal endings (the user asked for the cancel), so they carry no error.
+ */
+const STOP_ERRORS: Partial<Record<AcpStopReason, string>> = {
+  refusal: "the agent refused to continue",
+  max_tokens: "the turn stopped at the model's token limit",
+  max_turn_requests: "the turn stopped at the agent's request limit",
 }
 
-const permissionTargetFor = (req: unknown): ApprovalTarget => {
-  if (typeof req === "object" && req !== null) {
-    const r = req as Record<string, unknown>
-    const tc = r.toolCall
-    if (typeof tc === "object" && tc !== null) {
-      const t = tc as Record<string, unknown>
-      if (typeof t.kind === "string") {
-        const kind = t.kind
-        if (kind === "execute")
-          return {
-            kind: "command",
-            detail: typeof t.title === "string" ? t.title : kind,
-          }
-        if (kind === "edit" || kind === "delete" || kind === "move")
-          return {
-            kind: "file",
-            detail: typeof t.title === "string" ? t.title : kind,
-          }
-      }
-    }
-  }
-  return { kind: "tool", detail: "permission request" }
+const turnFinishedFor = (
+  runnerId: RunnerId,
+  stopReason: AcpStopReason,
+): CanonicalEvent => {
+  const detail = STOP_ERRORS[stopReason]
+  return detail === undefined
+    ? { type: "turn-finished", runnerId }
+    : { type: "turn-finished", runnerId, error: { detail } }
 }
 
-const elicitationToQuestion = (elicitation: unknown): QuestionPrompt => {
-  if (typeof elicitation === "object" && elicitation !== null) {
-    const e = elicitation as Record<string, unknown>
-    const message = typeof e.message === "string" ? e.message : "Question"
-    return {
-      questions: [
-        {
-          question: message,
-          header: "Elicitation",
-          options: [],
-          multiSelect: false,
-          allowFreeText: true,
-        },
-      ],
-    }
-  }
-  return {
-    questions: [
-      {
-        question: "Input requested",
-        header: "Elicitation",
-        options: [],
-        multiSelect: false,
-        allowFreeText: true,
-      },
-    ],
-  }
+/**
+ * The approval card's target, read from the tool call the agent wants permission for. ACP tags a
+ * tool call with a `kind`; command/file are the two Spectrum renders distinctly.
+ */
+const permissionTargetFor = (req: AcpPermissionRequest): ApprovalTarget => {
+  const tc = req.toolCall as Record<string, unknown>
+  const kind = typeof tc.kind === "string" ? tc.kind : undefined
+  const detail = typeof tc.title === "string" ? tc.title : (kind ?? "tool call")
+  if (kind === "execute") return { kind: "command", detail }
+  if (kind === "edit" || kind === "delete" || kind === "move")
+    return { kind: "file", detail }
+  return { kind: "tool", detail }
 }
-
-const answerToElicitationResult = (_answer: QuestionAnswer): unknown => {
-  // ACP elicitation result is opaque; we pass back the first freeText selection if present.
-  return { result: "accept" }
-}
-
-const toAcpPromptBlocks = (text: string): AcpPromptBlock[] => [
-  { type: "text", text },
-]
 
 export const createAcpAdapter = (deps: AcpAdapterDeps): DriverAdapter => {
   const adapter: DriverAdapter = {
-    ...(deps.supportedModes !== undefined
-      ? { supportedModes: deps.supportedModes }
-      : {}),
-
     async start(
       input: AgentStartInput,
       ctx: AdapterCtx,
@@ -118,116 +89,188 @@ export const createAcpAdapter = (deps: AcpAdapterDeps): DriverAdapter => {
       })
       const client = connection.client
 
-      await client.initialize()
+      const init = await client.initialize()
+      const session =
+        input.resume !== undefined
+          ? await client.sessionLoad(input.resume, input.cwd)
+          : await client.sessionNew(input.cwd)
 
-      let sessionId: string
-      if (input.resume !== undefined) {
-        sessionId = await client.sessionLoad(input.resume)
-      } else {
-        sessionId = await client.sessionNew()
-      }
+      ctx.reportResumeToken?.(session.sessionId)
 
-      ctx.reportResumeToken?.(sessionId)
-
-      // Re-emit root runner-started (the runtime already emitted one up front; the reducer is idempotent).
+      const capabilities = init.promptCapabilities
+      // An agent may advertise its modes EITHER via `session/new`'s modes field or as a
+      // `category: "mode"` config option (opencode does the latter, leaving `modes` empty). Read
+      // both, and remember which one to drive so `setMode` uses the matching method.
+      const modeOption = pickModeOption(session.configOptions)
+      const modeIds =
+        session.availableModeIds.length > 0
+          ? session.availableModeIds
+          : (modeOption?.values.map((v) => v.id) ?? [])
+      const useSetMode = session.availableModeIds.length > 0
+      const supportedModes = supportedModesFrom(modeIds)
+      // Re-emit the root runner-started, now carrying what THIS agent negotiated. The runtime
+      // emitted a capability-less one before `start`; the reducer merges field-by-field
+      // (`event.x ?? existing?.x`), so this re-emit is how per-agent capabilities reach the UI
+      // without needing a driver instance per harness.
       const rootStarted: CanonicalEvent = {
         type: "runner-started",
         runnerId: ctx.rootRunnerId,
+        ...(supportedModes.length > 0
+          ? { supportedModes: [...supportedModes] }
+          : {}),
+        supportedAttachments: {
+          image: capabilities.image,
+          // ACP carries non-image attachments as embedded resources; one capability gates both.
+          pdf: capabilities.embeddedContext,
+          binary: capabilities.embeddedContext,
+        },
       }
       ctx.emit(rootStarted)
+
+      /**
+       * Apply a Spectrum permission mode through whichever surface this agent advertised.
+       * Resolves once the agent has ACCEPTED it — or declined it, because a mode the agent will
+       * not take must never strand the turn.
+       */
+      const applyMode = async (mode: PermissionMode): Promise<void> => {
+        const modeId = pickAcpModeId(mode, modeIds)
+        if (modeId === undefined) return
+        try {
+          if (useSetMode) {
+            await client.sessionSetMode(session.sessionId, modeId)
+            return
+          }
+          if (modeOption !== undefined)
+            await client.sessionSetConfigOption(
+              session.sessionId,
+              modeOption.id,
+              modeId,
+            )
+        } catch {
+          /* the agent declined the mode; the turn still goes ahead */
+        }
+      }
+
+      // Apply the run's permission mode UP FRONT rather than inheriting the agent's default, and
+      // AWAIT it before the first prompt. `claude-agent-acp` opens a session in
+      // `bypassPermissions` — every tool call auto-approved and the permission callback never
+      // consulted — and set_mode is a REQUEST, so firing it without awaiting let the prompt
+      // overtake it and the whole first turn ran wide open (observed live). Absent an explicit
+      // mode, "manual" is Spectrum's default, as it was for the retired bespoke drivers.
+      await applyMode(input.permissionMode ?? "manual")
 
       const mapState: AcpMapState = {
         rootRunnerId: ctx.rootRunnerId,
         newRunnerId: ctx.newRunnerId,
         startedToolCalls: new Set<string>(),
-        planCounter: 0,
       }
 
-      // Subscribe to session/update notifications → mapAcpUpdate → ctx.emit.
       client.onSessionUpdate((notif: AcpSessionUpdateNotification) => {
-        for (const event of mapAcpUpdate(notif, mapState)) {
-          ctx.emit(event)
-        }
+        for (const event of mapAcpUpdate(notif, mapState)) ctx.emit(event)
       })
 
-      // Bridge permission requests: agent -> ctx.requestApproval -> reply.
-      client.onPermissionRequest(async (req: unknown) => {
-        const target = permissionTargetFor(req)
-        await ctx.requestApproval(ctx.rootRunnerId, target)
-        // The reply is handled by the ACP client implementation (the fake/real client correlates
-        // the response by request id). We emit approval-resolved via the runtime bridge.
-      })
-
-      // Bridge elicitation requests: agent → ctx.requestQuestion → reply.
-      client.onElicitationCreate(
-        async (req: {
-          sessionId: string
-          requestId: string | number
-          elicitation: unknown
-        }) => {
-          const prompt = elicitationToQuestion(req.elicitation)
-          const answer = await ctx.requestQuestion(ctx.rootRunnerId, prompt)
-          answerToElicitationResult(answer)
-        },
-      )
-
-      // Send the initial prompt if provided.
-      let inFlight: Promise<unknown> | undefined
-      if (input.initialPrompt !== undefined && input.initialPrompt !== "") {
-        inFlight = client.sessionPrompt(
-          sessionId,
-          toAcpPromptBlocks(input.initialPrompt),
+      // session/request_permission is a REQUEST — the agent blocks until we answer. Resolve with
+      // the option id matching the user's decision, or cancel when the agent offered none that fits
+      // (answering with a wrong-polarity option would be worse than declining to choose).
+      client.onPermissionRequest(async (req): Promise<AcpPermissionOutcome> => {
+        const decision = await ctx.requestApproval(
+          ctx.rootRunnerId,
+          permissionTargetFor(req),
         )
-        inFlight
-          .then(() => {
-            ctx.emit({ type: "turn-finished", runnerId: ctx.rootRunnerId })
+        const optionId = pickPermissionOptionId(decision, req.options)
+        return optionId === undefined
+          ? { outcome: "cancelled" }
+          : { outcome: "selected", optionId }
+      })
+
+      client.onElicitationCreate(async (elicitation) => {
+        const answer = await ctx.requestQuestion(
+          ctx.rootRunnerId,
+          elicitationToQuestion(elicitation),
+        )
+        return answerToElicitationResponse(
+          answer,
+          firstPropertyName(elicitation),
+        )
+      })
+
+      /** Fire one prompt turn. Fire-and-forget per the `AdapterHandle.send(): void` contract. */
+      const runPrompt = (
+        text: string,
+        attachments?: readonly AttachmentRefWithBytes[],
+      ): void => {
+        const blocks = toAcpPromptBlocks({
+          text,
+          ...(attachments !== undefined ? { attachments } : {}),
+          capabilities,
+        })
+        if (blocks.length === 0) return
+        client
+          .sessionPrompt(session.sessionId, blocks)
+          .then((stopReason) => {
+            ctx.emit(turnFinishedFor(ctx.rootRunnerId, stopReason))
           })
-          .catch((err) => {
+          .catch((error: unknown) => {
             ctx.emit({
               type: "turn-finished",
               runnerId: ctx.rootRunnerId,
-              error: { detail: String(err) },
+              error: { detail: String(error) },
             })
           })
       }
+
+      if (input.initialPrompt !== undefined && input.initialPrompt !== "")
+        runPrompt(input.initialPrompt)
 
       const handle: AdapterHandle = {
         send(turn: {
           readonly text: string
-          readonly attachments?: readonly unknown[]
+          readonly attachments?: readonly AttachmentRefWithBytes[]
         }): void {
-          inFlight = client.sessionPrompt(
-            sessionId,
-            toAcpPromptBlocks(turn.text),
-          )
-          inFlight
-            .then(() => {
-              ctx.emit({ type: "turn-finished", runnerId: ctx.rootRunnerId })
-            })
-            .catch((err) => {
-              ctx.emit({
-                type: "turn-finished",
-                runnerId: ctx.rootRunnerId,
-                error: { detail: String(err) },
-              })
-            })
+          runPrompt(turn.text, turn.attachments)
         },
 
         interrupt(): void {
-          client.sessionCancel(sessionId)
+          void client.sessionCancel(session.sessionId).catch(() => {})
         },
 
         close(): void {
-          try {
-            client.sessionClose(sessionId)
-          } catch {
-            /* idempotent */
-          }
+          void client.sessionClose(session.sessionId).catch(() => {})
           connection.close()
         },
 
         setMode(mode: PermissionMode): void {
-          client.sessionSetMode(sessionId, toAcpMode(mode))
+          // Agent-defined mode ids: a no-op when this agent cannot honor the mode. The UI only
+          // offers modes from `supportedModes`, so this guard is defense in depth.
+          void applyMode(mode)
+        },
+
+        setModel(modelId: ModelId | null): void {
+          // ACP v1 has no live model switch of its own; agents expose it as a session config
+          // option. No-op when this agent does not (documented regression, not a silent failure:
+          // the UI keeps the user's pick and the next fresh session honors it via env).
+          if (modelId === null) return
+          const choice = pickModelOption(session.configOptions, String(modelId))
+          if (choice !== undefined)
+            void client
+              .sessionSetConfigOption(
+                session.sessionId,
+                choice.configId,
+                choice.valueId,
+              )
+              .catch(() => {})
+        },
+
+        setThinkingEffort(effort: ThinkingEffort): void {
+          const choice = pickEffortOption(session.configOptions, effort)
+          if (choice !== undefined)
+            void client
+              .sessionSetConfigOption(
+                session.sessionId,
+                choice.configId,
+                choice.valueId,
+              )
+              .catch(() => {})
         },
       }
 

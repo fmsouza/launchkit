@@ -209,6 +209,78 @@ describe("launchHarness", () => {
     expect(r.value.args).toEqual(["acp"])
   })
 
+  it("resolves the acp command override instead of the harness command", () => {
+    const shimmed: HarnessDefinition = {
+      ...claude,
+      acp: { command: "claude-code-acp", args: [], native: false },
+    }
+    const resolver = createFakeCommandResolver({
+      claude: "/usr/local/bin/claude",
+      "claude-code-acp": "/usr/local/bin/claude-code-acp",
+    })
+    const r = resolveHarnessLaunch({ resolver })({
+      harness: shimmed,
+      route: proxiedRoute,
+      mode: "acp",
+    })
+    expect(isOk(r)).toBe(true)
+    if (!isOk(r)) return
+    expect(r.value.command).toBe("/usr/local/bin/claude-code-acp")
+    expect(r.value.args).toEqual([])
+  })
+
+  it("resolves the harness command in acp mode when there is no override", () => {
+    const nativeAcp: HarnessDefinition = {
+      ...claude,
+      command: "opencode",
+      acp: { args: ["acp"], native: true },
+    }
+    const resolver = createFakeCommandResolver({
+      opencode: "/usr/local/bin/opencode",
+    })
+    const r = resolveHarnessLaunch({ resolver })({
+      harness: nativeAcp,
+      route: proxiedRoute,
+      mode: "acp",
+    })
+    expect(isOk(r)).toBe(true)
+    if (!isOk(r)) return
+    expect(r.value.command).toBe("/usr/local/bin/opencode")
+  })
+
+  it("resolves the harness command in native mode even when an acp override exists", () => {
+    const shimmed: HarnessDefinition = {
+      ...claude,
+      acp: { command: "claude-code-acp", args: [], native: false },
+    }
+    const resolver = createFakeCommandResolver({
+      claude: "/usr/local/bin/claude",
+    })
+    const r = resolveHarnessLaunch({ resolver })({
+      harness: shimmed,
+      route: proxiedRoute,
+    })
+    expect(isOk(r)).toBe(true)
+    if (!isOk(r)) return
+    expect(r.value.command).toBe("/usr/local/bin/claude")
+  })
+
+  it("returns the resolver error when the acp shim binary is not installed", () => {
+    const shimmed: HarnessDefinition = {
+      ...claude,
+      acp: { command: "claude-code-acp", args: [], native: false },
+    }
+    const resolver = createFakeCommandResolver({
+      claude: "/usr/local/bin/claude",
+    })
+    const r = resolveHarnessLaunch({ resolver })({
+      harness: shimmed,
+      route: proxiedRoute,
+      mode: "acp",
+    })
+    expect(isOk(r)).toBe(false)
+  })
+
   it("returns an error when mode is acp but the harness has no acp config", () => {
     const resolver = createFakeCommandResolver({
       claude: "/usr/local/bin/claude",

@@ -215,6 +215,28 @@ the GUI **Models** page. Harnesses request an alias, and the proxy routes it to 
 configured provider/model. The "default" option bypasses the proxy entirely and launches
 the harness with its own native credentials/model.
 
+## Agents (ACP)
+
+Spectrum drives every coding agent over the **Agent Client Protocol** (ACP) — one shared
+client instead of a bespoke integration per agent.
+
+Most agents speak ACP themselves and need nothing extra:
+
+| Agent | ACP entry point | Extra install |
+|---|---|---|
+| OpenCode | `opencode acp` | — |
+| OpenClaw | `openclaw acp` | — |
+| Gemini CLI | `gemini --acp` | — |
+| Claude Code | `claude-agent-acp` | `npm i -g @agentclientprotocol/claude-agent-acp` |
+| Codex | `codex-acp` | `npm i -g @agentclientprotocol/codex-acp` |
+
+Claude Code and Codex have no ACP mode of their own, so they run through a small adapter
+binary — install the one you need or Spectrum will report that the command is not on your
+PATH. (The CLI's `spectrum launch` still runs the harness directly and needs none of this.)
+
+Adding another ACP-compatible agent is a config entry, not a code change — see
+[`docs/01-conventions/acp-architecture.md`](docs/01-conventions/acp-architecture.md).
+
 ## Development
 
 Run the full gate from the repo root before committing:

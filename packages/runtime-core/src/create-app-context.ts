@@ -25,6 +25,7 @@ import { ThinkingEffortSchema } from "@spectrum/agent-events"
 import { defaultConfig } from "@spectrum/config"
 import {
   type LaunchParams,
+  builtinHarnesses,
   createInMemoryHarnessFileSource,
   resolveHarnessLaunch,
 } from "@spectrum/harnesses"
@@ -418,26 +419,23 @@ export const createAppContext = (
     spawner: deps.createBunProcessSpawner(),
     logger: log.child("harness"),
   })
-  // Per-harness driver mode: "native" (bespoke driver) or "acp" (shared ACP driver).
-  // All four supported harnesses (claude, codex, opencode, openclaw) are routed to the
-  // ACP driver. The bespoke native drivers remain registered as fallbacks but are no
-  // longer the production path. Live binary verification per harness:
-  //   - openclaw: #119 (openclaw acp)
-  //   - opencode: #120 (opencode acp)
-  //   - codex: #121 (codex acp — via Zed's codex-acp adapter)
-  //   - claude: #122 (claude --acp — via Zed's claude-agent-acp adapter)
-  const ACP_HARNESSES: ReadonlySet<string> = new Set([
-    "claude",
-    "codex",
-    "openclaw",
-    "opencode",
-  ])
+  // Per-harness driver mode: "native" (the CLI passthrough spawn) or "acp" (the shared ACP driver).
+  // A harness is ACP-routed exactly when its definition declares an `acp` launch config (#116) —
+  // derived here rather than hardcoded, so adding a new ACP agent stays config-only. User-JSON
+  // harnesses are not covered: this set is built once at startup while the harness registry
+  // hot-reloads from disk.
+  const acpHarnessIds: ReadonlySet<string> = new Set(
+    builtinHarnesses
+      .filter((h) => h.acp !== undefined)
+      .map((h) => String(h.id)),
+  )
   const resolveDriverMode = (harnessId: HarnessId): "native" | "acp" =>
-    ACP_HARNESSES.has(String(harnessId)) ? "acp" : "native"
+    acpHarnessIds.has(String(harnessId)) ? "acp" : "native"
 
   // `resolveLaunch` (resolve command + render proxy env, then hand to `runner.launch`).
-  // For ACP-mode harnesses, passes `mode: "acp"` so the harness's `acp.args` are used
-  // instead of `argsTemplate` (the ACP agent still reaches the LLM through the proxy via env).
+  // For ACP-mode harnesses, passes `mode: "acp"` so the harness's ACP entry point (its own binary
+  // plus `acp.args`, or the shim named by `acp.command`) is resolved instead of `argsTemplate`.
+  // The ACP agent still reaches the LLM through the proxy via the same rendered env.
   const resolveLaunchRaw = resolveHarnessLaunch({ resolver })
   const resolveLaunch = (params: LaunchParams) =>
     resolveLaunchRaw({
@@ -446,6 +444,12 @@ export const createAppContext = (
         ? { mode: "acp" as const }
         : {}),
     })
+
+  // Env-only resolution: renders the proxy env WITHOUT resolving an ACP entry point. Both modes
+  // render `envTemplate` identically — only the command/args differ — so callers that just want
+  // env (the in-session model switch) must not fail because an ACP shim binary is missing.
+  const resolveLaunchEnvOnly = (params: LaunchParams) =>
+    resolveLaunchRaw(params)
 
   // proxy provider layer: factory (secrets + lazy SDK loader) + real streamText gateway
   const factory = deps.createProviderFactory({
@@ -473,16 +477,16 @@ export const createAppContext = (
     clock: deps.createSystemClock(),
   })
 
-  // Native drivers: `claude`, `codex`, `opencode`, `openclaw` all launch native via their drivers
-  // (openclaw is UNVERIFIED — no binary). The demo FakeDriver stays dev-gated
-  // (SPECTRUM_DEMO_HARNESS=1). Each driver injects its own effects so the logic stays unit-testable;
-  // the runtime owns the sync↔async bridge + lifecycle.
+  // Native run drivers: every harness that declares an `acp` launch config runs through the one
+  // shared ACP driver (#114). The demo FakeDriver stays dev-gated (SPECTRUM_DEMO_HARNESS=1). The
+  // driver injects its own effects so the logic stays unit-testable; the runtime owns the
+  // sync↔async bridge + lifecycle.
   //
-  // Each per-harness driver receives the same `setResumeId` sink: when the adapter reports its
-  // harness-native session id (Claude's `session_id`, Codex's `threadId`) via
-  // `ctx.reportResumeToken`, the runtime binds the current Spectrum `sessionId` and calls this
-  // sink — which persists via the SessionStore. A failure is logged but never crashes the run:
-  // the session simply loses the ability to true-resume (manager still emits a fresh-restart toast).
+  // The driver receives the `setResumeId` sink: when the adapter reports its harness-native session
+  // id (the ACP `sessionId`) via `ctx.reportResumeToken`, the runtime binds the current Spectrum
+  // `sessionId` and calls this sink — which persists via the SessionStore. A failure is logged but
+  // never crashes the run: the session simply loses the ability to true-resume (manager still emits
+  // a fresh-restart toast).
   const driverIdGen = deps.createCryptoIdGen()
   const setResumeIdLog = log.child("runner")
   const setResumeId: (id: SessionId, token: string) => void = (id, token) => {
@@ -494,23 +498,22 @@ export const createAppContext = (
       })
   }
 
-  // The ACP (Agent Client Protocol) driver — the single driver for all supported harnesses.
-  // All four harnesses (claude, codex, opencode, openclaw) route to this driver via
-  // resolveDriverMode. The bespoke native drivers have been retired (#123); the driver
-  // registry now holds only the dev-only demo FakeDriver.
+  // The ACP (Agent Client Protocol) driver — the single driver for every ACP-capable harness. One
+  // instance serves all of them: the harness-specific part is the spawn config resolved by
+  // `resolveLaunch({ mode: "acp" })`, not the driver. It is registered under each ACP harness id so
+  // `driverRegistry.isNative` (which gates the GUI + tray launch paths) answers truthfully.
   const acpDriver = deps.createAcpDriver({ idGen: driverIdGen, setResumeId })
 
   const driverRegistry: DriverRegistry = createDriverRegistry({
+    ...Object.fromEntries([...acpHarnessIds].map((id) => [id, acpDriver])),
     ...(deps.demoHarnessEnabled
       ? { [DEMO_HARNESS_ID]: deps.createFakeDriver({ script: demoScript }) }
       : {}),
   })
 
-  // One AgentDriver for the RunManager: route start() to the ACP driver (or the demo driver).
+  // One AgentDriver for the RunManager: every launchable harness resolves through the registry.
   const routingDriver: AgentDriver = {
     start: (input) => {
-      const mode = resolveDriverMode(input.harnessId)
-      if (mode === "acp") return acpDriver.start(input)
       const driver = driverRegistry.get(input.harnessId)
       if (driver === undefined)
         return err({
@@ -546,7 +549,7 @@ export const createAppContext = (
     )
     const wireModel =
       routeModel !== undefined ? wireModelFor(routeModel) : undefined
-    const resolved = resolveLaunch({
+    const resolved = resolveLaunchEnvOnly({
       harness,
       route: {
         kind: "proxied",

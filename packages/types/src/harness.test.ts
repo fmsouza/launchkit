@@ -63,16 +63,33 @@ describe("HarnessDefinitionSchema", () => {
     ).toBe(false)
   })
 
-  it("rejects an acp config with an empty args array", () => {
+  it("accepts a harness with no acp config (optional)", () => {
+    expect(HarnessDefinitionSchema.safeParse(claude).success).toBe(true)
+  })
+
+  it("parses an acp config with a command override", () => {
+    const parsed = HarnessDefinitionSchema.parse({
+      ...claude,
+      acp: { command: "claude-code-acp", args: [], native: false },
+    })
+    expect(parsed.acp?.command).toBe("claude-code-acp")
+  })
+
+  it("accepts an empty args array when the acp config overrides the command", () => {
     expect(
       HarnessDefinitionSchema.safeParse({
         ...claude,
-        acp: { args: [], native: true },
+        acp: { command: "claude-code-acp", args: [], native: false },
       }).success,
-    ).toBe(false)
+    ).toBe(true)
   })
 
-  it("accepts a harness with no acp config (optional)", () => {
-    expect(HarnessDefinitionSchema.safeParse(claude).success).toBe(true)
+  it("rejects an acp config with a blank command override", () => {
+    expect(
+      HarnessDefinitionSchema.safeParse({
+        ...claude,
+        acp: { command: "", args: [], native: false },
+      }).success,
+    ).toBe(false)
   })
 })

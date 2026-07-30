@@ -1,18 +1,26 @@
 import { describe, expect, it } from "bun:test"
 import { HarnessDefinitionSchema, HarnessIdSchema } from "@spectrum/types"
 import { ALLOWED_TOKENS } from "../tokens"
-import { builtinHarnesses, claude, codex, openclaw, opencode } from "./index"
+import {
+  builtinHarnesses,
+  claude,
+  codex,
+  gemini,
+  openclaw,
+  opencode,
+} from "./index"
 
 const tokensIn = (s: string): readonly string[] =>
   [...s.matchAll(/\{\{(\w+)\}\}/g)].map((m) => m[1] ?? "")
 
 describe("builtinHarnesses", () => {
-  it("lists all four built-ins in a stable order when imported", () => {
+  it("lists every built-in in a stable order when imported", () => {
     expect(builtinHarnesses.map((h) => h.id)).toEqual([
       HarnessIdSchema.parse("claude"),
       HarnessIdSchema.parse("codex"),
       HarnessIdSchema.parse("opencode"),
       HarnessIdSchema.parse("openclaw"),
+      HarnessIdSchema.parse("gemini"),
     ])
   })
 
@@ -74,8 +82,11 @@ describe("builtinHarnesses", () => {
 
   it("wires codex to route through the proxy via -c provider args (Responses API) + the proxy key", () => {
     expect(codex.apiFormat).toBe("openai")
-    // codex ignores OPENAI_BASE_URL, so it gets a `-c` provider override instead; only the key is env.
-    expect(codex.envTemplate).toEqual({ OPENAI_API_KEY: "{{proxyKey}}" })
+    // codex ignores OPENAI_BASE_URL, so the NATIVE path gets a `-c` provider override; the key is
+    // env. (ACP mode cannot pass args, so it routes via MODEL_PROVIDER/CODEX_CONFIG — asserted
+    // separately below. Both are inert on the path that does not read them.)
+    expect(codex.envTemplate.OPENAI_API_KEY).toBe("{{proxyKey}}")
+    expect(codex.envTemplate.OPENAI_BASE_URL).toBeUndefined()
     const args = (codex.argsTemplate ?? []).join(" ")
     expect(args).toContain("model_provider=spectrum")
     expect(args).toContain('base_url="{{proxyUrl}}/v1"')
@@ -104,22 +115,81 @@ describe("openclaw (gateway, re-architected)", () => {
 })
 
 describe("builtin ACP configs", () => {
+  it("claude reaches ACP through the claude-agent-acp adapter binary", () => {
+    expect(claude.acp?.native).toBe(false)
+    expect(claude.acp?.command).toBe("claude-agent-acp")
+  })
+
+  it("codex renders the ACP-mode proxy routing env", () => {
+    // In ACP mode `argsTemplate` (the `-c model_providers.spectrum.*` overrides that are codex's
+    // ONLY proxy-routing mechanism) is not passed. The codex-acp adapter reads CODEX_CONFIG +
+    // MODEL_PROVIDER instead, so the same routing has to ride in the env or Codex silently falls
+    // back to the user's own ChatGPT login. Verified live against codex-acp.
+    expect(codex.envTemplate.MODEL_PROVIDER).toBe("spectrum")
+    expect(codex.envTemplate.CODEX_CONFIG).toContain("{{proxyUrl}}/v1")
+    // Deliberately NOT pinned to a Spectrum route id: Codex prints a "model metadata not found"
+    // warning into the conversation for one. The session key carries the route instead.
+    expect(codex.envTemplate.CODEX_CONFIG).not.toContain("{{model}}")
+    expect(codex.envTemplate.OPENAI_API_KEY).toBe("{{proxyKey}}")
+  })
+
+  it("codex's ACP config env parses as JSON once rendered", () => {
+    const rendered = (codex.envTemplate.CODEX_CONFIG ?? "").replaceAll(
+      "{{proxyUrl}}",
+      "http://127.0.0.1:4000",
+    )
+    expect(() => JSON.parse(rendered) as unknown).not.toThrow()
+  })
+
+  it("codex reaches ACP through the codex-acp shim binary", () => {
+    expect(codex.acp?.native).toBe(false)
+    expect(codex.acp?.command).toBe("codex-acp")
+  })
+
+  it("opencode reaches ACP through its own acp subcommand", () => {
+    expect(opencode.acp?.native).toBe(true)
+    expect(opencode.acp?.command).toBeUndefined()
+    expect(opencode.acp?.args).toEqual(["acp"])
+  })
+
+  it("ships gemini as a builtin ACP harness", () => {
+    expect(builtinHarnesses.map((h) => String(h.id))).toContain("gemini")
+    expect(gemini.acp?.native).toBe(true)
+    expect(gemini.acp?.args).toEqual(["--acp"])
+  })
+
+  it("openclaw renders no retired gateway env", () => {
+    // OPENCLAW_GATEWAY_URL / _AGENT_ID were read by the deleted bespoke gateway driver. In ACP
+    // mode they are inert noise, and they crowded out any real env the harness might need.
+    expect(openclaw.envTemplate.OPENCLAW_GATEWAY_URL).toBeUndefined()
+    expect(openclaw.envTemplate.OPENCLAW_AGENT_ID).toBeUndefined()
+  })
+
+  it("openclaw's description does not advertise the retired native driver", () => {
+    expect(openclaw.description ?? "").not.toContain("native driver")
+    expect(openclaw.description ?? "").not.toContain("UNVERIFIED")
+  })
+
+  it("openclaw reaches ACP through its own acp subcommand", () => {
+    expect(openclaw.acp?.native).toBe(true)
+    expect(openclaw.acp?.command).toBeUndefined()
+    expect(openclaw.acp?.args).toEqual(["acp"])
+  })
+
   it("every builtin declares an acp config", () => {
     for (const h of builtinHarnesses) {
       expect(h.acp).toBeDefined()
-      expect(h.acp?.args.length).toBeGreaterThanOrEqual(1)
+      expect(Array.isArray(h.acp?.args)).toBe(true)
       expect(typeof h.acp?.native).toBe("boolean")
     }
   })
 
-  it("claude declares a non-native acp config (via Zed adapter shim)", () => {
-    expect(claude.acp?.native).toBe(false)
-    expect(claude.acp?.args.length).toBeGreaterThanOrEqual(1)
-  })
-
-  it("codex declares a non-native acp config (via Zed adapter shim)", () => {
-    expect(codex.acp?.native).toBe(false)
-    expect(codex.acp?.args.length).toBeGreaterThanOrEqual(1)
+  it("every non-native builtin names the shim binary that speaks ACP", () => {
+    // A non-native harness reaches ACP through a SEPARATE binary; without a command override the
+    // launch would spawn the harness CLI itself, which has no ACP mode.
+    for (const h of builtinHarnesses) {
+      if (h.acp?.native === false) expect(h.acp.command).toBeDefined()
+    }
   })
 
   it("opencode declares a native acp config", () => {

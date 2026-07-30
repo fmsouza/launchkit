@@ -4,30 +4,34 @@ import type { SessionId } from "@spectrum/types"
 import type { IdGen } from "@spectrum/utils"
 import type { AcpConnect } from "./acp-client"
 import { createAcpAdapter } from "./adapter"
+import { type AcpSpawn, createRealAcpConnect } from "./real-connect"
 
 export interface AcpDriverDeps {
   readonly idGen: IdGen
+  /** Override the transport in tests; production spawns the agent over stdio. */
   readonly connect?: AcpConnect
+  /**
+   * Parent env merged UNDER the per-run env, so the spawned agent inherits PATH/HOME. Defaults to
+   * `process.env`. The packaged GUI inherits a minimal launchd PATH, so the composition root passes
+   * its enriched env here rather than relying on the default.
+   */
+  readonly baseEnv?: () => Record<string, string | undefined>
+  /** Override the process spawn in tests; production uses `Bun.spawn`. */
+  readonly spawn?: AcpSpawn
   readonly scheduler?: (fn: () => void) => void
   readonly setResumeId?: (sessionId: SessionId, resumeId: string) => void
 }
 
-/**
- * `realAcpConnect` — the real transport seam. Lazy-loads `@agentclientprotocol/sdk`,
- * spawns the agent binary with stdin/stdout pipes, and wires the SDK's stdio transport.
- *
- * NOTE: the real SDK integration is verified per-harness in tickets #119-#122. The adapter
- * is tested with an injected fake `AcpConnect`; this real connector is the production path.
- */
-const realAcpConnect: AcpConnect = async () => {
-  throw new Error(
-    "acp transport not available: @agentclientprotocol/sdk integration pending (see tickets #119-#122)",
-  )
-}
-
 export const createAcpDriver = (deps: AcpDriverDeps): AgentDriver =>
   createDriver({
-    adapter: createAcpAdapter({ connect: deps.connect ?? realAcpConnect }),
+    adapter: createAcpAdapter({
+      connect:
+        deps.connect ??
+        createRealAcpConnect({
+          ...(deps.baseEnv !== undefined ? { baseEnv: deps.baseEnv } : {}),
+          ...(deps.spawn !== undefined ? { spawn: deps.spawn } : {}),
+        }),
+    }),
     idGen: deps.idGen,
     ...(deps.scheduler !== undefined ? { scheduler: deps.scheduler } : {}),
     ...(deps.setResumeId !== undefined

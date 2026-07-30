@@ -36,6 +36,14 @@ const ToolCallStatusSchema = z.enum([
 const PlanPrioritySchema = z.enum(["high", "medium", "low"]).optional()
 const PlanStatusSchema = z.enum(["pending", "in_progress", "completed"])
 
+const PlanEntryShape = z
+  .object({
+    content: z.string(),
+    priority: PlanPrioritySchema,
+    status: PlanStatusSchema,
+  })
+  .passthrough()
+
 export const AcpSessionUpdateSchema = z.discriminatedUnion("sessionUpdate", [
   // agent_message_chunk — streamed assistant text keyed by messageId.
   z
@@ -46,13 +54,19 @@ export const AcpSessionUpdateSchema = z.discriminatedUnion("sessionUpdate", [
     })
     .passthrough(),
 
-  // thought — reasoning/thinking chunk keyed by messageId.
+  // agent_thought_chunk — reasoning/thinking chunk keyed by messageId.
   z
     .object({
-      sessionUpdate: z.literal("thought"),
+      sessionUpdate: z.literal("agent_thought_chunk"),
       messageId: z.string().optional(),
       content: TextContentSchema.optional(),
     })
+    .passthrough(),
+
+  // user_message_chunk — the agent echoing the user's own turn back. The runtime already echoed
+  // it locally before handing the turn to the adapter, so mapping it would duplicate the bubble.
+  z
+    .object({ sessionUpdate: z.literal("user_message_chunk") })
     .passthrough(),
 
   // tool_call — a new tool call announced with a status (default pending).
@@ -84,18 +98,21 @@ export const AcpSessionUpdateSchema = z.discriminatedUnion("sessionUpdate", [
   z
     .object({
       sessionUpdate: z.literal("plan"),
-      entries: z
-        .array(
-          z
-            .object({
-              content: z.string(),
-              priority: PlanPrioritySchema,
-              status: PlanStatusSchema,
-            })
-            .passthrough(),
-        )
-        .min(1),
+      entries: z.array(PlanEntryShape).min(1),
     })
+    .passthrough(),
+
+  // plan_update — a revised plan. Same payload as `plan`; replaces the previous one.
+  z
+    .object({
+      sessionUpdate: z.literal("plan_update"),
+      entries: z.array(PlanEntryShape).min(1),
+    })
+    .passthrough(),
+
+  // plan_removed — the agent dropped its plan. Spectrum keeps the last plan card; nothing to emit.
+  z
+    .object({ sessionUpdate: z.literal("plan_removed") })
     .passthrough(),
 
   // usage_update — current session context + cumulative cost.
@@ -113,13 +130,22 @@ export const AcpSessionUpdateSchema = z.discriminatedUnion("sessionUpdate", [
     })
     .passthrough(),
 
-  // mode — the agent changed its mode from its side.
+  // current_mode_update — the agent changed its mode from its side (client->agent is set_mode).
   z
     .object({
-      sessionUpdate: z.literal("mode"),
-      mode: z.string().optional(),
+      sessionUpdate: z.literal("current_mode_update"),
+      currentModeId: z.string().optional(),
     })
     .passthrough(),
+
+  // Deliberately ignored v1 kinds: no Spectrum surface renders them yet. Declared (rather than
+  // left to the defensive default) so the union stays TOTAL over ACP v1 and a future kind is a
+  // visible type error rather than a silent drop.
+  z
+    .object({ sessionUpdate: z.literal("available_commands_update") })
+    .passthrough(),
+  z.object({ sessionUpdate: z.literal("config_option_update") }).passthrough(),
+  z.object({ sessionUpdate: z.literal("session_info_update") }).passthrough(),
 ])
 export type AcpSessionUpdate = z.infer<typeof AcpSessionUpdateSchema>
 
@@ -178,30 +204,94 @@ export const AcpElicitationSchema = z
   .passthrough()
 export type AcpElicitation = z.infer<typeof AcpElicitationSchema>
 
-// ─── The injected transport port (mirrors OpenclawConnect / OpencodeConnect) ─
+/** What the agent said it accepts in a prompt — `initialize`'s `agentCapabilities.promptCapabilities`. */
+export interface AcpPromptCapabilities {
+  readonly image: boolean
+  readonly audio: boolean
+  readonly embeddedContext: boolean
+}
+
+/** How the client answers an `elicitation/create` request. */
+export type AcpElicitationResponse =
+  | { readonly action: "accept"; readonly content: Record<string, unknown> }
+  | { readonly action: "decline" }
+
+/** How the client answers a `session/request_permission` request. */
+export type AcpPermissionOutcome =
+  | { readonly outcome: "selected"; readonly optionId: string }
+  | { readonly outcome: "cancelled" }
+
+/** What `initialize` negotiated with the agent. */
+export interface AcpInitializeResult {
+  readonly promptCapabilities: AcpPromptCapabilities
+}
+
+/**
+ * One agent-advertised session config option (ACP `session/set_config_option`). The wire shape
+ * names a select's choices `options[].value`; they are normalized to `values[].id` here so the
+ * pure pickers read one shape. `category` is the agent's own classification
+ * ("model" | "model_config" | "thought_level" | "mode" | ...) and is the reliable way to find the
+ * model / reasoning-effort options without matching on display names.
+ */
+export interface AcpConfigOption {
+  readonly id: string
+  readonly name: string
+  readonly category?: string
+  readonly values: readonly { readonly id: string; readonly name: string }[]
+}
+
+/** What `session/new` (or `session/load`) told us about the live session. */
+export interface AcpSessionInfo {
+  readonly sessionId: string
+  /** Mode ids the agent advertised (`modes.availableModes`); agent-defined strings. */
+  readonly availableModeIds: readonly string[]
+  readonly currentModeId?: string
+  readonly configOptions: readonly AcpConfigOption[]
+}
+
+// ─── The injected transport port (mirrors the retired OpenclawConnect / OpencodeConnect) ─
 export interface AcpClient {
-  initialize(): Promise<void>
-  sessionNew(): Promise<string>
-  sessionLoad(sessionId: string): Promise<string>
+  initialize(): Promise<AcpInitializeResult>
+  sessionNew(cwd: string): Promise<AcpSessionInfo>
+  sessionLoad(sessionId: string, cwd: string): Promise<AcpSessionInfo>
   sessionPrompt(
     sessionId: string,
     prompt: readonly AcpPromptBlock[],
   ): Promise<AcpStopReason>
-  sessionCancel(sessionId: string): void
-  sessionSetMode(sessionId: string, mode: string): void
-  sessionClose(sessionId: string): void
+  /**
+   * The session mutators are AWAITABLE. `AdapterHandle` is fire-and-forget, so the handle calls
+   * them with `void` — but `start` must be able to wait for the permission mode to LAND before it
+   * sends the first prompt, or the turn runs in whatever mode the agent opened the session with.
+   */
+  sessionCancel(sessionId: string): Promise<void>
+  sessionSetMode(sessionId: string, modeId: string): Promise<void>
+  sessionSetConfigOption(
+    sessionId: string,
+    configId: string,
+    valueId: string,
+  ): Promise<void>
+  sessionClose(sessionId: string): Promise<void>
   onSessionUpdate(cb: (notif: AcpSessionUpdateNotification) => void): () => void
-  onPermissionRequest(cb: (req: AcpPermissionRequest) => void): () => void
+  /**
+   * `session/request_permission` is a REQUEST: the agent blocks until the client answers. The
+   * handler therefore RESOLVES to the outcome rather than returning an unsubscribe — the transport
+   * replies with whatever it resolves to.
+   */
+  onPermissionRequest(
+    cb: (req: AcpPermissionRequest) => Promise<AcpPermissionOutcome>,
+  ): void
+  /** `elicitation/create` is likewise a request; the handler resolves to the response. */
   onElicitationCreate(
-    cb: (req: {
-      sessionId: string
-      requestId: string | number
-      elicitation: AcpElicitation
-    }) => void,
-  ): () => void
+    cb: (req: AcpElicitation) => Promise<AcpElicitationResponse>,
+  ): void
   close(): void
 }
 
+/**
+ * The ACP `ContentBlock` subset Spectrum sends. An embedded `resource` carries EITHER inline
+ * `text` (a text resource) or base64 `blob` (a binary one) per the ACP `EmbeddedResourceResource`
+ * union — attachments always take the `blob` branch.
+ */
 export type AcpPromptBlock =
   | { readonly type: "text"; readonly text: string }
   | { readonly type: "image"; readonly mimeType: string; readonly data: string }
@@ -209,8 +299,9 @@ export type AcpPromptBlock =
       readonly type: "resource"
       readonly resource: {
         readonly uri: string
-        readonly text: string
         readonly mimeType?: string
+        readonly text?: string
+        readonly blob?: string
       }
     }
 
@@ -234,6 +325,4 @@ export interface AcpMapState {
   readonly newRunnerId: () => RunnerId
   /** Track tool calls that have already been "started" to avoid double-start on re-emitted updates. */
   readonly startedToolCalls: Set<string>
-  /** Counter for synthesizing planIds (ACP v1 has no plan id field). */
-  planCounter: number
 }

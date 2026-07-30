@@ -48,21 +48,25 @@ export const resolveHarnessLaunch =
     const { harness, route } = params
     const mode = params.mode ?? "native"
 
-    // Resolve + validate the command in BOTH modes (rejects relative / `..`).
-    const resolved = deps.resolver.resolve(harness.command)
-    if (isErr(resolved)) return resolved
-
-    // ACP mode: the harness is launched with its `acp.args` (the ACP-mode flags) + the rendered
-    // proxy env (the ACP agent still reaches the LLM through the Spectrum proxy via env vars).
-    // Direct (bypass) mode is meaningless for ACP — the proxy env is always rendered.
+    // ACP mode: the agent is launched with its `acp.args` + the rendered proxy env (the ACP agent
+    // still reaches the LLM through the Spectrum proxy via env vars). Direct (bypass) mode is
+    // meaningless for ACP — the proxy env is always rendered.
+    //
+    // The COMMAND may differ from the harness's own: Zed's adapter shims (`claude-code-acp`,
+    // `codex-acp`) are separate binaries, not flags on the harness CLI. Resolving the ACP command
+    // first also means a missing harness binary never blocks a shim launch.
     if (mode === "acp") {
       if (harness.acp === undefined) {
         return err({ kind: "no-acp-config", id: harness.id })
       }
+      const acpResolved = deps.resolver.resolve(
+        harness.acp.command ?? harness.command,
+      )
+      if (isErr(acpResolved)) return acpResolved
       if (route.kind === "direct") {
         // ACP with a direct route: no proxy env to render; pass through caller env + acp args.
         return ok({
-          command: resolved.value,
+          command: acpResolved.value,
           args: [...harness.acp.args],
           env: { ...(params.env ?? {}) },
         })
@@ -83,11 +87,15 @@ export const resolveHarnessLaunch =
         env[key] = rendered.value
       }
       return ok({
-        command: resolved.value,
+        command: acpResolved.value,
         args: [...harness.acp.args],
         env: { ...env, ...(params.env ?? {}) },
       })
     }
+
+    // Native mode: resolve + validate the harness's own command (rejects relative / `..`).
+    const resolved = deps.resolver.resolve(harness.command)
+    if (isErr(resolved)) return resolved
 
     // Direct (bypass) mode: do NOT render the proxy envTemplate. The harness uses its own
     // native credentials/model and the proxy is not involved. Only caller env is passed.
