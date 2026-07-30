@@ -21,6 +21,27 @@ describe("UsageSchema", () => {
     expect(parsed.cachedInputTokens).toBe(2)
   })
 
+  it("parses usage with context-used and context-size", () => {
+    const parsed = UsageSchema.parse({
+      inputTokens: 10,
+      outputTokens: 5,
+      contextUsed: 53000,
+      contextSize: 200000,
+    })
+    expect(parsed.contextUsed).toBe(53000)
+    expect(parsed.contextSize).toBe(200000)
+  })
+
+  it("rejects negative context-used", () => {
+    expect(
+      UsageSchema.safeParse({
+        inputTokens: 1,
+        outputTokens: 1,
+        contextUsed: -1,
+      }).success,
+    ).toBe(false)
+  })
+
   it("rejects negative token counts", () => {
     expect(
       UsageSchema.safeParse({ inputTokens: -1, outputTokens: 0 }).success,
@@ -261,6 +282,78 @@ describe("CanonicalEventSchema question events", () => {
       by: "user",
     }
     expect(CanonicalEventSchema.parse(ev)).toEqual(ev)
+  })
+
+  it("parses a plan-update event with entries", () => {
+    const ev: CanonicalEvent = {
+      type: "plan-update",
+      runnerId: "r1" as RunnerId,
+      planId: "plan-1",
+      entries: [
+        { content: "Check syntax", priority: "high", status: "pending" },
+        { content: "Fix types", priority: "medium", status: "in_progress" },
+        { content: "Done step", priority: "low", status: "completed" },
+      ],
+    }
+    const parsed = CanonicalEventSchema.parse(ev)
+    expect(parsed.type).toBe("plan-update")
+    if (parsed.type === "plan-update") {
+      expect(parsed.planId).toBe("plan-1")
+      expect(parsed.entries.length).toBe(3)
+    }
+  })
+
+  it("parses a plan-update entry without optional priority", () => {
+    const parsed = CanonicalEventSchema.safeParse({
+      type: "plan-update",
+      runnerId: "r1",
+      planId: "plan-1",
+      entries: [{ content: "Step", status: "pending" }],
+    })
+    expect(parsed.success).toBe(true)
+  })
+
+  it("rejects a plan-update with an empty entries array", () => {
+    expect(
+      CanonicalEventSchema.safeParse({
+        type: "plan-update",
+        runnerId: "r1",
+        planId: "plan-1",
+        entries: [],
+      }).success,
+    ).toBe(false)
+  })
+
+  it("rejects a plan-update missing planId", () => {
+    expect(
+      CanonicalEventSchema.safeParse({
+        type: "plan-update",
+        runnerId: "r1",
+        entries: [{ content: "x", status: "pending" }],
+      }).success,
+    ).toBe(false)
+  })
+
+  it("rejects a plan-update with a bad status", () => {
+    expect(
+      CanonicalEventSchema.safeParse({
+        type: "plan-update",
+        runnerId: "r1",
+        planId: "plan-1",
+        entries: [{ content: "x", status: "done" }],
+      }).success,
+    ).toBe(false)
+  })
+
+  it("rejects a plan-update with a bad priority", () => {
+    expect(
+      CanonicalEventSchema.safeParse({
+        type: "plan-update",
+        runnerId: "r1",
+        planId: "plan-1",
+        entries: [{ content: "x", priority: "urgent", status: "pending" }],
+      }).success,
+    ).toBe(false)
   })
 })
 
