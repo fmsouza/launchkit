@@ -14,4 +14,6 @@ export const opencode: HarnessDefinition = {
     OPENAI_MODEL: "{{model}}",
   },
   builtIn: true,
+  // ACP launch: OpenCode exposes ACP natively (listed on agentclientprotocol.com).
+  acp: { args: ["acp"], native: true },
 } satisfies HarnessDefinition
