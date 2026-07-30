@@ -10,6 +10,7 @@ import {
 } from "@spectrum/config"
 import { createDataAdmin } from "@spectrum/data-admin"
 import { createSqliteClient, runMigrations } from "@spectrum/db"
+import { createAcpDriver } from "@spectrum/driver-acp"
 import { createCodexDriver } from "@spectrum/driver-codex"
 import { createOpencodeDriver } from "@spectrum/driver-opencode"
 import {
@@ -90,6 +91,7 @@ export interface CreateAppContextDeps {
   readonly createFakeDriver: typeof createFakeDriver
   readonly createCodexDriver: typeof createCodexDriver
   readonly createOpencodeDriver: typeof createOpencodeDriver
+  readonly createAcpDriver: typeof createAcpDriver
   readonly createDataAdmin: typeof createDataAdmin
   /** Set in dev to register the demo FakeDriver harness; production leaves it unset. */
   readonly demoHarnessEnabled: boolean
@@ -178,6 +180,7 @@ export const realDeps: CreateAppContextDeps = {
   createFakeDriver,
   createCodexDriver,
   createOpencodeDriver,
+  createAcpDriver,
   createDataAdmin,
   demoHarnessEnabled: process.env.SPECTRUM_DEMO_HARNESS === "1",
   genProxyKey: defaultGenProxyKey,
