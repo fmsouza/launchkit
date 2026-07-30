@@ -1,12 +1,22 @@
 import { describe, expect, it } from "bun:test"
-import type { CanonicalEvent } from "@spectrum/agent-events"
+import type { AgentStartInput } from "@spectrum/agent-driver"
+import type {
+  ApprovalDecision,
+  CanonicalEvent,
+  QuestionAnswer,
+} from "@spectrum/agent-events"
 import type { AdapterCtx } from "@spectrum/driver-runtime"
 import type { RunnerId } from "@spectrum/types"
 import type {
   AcpClient,
+  AcpConfigOption,
   AcpConnect,
   AcpElicitation,
+  AcpElicitationResponse,
+  AcpPermissionOutcome,
   AcpPermissionRequest,
+  AcpPromptBlock,
+  AcpPromptCapabilities,
   AcpSessionUpdateNotification,
   AcpStopReason,
 } from "./acp-client"
@@ -14,65 +24,66 @@ import { createAcpAdapter } from "./adapter"
 
 const rid = (s: string): RunnerId => s as RunnerId
 
-/** A recording fake ACP client for unit-testing the adapter without a real agent spawn. */
+interface FakeClientOptions {
+  readonly promptCapabilities?: AcpPromptCapabilities
+  readonly availableModeIds?: readonly string[]
+  readonly configOptions?: readonly AcpConfigOption[]
+  readonly stopReason?: AcpStopReason
+  readonly promptRejects?: boolean
+}
+
+/** A recording fake ACP client — unit-tests the adapter with no real agent spawn. */
 interface FakeAcpClient extends AcpClient {
-  readonly _updateCb: {
-    value: ((notif: AcpSessionUpdateNotification) => void) | undefined
-  }
-  readonly _permissionCb: {
-    value: ((req: AcpPermissionRequest) => void) | undefined
-  }
-  readonly _elicitationCb: {
-    value:
-      | ((req: {
-          sessionId: string
-          requestId: string | number
-          elicitation: AcpElicitation
-        }) => void)
-      | undefined
-  }
-  readonly prompts: { sessionId: string; prompt: unknown[] }[]
+  permissionHandler:
+    | ((req: AcpPermissionRequest) => Promise<AcpPermissionOutcome>)
+    | undefined
+  elicitationHandler:
+    | ((req: AcpElicitation) => Promise<AcpElicitationResponse>)
+    | undefined
+  updateHandler: ((notif: AcpSessionUpdateNotification) => void) | undefined
+  readonly prompts: { sessionId: string; prompt: readonly AcpPromptBlock[] }[]
   readonly cancels: string[]
-  readonly modes: { sessionId: string; mode: string }[]
-  readonly closes: string[]
+  readonly modes: { sessionId: string; modeId: string }[]
+  readonly configCalls: {
+    sessionId: string
+    configId: string
+    valueId: string
+  }[]
+  readonly sessionCloseCalls: string[]
   readonly inits: number
   readonly sessionNews: number
   readonly sessionLoads: readonly string[]
-  sessionCloseCalls: string[]
+  /** Flush the microtasks the fire-and-forget prompt promise resolves through. */
+  settle(): Promise<void>
 }
 
-const createFakeClient = (): FakeAcpClient => {
-  const prompts: { sessionId: string; prompt: unknown[] }[] = []
+const createFakeClient = (options: FakeClientOptions = {}): FakeAcpClient => {
+  const prompts: { sessionId: string; prompt: readonly AcpPromptBlock[] }[] = []
   const cancels: string[] = []
-  const modes: { sessionId: string; mode: string }[] = []
-  const closes: string[] = []
-  const updateHolder: {
-    value: ((notif: AcpSessionUpdateNotification) => void) | undefined
-  } = { value: undefined }
-  const permissionHolder: {
-    value: ((req: AcpPermissionRequest) => void) | undefined
-  } = { value: undefined }
-  const elicitationHolder: {
-    value:
-      | ((req: {
-          sessionId: string
-          requestId: string | number
-          elicitation: AcpElicitation
-        }) => void)
-      | undefined
-  } = { value: undefined }
+  const modes: { sessionId: string; modeId: string }[] = []
+  const configCalls: {
+    sessionId: string
+    configId: string
+    valueId: string
+  }[] = []
+  const sessionCloseCalls: string[] = []
+  const sessionLoads: string[] = []
   let inits = 0
   let sessionNews = 0
-  const sessionLoads: string[] = []
-  const sessionCloseCalls: string[] = []
+  const sessionInfo = {
+    sessionId: "acp-sess-1",
+    availableModeIds: options.availableModeIds ?? [],
+    configOptions: options.configOptions ?? [],
+  }
   const client: FakeAcpClient = {
-    _updateCb: updateHolder,
-    _permissionCb: permissionHolder,
-    _elicitationCb: elicitationHolder,
+    permissionHandler: undefined,
+    elicitationHandler: undefined,
+    updateHandler: undefined,
     prompts,
     cancels,
     modes,
-    closes,
+    configCalls,
+    sessionCloseCalls,
     get inits() {
       return inits
     },
@@ -82,59 +93,67 @@ const createFakeClient = (): FakeAcpClient => {
     get sessionLoads() {
       return sessionLoads
     },
-    sessionCloseCalls,
+    settle: () => new Promise<void>((r) => setTimeout(r, 0)),
     initialize: async () => {
       inits++
+      return {
+        promptCapabilities: options.promptCapabilities ?? {
+          image: false,
+          audio: false,
+          embeddedContext: false,
+        },
+      }
     },
     sessionNew: async () => {
       sessionNews++
-      return "acp-sess-1"
+      return sessionInfo
     },
     sessionLoad: async (id) => {
       sessionLoads.push(id)
-      return "acp-sess-1"
+      return sessionInfo
     },
-    sessionPrompt: async (
-      sid: string,
-      prompt: readonly { type: "text"; text: string }[],
-    ): Promise<AcpStopReason> => {
+    sessionPrompt: async (sid, prompt) => {
       prompts.push({ sessionId: sid, prompt: [...prompt] })
-      return "end_turn"
+      if (options.promptRejects === true) throw new Error("transport died")
+      return options.stopReason ?? "end_turn"
     },
-    sessionCancel: (sid: string) => {
+    sessionCancel: (sid) => {
       cancels.push(sid)
     },
-    sessionSetMode: (sid: string, mode: string) => {
-      modes.push({ sessionId: sid, mode })
+    sessionSetMode: (sid, modeId) => {
+      modes.push({ sessionId: sid, modeId })
     },
-    sessionClose: (sid: string) => {
-      closes.push(sid)
+    sessionSetConfigOption: (sid, configId, valueId) => {
+      configCalls.push({ sessionId: sid, configId, valueId })
+    },
+    sessionClose: (sid) => {
       sessionCloseCalls.push(sid)
     },
     onSessionUpdate: (cb) => {
-      updateHolder.value = cb
+      client.updateHandler = cb
       return () => {
-        updateHolder.value = undefined
+        client.updateHandler = undefined
       }
     },
     onPermissionRequest: (cb) => {
-      permissionHolder.value = cb
-      return () => {
-        permissionHolder.value = undefined
-      }
+      client.permissionHandler = cb
     },
     onElicitationCreate: (cb) => {
-      elicitationHolder.value = cb
-      return () => {
-        elicitationHolder.value = undefined
-      }
+      client.elicitationHandler = cb
     },
     close: () => {},
   }
   return client
 }
 
-const createFakeCtx = (): { ctx: AdapterCtx; events: CanonicalEvent[] } => {
+interface FakeCtxOptions {
+  readonly approval?: ApprovalDecision
+  readonly questionAnswer?: QuestionAnswer
+}
+
+const createFakeCtx = (
+  options: FakeCtxOptions = {},
+): { ctx: AdapterCtx; events: CanonicalEvent[] } => {
   const events: CanonicalEvent[] = []
   let runnerCounter = 0
   let aprCounter = 0
@@ -146,12 +165,12 @@ const createFakeCtx = (): { ctx: AdapterCtx; events: CanonicalEvent[] } => {
     requestApproval: async (runnerId, target) => {
       const requestId = `apr_${aprCounter++}`
       events.push({ type: "approval-requested", runnerId, requestId, target })
-      return "allow"
+      return options.approval ?? "allow"
     },
     requestQuestion: async (runnerId, prompt) => {
       const requestId = `qst_${qstCounter++}`
       events.push({ type: "question-requested", runnerId, requestId, prompt })
-      return { selections: [] }
+      return options.questionAnswer ?? { selections: [] }
     },
     newRunnerId: () => rid(`rnr_child_${runnerCounter++}`),
     rootRunnerId: rid("rnr_root"),
@@ -163,283 +182,275 @@ const createFakeConnect = (client: FakeAcpClient): AcpConnect => {
   return async () => ({ client, close: () => {} })
 }
 
+const startInput = (
+  overrides: Partial<AgentStartInput> = {},
+): AgentStartInput =>
+  ({
+    harnessId: "claude" as never,
+    cwd: "/tmp",
+    env: {},
+    command: "claude-code-acp",
+    args: [],
+    ...overrides,
+  }) as AgentStartInput
+
+const start = async (
+  client: FakeAcpClient,
+  ctxOptions: FakeCtxOptions = {},
+  inputOverrides: Partial<AgentStartInput> = {},
+) => {
+  const { ctx, events } = createFakeCtx(ctxOptions)
+  const adapter = createAcpAdapter({ connect: createFakeConnect(client) })
+  const handle = await adapter.start(startInput(inputOverrides), ctx)
+  return { handle, ctx, events }
+}
+
 describe("createAcpAdapter — start", () => {
-  it("returns a DriverAdapter with no supportedModes by default", () => {
+  it("declares no static supportedModes (they are negotiated per session)", () => {
     const adapter = createAcpAdapter({
-      connect: createFakeConnect(createFakeClient()) as never,
+      connect: createFakeConnect(createFakeClient()),
     })
     expect(adapter.supportedModes).toBeUndefined()
   })
 
   it("initializes the ACP client and creates a new session on start", async () => {
     const client = createFakeClient()
-    const adapter = createAcpAdapter({
-      connect: createFakeConnect(client) as never,
-    })
-    const { ctx } = createFakeCtx()
-    await adapter.start(
-      {
-        harnessId: "claude" as never,
-        cwd: "/tmp",
-        env: {},
-        command: "claude",
-        args: ["--acp"],
-      },
-      ctx,
-    )
+    await start(client)
     expect(client.inits).toBe(1)
     expect(client.sessionNews).toBe(1)
   })
 
   it("loads an existing session when resume is provided", async () => {
     const client = createFakeClient()
-    const adapter = createAcpAdapter({
-      connect: createFakeConnect(client) as never,
-    })
-    const { ctx } = createFakeCtx()
-    await adapter.start(
-      {
-        harnessId: "claude" as never,
-        cwd: "/tmp",
-        env: {},
-        command: "claude",
-        args: ["--acp"],
-        resume: "acp-sess-prev",
-      },
-      ctx,
-    )
+    await start(client, {}, { resume: "acp-sess-prev" })
     expect(client.sessionLoads).toEqual(["acp-sess-prev"])
-  })
-
-  it("emits a runner-started for the root runner on start", async () => {
-    const client = createFakeClient()
-    const adapter = createAcpAdapter({
-      connect: createFakeConnect(client) as never,
-    })
-    const { ctx, events } = createFakeCtx()
-    await adapter.start(
-      {
-        harnessId: "claude" as never,
-        cwd: "/tmp",
-        env: {},
-        command: "claude",
-        args: ["--acp"],
-      },
-      ctx,
-    )
-    const started = events.find((e) => e.type === "runner-started")
-    expect(started).toBeDefined()
   })
 
   it("reports the resume token via ctx when setResumeId is wired", async () => {
     const client = createFakeClient()
-    const adapter = createAcpAdapter({
-      connect: createFakeConnect(client) as never,
-    })
-    let reportedToken: string | undefined
     const { ctx } = createFakeCtx()
+    let reportedToken: string | undefined
     ctx.reportResumeToken = (token) => {
       reportedToken = token
     }
-    await adapter.start(
-      {
-        harnessId: "claude" as never,
-        cwd: "/tmp",
-        env: {},
-        command: "claude",
-        args: ["--acp"],
-        sessionId: "s1" as never,
-      },
-      ctx,
-    )
+    const adapter = createAcpAdapter({ connect: createFakeConnect(client) })
+    await adapter.start(startInput({ sessionId: "s1" as never }), ctx)
     expect(reportedToken).toBe("acp-sess-1")
   })
 
   it("sends the initial prompt when provided", async () => {
     const client = createFakeClient()
-    const adapter = createAcpAdapter({
-      connect: createFakeConnect(client) as never,
+    await start(client, {}, { initialPrompt: "hello" })
+    expect(client.prompts).toHaveLength(1)
+    expect(client.prompts[0]?.prompt).toEqual([{ type: "text", text: "hello" }])
+  })
+
+  it("emits runner-started carrying the modes the agent advertised", async () => {
+    const client = createFakeClient({ availableModeIds: ["default", "plan"] })
+    const { events } = await start(client)
+    const started = events.find((e) => e.type === "runner-started")
+    expect(started).toMatchObject({ supportedModes: ["manual", "plan"] })
+  })
+
+  it("emits runner-started with no supportedModes when the agent advertises none", async () => {
+    const client = createFakeClient({ availableModeIds: [] })
+    const { events } = await start(client)
+    const started = events.find((e) => e.type === "runner-started")
+    expect(started).toBeDefined()
+    expect(
+      (started as { supportedModes?: unknown }).supportedModes,
+    ).toBeUndefined()
+  })
+
+  it("emits runner-started carrying the attachment kinds the agent accepts", async () => {
+    const client = createFakeClient({
+      promptCapabilities: { image: true, audio: false, embeddedContext: false },
     })
-    const { ctx } = createFakeCtx()
-    await adapter.start(
-      {
-        harnessId: "claude" as never,
-        cwd: "/tmp",
-        env: {},
-        command: "claude",
-        args: ["--acp"],
-        initialPrompt: "hello",
+    const { events } = await start(client)
+    const started = events.find((e) => e.type === "runner-started")
+    expect(started).toMatchObject({
+      supportedAttachments: { image: true, pdf: false, binary: false },
+    })
+  })
+})
+
+describe("createAcpAdapter — permission bridge", () => {
+  it("answers a permission request with the option matching the user's decision", async () => {
+    const client = createFakeClient()
+    await start(client, { approval: "allow-always" })
+
+    const outcome = await client.permissionHandler?.({
+      sessionId: "acp-sess-1",
+      toolCall: { toolCallId: "call_1", title: "rm -rf", kind: "execute" },
+      options: [
+        { optionId: "once", name: "Allow", kind: "allow_once" },
+        { optionId: "always", name: "Always", kind: "allow_always" },
+      ],
+    })
+
+    expect(outcome).toEqual({ outcome: "selected", optionId: "always" })
+  })
+
+  it("answers with the reject option when the user denies", async () => {
+    const client = createFakeClient()
+    await start(client, { approval: "deny" })
+
+    const outcome = await client.permissionHandler?.({
+      sessionId: "acp-sess-1",
+      toolCall: { toolCallId: "call_1" },
+      options: [
+        { optionId: "once", name: "Allow", kind: "allow_once" },
+        { optionId: "no", name: "Reject", kind: "reject_once" },
+      ],
+    })
+
+    expect(outcome).toEqual({ outcome: "selected", optionId: "no" })
+  })
+
+  it("cancels the request when the agent offers no option matching the decision", async () => {
+    const client = createFakeClient()
+    await start(client, { approval: "deny" })
+
+    const outcome = await client.permissionHandler?.({
+      sessionId: "acp-sess-1",
+      toolCall: { toolCallId: "call_1" },
+      options: [],
+    })
+
+    expect(outcome).toEqual({ outcome: "cancelled" })
+  })
+
+  it("emits approval-requested with a command target for an execute tool call", async () => {
+    const client = createFakeClient()
+    const { events } = await start(client)
+
+    await client.permissionHandler?.({
+      sessionId: "acp-sess-1",
+      toolCall: { toolCallId: "call_1", title: "npm test", kind: "execute" },
+      options: [{ optionId: "once", name: "Allow", kind: "allow_once" }],
+    })
+
+    expect(events.find((e) => e.type === "approval-requested")).toMatchObject({
+      target: { kind: "command", detail: "npm test" },
+    })
+  })
+})
+
+describe("createAcpAdapter — elicitation bridge", () => {
+  it("answers an elicitation request with the user's answer", async () => {
+    const client = createFakeClient()
+    await start(client, {
+      questionAnswer: { selections: [{ questionIndex: 0, labels: ["main"] }] },
+    })
+
+    const response = await client.elicitationHandler?.({
+      message: "Which branch?",
+      requestedSchema: {
+        type: "object",
+        properties: { branch: { type: "string", enum: ["main", "dev"] } },
       },
-      ctx,
-    )
-    expect(client.prompts.length).toBeGreaterThanOrEqual(1)
+    })
+
+    expect(response).toEqual({ action: "accept", content: { branch: "main" } })
+  })
+
+  it("declines the elicitation when the user answers nothing", async () => {
+    const client = createFakeClient()
+    await start(client, { questionAnswer: { selections: [] } })
+
+    const response = await client.elicitationHandler?.({ message: "Which?" })
+
+    expect(response).toEqual({ action: "decline" })
+  })
+
+  it("emits question-requested carrying the elicitation message", async () => {
+    const client = createFakeClient()
+    const { events } = await start(client)
+
+    await client.elicitationHandler?.({ message: "Which branch?" })
+
+    const question = events.find((e) => e.type === "question-requested")
+    expect(question).toMatchObject({
+      prompt: { questions: [{ question: "Which branch?" }] },
+    })
   })
 })
 
 describe("createAcpAdapter — handle", () => {
   it("send fires sessionPrompt with text content", async () => {
     const client = createFakeClient()
-    const adapter = createAcpAdapter({
-      connect: createFakeConnect(client) as never,
-    })
-    const { ctx } = createFakeCtx()
-    const handle = await adapter.start(
-      {
-        harnessId: "claude" as never,
-        cwd: "/tmp",
-        env: {},
-        command: "claude",
-        args: ["--acp"],
-      },
-      ctx,
-    )
+    const { handle } = await start(client)
     handle.send({ text: "do something" })
-    expect(client.prompts.length).toBeGreaterThanOrEqual(1)
-    expect(client.prompts[client.prompts.length - 1]?.prompt).toEqual([
+    expect(client.prompts.at(-1)?.prompt).toEqual([
       { type: "text", text: "do something" },
     ])
   })
 
   it("interrupt fires sessionCancel", async () => {
     const client = createFakeClient()
-    const adapter = createAcpAdapter({
-      connect: createFakeConnect(client) as never,
-    })
-    const { ctx } = createFakeCtx()
-    const handle = await adapter.start(
-      {
-        harnessId: "claude" as never,
-        cwd: "/tmp",
-        env: {},
-        command: "claude",
-        args: ["--acp"],
-      },
-      ctx,
-    )
+    const { handle } = await start(client)
     handle.interrupt()
     expect(client.cancels).toEqual(["acp-sess-1"])
   })
 
-  it("setMode fires sessionSetMode when supported", async () => {
-    const client = createFakeClient()
-    const adapter = createAcpAdapter({
-      connect: createFakeConnect(client) as never,
-      supportedModes: ["manual", "auto-edits", "bypass"],
+  it("setMode fires sessionSetMode with the agent's own mode id", async () => {
+    const client = createFakeClient({
+      availableModeIds: ["default", "bypassPermissions"],
     })
-    const { ctx } = createFakeCtx()
-    const handle = await adapter.start(
-      {
-        harnessId: "claude" as never,
-        cwd: "/tmp",
-        env: {},
-        command: "claude",
-        args: ["--acp"],
-      },
-      ctx,
-    )
+    const { handle } = await start(client)
     handle.setMode?.("bypass")
-    expect(client.modes).toEqual([{ sessionId: "acp-sess-1", mode: "bypass" }])
+    expect(client.modes).toEqual([
+      { sessionId: "acp-sess-1", modeId: "bypassPermissions" },
+    ])
   })
 
-  it("close closes the client connection", async () => {
+  it("setMode does nothing when the agent cannot honor the mode", async () => {
+    const client = createFakeClient({ availableModeIds: ["default"] })
+    const { handle } = await start(client)
+    handle.setMode?.("plan")
+    expect(client.modes).toEqual([])
+  })
+
+  it("close closes the session and the connection", async () => {
     const client = createFakeClient()
-    const adapter = createAcpAdapter({
-      connect: createFakeConnect(client) as never,
-    })
-    const { ctx } = createFakeCtx()
-    const handle = await adapter.start(
-      {
-        harnessId: "claude" as never,
-        cwd: "/tmp",
-        env: {},
-        command: "claude",
-        args: ["--acp"],
-      },
-      ctx,
-    )
+    const { handle } = await start(client)
     handle.close()
     expect(client.sessionCloseCalls).toContain("acp-sess-1")
-  })
-
-  it("emits turn-finished when the prompt response arrives", async () => {
-    const client = createFakeClient()
-    const adapter = createAcpAdapter({
-      connect: createFakeConnect(client) as never,
-    })
-    const { ctx, events } = createFakeCtx()
-    const handle = await adapter.start(
-      {
-        harnessId: "claude" as never,
-        cwd: "/tmp",
-        env: {},
-        command: "claude",
-        args: ["--acp"],
-      },
-      ctx,
-    )
-    handle.send({ text: "hi" })
-    // The prompt promise resolves synchronously in the fake; allow microtasks to flush.
-    await new Promise((r) => setTimeout(r, 0))
-    const turnFinished = events.find((e) => e.type === "turn-finished")
-    expect(turnFinished).toBeDefined()
   })
 })
 
 describe("createAcpAdapter — session/update streaming", () => {
   it("maps an agent_message_chunk to a text-delta event via ctx.emit", async () => {
     const client = createFakeClient()
-    const adapter = createAcpAdapter({
-      connect: createFakeConnect(client) as never,
-    })
-    const { ctx, events } = createFakeCtx()
-    await adapter.start(
-      {
-        harnessId: "claude" as never,
-        cwd: "/tmp",
-        env: {},
-        command: "claude",
-        args: ["--acp"],
-      },
-      ctx,
-    )
-    client._updateCb.value?.({
+    const { events } = await start(client)
+    client.updateHandler?.({
       sessionId: "acp-sess-1",
       update: {
         sessionUpdate: "agent_message_chunk",
         messageId: "m1",
         content: { type: "text", text: "hi" },
       },
-    } as AcpSessionUpdateNotification)
-    const delta = events.find((e) => e.type === "text-delta")
-    expect(delta).toBeDefined()
-    expect(delta).toMatchObject({ messageId: "m1", text: "hi" })
+    })
+    expect(events.find((e) => e.type === "text-delta")).toMatchObject({
+      messageId: "m1",
+      text: "hi",
+    })
   })
 
-  it("emits approval-requested when the agent sends a permission request", async () => {
+  it("maps an agent_thought_chunk to a reasoning-delta event", async () => {
     const client = createFakeClient()
-    const adapter = createAcpAdapter({
-      connect: createFakeConnect(client) as never,
-    })
-    const { ctx, events } = createFakeCtx()
-    await adapter.start(
-      {
-        harnessId: "claude" as never,
-        cwd: "/tmp",
-        env: {},
-        command: "claude",
-        args: ["--acp"],
-      },
-      ctx,
-    )
-    client._permissionCb.value?.({
+    const { events } = await start(client)
+    client.updateHandler?.({
       sessionId: "acp-sess-1",
-      toolCall: { toolCallId: "call_1" },
-      options: [
-        { optionId: "allow-once", name: "Allow", kind: "allow_once" },
-        { optionId: "reject-once", name: "Reject", kind: "reject_once" },
-      ],
+      update: {
+        sessionUpdate: "agent_thought_chunk",
+        messageId: "m2",
+        content: { type: "text", text: "thinking" },
+      },
     })
-    const approval = events.find((e) => e.type === "approval-requested")
-    expect(approval).toBeDefined()
+    expect(events.find((e) => e.type === "reasoning-delta")).toMatchObject({
+      messageId: "m2",
+      text: "thinking",
+    })
   })
 })

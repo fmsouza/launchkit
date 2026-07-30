@@ -1,12 +1,5 @@
 import type { AttachmentRefWithBytes } from "@spectrum/agent-events"
-import type { AcpPromptBlock } from "./acp-client"
-
-/** What the agent said it accepts in a prompt — from `initialize`'s `promptCapabilities`. */
-export interface AcpPromptCapabilities {
-  readonly image: boolean
-  readonly audio: boolean
-  readonly embeddedContext: boolean
-}
+import type { AcpPromptBlock, AcpPromptCapabilities } from "./acp-client"
 
 export interface ToAcpPromptBlocksInput {
   readonly text: string

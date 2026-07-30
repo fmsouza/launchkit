@@ -1,10 +1,5 @@
 import type { QuestionAnswer, QuestionPrompt } from "@spectrum/agent-events"
-import type { AcpElicitation } from "./acp-client"
-
-/** What the client answers an `elicitation/create` request with. */
-export type AcpElicitationResponse =
-  | { readonly action: "accept"; readonly content: Record<string, unknown> }
-  | { readonly action: "decline" }
+import type { AcpElicitation, AcpElicitationResponse } from "./acp-client"
 
 const FALLBACK_PROPERTY = "value"
 

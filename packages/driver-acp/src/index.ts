@@ -12,6 +12,12 @@ export {
   type AcpPermissionRequest,
   type AcpPermissionOption,
   type AcpElicitation,
+  type AcpElicitationResponse,
+  type AcpPromptCapabilities,
+  type AcpPermissionOutcome,
+  type AcpInitializeResult,
+  type AcpSessionInfo,
+  type AcpConfigOption,
   AcpSessionUpdateSchema,
   AcpSessionUpdateNotificationSchema,
   AcpStopReasonSchema,
@@ -23,12 +29,10 @@ export { pickAcpModeId, supportedModesFrom } from "./session-modes"
 export { pickPermissionOptionId } from "./permission-outcome"
 export {
   toAcpPromptBlocks,
-  type AcpPromptCapabilities,
   type ToAcpPromptBlocksInput,
 } from "./prompt-blocks"
 export {
   elicitationToQuestion,
   answerToElicitationResponse,
   firstPropertyName,
-  type AcpElicitationResponse,
 } from "./elicitation"

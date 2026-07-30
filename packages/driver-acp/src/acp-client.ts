@@ -204,27 +204,74 @@ export const AcpElicitationSchema = z
   .passthrough()
 export type AcpElicitation = z.infer<typeof AcpElicitationSchema>
 
-// ─── The injected transport port (mirrors OpenclawConnect / OpencodeConnect) ─
+/** What the agent said it accepts in a prompt — `initialize`'s `agentCapabilities.promptCapabilities`. */
+export interface AcpPromptCapabilities {
+  readonly image: boolean
+  readonly audio: boolean
+  readonly embeddedContext: boolean
+}
+
+/** How the client answers an `elicitation/create` request. */
+export type AcpElicitationResponse =
+  | { readonly action: "accept"; readonly content: Record<string, unknown> }
+  | { readonly action: "decline" }
+
+/** How the client answers a `session/request_permission` request. */
+export type AcpPermissionOutcome =
+  | { readonly outcome: "selected"; readonly optionId: string }
+  | { readonly outcome: "cancelled" }
+
+/** What `initialize` negotiated with the agent. */
+export interface AcpInitializeResult {
+  readonly promptCapabilities: AcpPromptCapabilities
+}
+
+/** One agent-advertised session config option (ACP `session/set_config_option`). */
+export interface AcpConfigOption {
+  readonly id: string
+  readonly name: string
+  readonly values: readonly { readonly id: string; readonly name: string }[]
+}
+
+/** What `session/new` (or `session/load`) told us about the live session. */
+export interface AcpSessionInfo {
+  readonly sessionId: string
+  /** Mode ids the agent advertised (`modes.availableModes`); agent-defined strings. */
+  readonly availableModeIds: readonly string[]
+  readonly currentModeId?: string
+  readonly configOptions: readonly AcpConfigOption[]
+}
+
+// ─── The injected transport port (mirrors the retired OpenclawConnect / OpencodeConnect) ─
 export interface AcpClient {
-  initialize(): Promise<void>
-  sessionNew(): Promise<string>
-  sessionLoad(sessionId: string): Promise<string>
+  initialize(): Promise<AcpInitializeResult>
+  sessionNew(cwd: string): Promise<AcpSessionInfo>
+  sessionLoad(sessionId: string, cwd: string): Promise<AcpSessionInfo>
   sessionPrompt(
     sessionId: string,
     prompt: readonly AcpPromptBlock[],
   ): Promise<AcpStopReason>
   sessionCancel(sessionId: string): void
-  sessionSetMode(sessionId: string, mode: string): void
+  sessionSetMode(sessionId: string, modeId: string): void
+  sessionSetConfigOption(
+    sessionId: string,
+    configId: string,
+    valueId: string,
+  ): void
   sessionClose(sessionId: string): void
   onSessionUpdate(cb: (notif: AcpSessionUpdateNotification) => void): () => void
-  onPermissionRequest(cb: (req: AcpPermissionRequest) => void): () => void
+  /**
+   * `session/request_permission` is a REQUEST: the agent blocks until the client answers. The
+   * handler therefore RESOLVES to the outcome rather than returning an unsubscribe — the transport
+   * replies with whatever it resolves to.
+   */
+  onPermissionRequest(
+    cb: (req: AcpPermissionRequest) => Promise<AcpPermissionOutcome>,
+  ): void
+  /** `elicitation/create` is likewise a request; the handler resolves to the response. */
   onElicitationCreate(
-    cb: (req: {
-      sessionId: string
-      requestId: string | number
-      elicitation: AcpElicitation
-    }) => void,
-  ): () => void
+    cb: (req: AcpElicitation) => Promise<AcpElicitationResponse>,
+  ): void
   close(): void
 }
 
