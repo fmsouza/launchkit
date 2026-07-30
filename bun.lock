@@ -163,6 +163,18 @@
         "drizzle-kit": "^0.31.0",
       },
     },
+    "packages/driver-acp": {
+      "name": "@spectrum/driver-acp",
+      "version": "1.8.1",
+      "dependencies": {
+        "@spectrum/agent-driver": "workspace:*",
+        "@spectrum/agent-events": "workspace:*",
+        "@spectrum/driver-runtime": "workspace:*",
+        "@spectrum/types": "workspace:*",
+        "@spectrum/utils": "workspace:*",
+        "zod": "catalog:",
+      },
+    },
     "packages/driver-claude": {
       "name": "@spectrum/driver-claude",
       "version": "1.8.1",
@@ -636,6 +648,8 @@
     "@spectrum/data-admin": ["@spectrum/data-admin@workspace:packages/data-admin"],
 
     "@spectrum/db": ["@spectrum/db@workspace:packages/db"],
+
+    "@spectrum/driver-acp": ["@spectrum/driver-acp@workspace:packages/driver-acp"],
 
     "@spectrum/driver-claude": ["@spectrum/driver-claude@workspace:packages/driver-claude"],
 
