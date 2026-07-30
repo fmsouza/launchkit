@@ -167,6 +167,112 @@ describe("launchHarness", () => {
     expect(result.value.env.FOO).toBe("bar")
   })
 
+  it("uses acp args and renders proxy env when mode is acp", () => {
+    const harnessWithAcp: HarnessDefinition = {
+      ...claude,
+      acp: { args: ["--acp"], native: false },
+    }
+    const resolver = createFakeCommandResolver({
+      claude: "/usr/local/bin/claude",
+    })
+    const r = resolveHarnessLaunch({ resolver })({
+      harness: harnessWithAcp,
+      route: proxiedRoute,
+      mode: "acp",
+    })
+    expect(isOk(r)).toBe(true)
+    if (!isOk(r)) return
+    expect(r.value.command).toBe("/usr/local/bin/claude")
+    expect(r.value.args).toEqual(["--acp"])
+    expect(r.value.env).toEqual({
+      ANTHROPIC_BASE_URL: "http://127.0.0.1:4000",
+      ANTHROPIC_API_KEY: "k-secret",
+      ANTHROPIC_MODEL: "mdl_x",
+    })
+  })
+
+  it("uses native args when mode is acp and the harness declares native acp", () => {
+    const nativeAcp: HarnessDefinition = {
+      ...claude,
+      acp: { args: ["acp"], native: true },
+    }
+    const resolver = createFakeCommandResolver({
+      claude: "/usr/local/bin/opencode",
+    })
+    const r = resolveHarnessLaunch({ resolver })({
+      harness: nativeAcp,
+      route: proxiedRoute,
+      mode: "acp",
+    })
+    expect(isOk(r)).toBe(true)
+    if (!isOk(r)) return
+    expect(r.value.args).toEqual(["acp"])
+  })
+
+  it("returns an error when mode is acp but the harness has no acp config", () => {
+    const resolver = createFakeCommandResolver({
+      claude: "/usr/local/bin/claude",
+    })
+    const r = resolveHarnessLaunch({ resolver })({
+      harness: claude,
+      route: proxiedRoute,
+      mode: "acp",
+    })
+    expect(isOk(r)).toBe(false)
+    if (!isOk(r)) expect(r.error.kind).toBe("no-acp-config")
+  })
+
+  it("defaults to native mode when mode is omitted (no behavior change)", () => {
+    const resolver = createFakeCommandResolver({
+      claude: "/usr/local/bin/claude",
+    })
+    const r = resolveHarnessLaunch({ resolver })({
+      harness: claude,
+      route: proxiedRoute,
+    })
+    expect(isOk(r)).toBe(true)
+    if (!isOk(r)) return
+    expect(r.value.args).toEqual([])
+  })
+
+  it("renders proxy env in acp mode (the ACP agent still reaches the LLM through the proxy)", () => {
+    const harnessWithAcp: HarnessDefinition = {
+      ...claude,
+      acp: { args: ["--acp"], native: false },
+    }
+    const resolver = createFakeCommandResolver({
+      claude: "/usr/local/bin/claude",
+    })
+    const r = resolveHarnessLaunch({ resolver })({
+      harness: harnessWithAcp,
+      route: proxiedRoute,
+      mode: "acp",
+    })
+    expect(isOk(r)).toBe(true)
+    if (!isOk(r)) return
+    expect(r.value.env.ANTHROPIC_BASE_URL).toBe("http://127.0.0.1:4000")
+    expect(r.value.env.ANTHROPIC_API_KEY).toBe("k-secret")
+  })
+
+  it("caller env overrides rendered template env in acp mode", () => {
+    const harnessWithAcp: HarnessDefinition = {
+      ...claude,
+      acp: { args: ["--acp"], native: false },
+    }
+    const resolver = createFakeCommandResolver({
+      claude: "/usr/local/bin/claude",
+    })
+    const r = resolveHarnessLaunch({ resolver })({
+      harness: harnessWithAcp,
+      route: proxiedRoute,
+      mode: "acp",
+      env: { ANTHROPIC_API_KEY: "custom-key" },
+    })
+    expect(isOk(r)).toBe(true)
+    if (!isOk(r)) return
+    expect(r.value.env.ANTHROPIC_API_KEY).toBe("custom-key")
+  })
+
   it("surfaces the spawner's exited promise so callers can foreground the harness", async () => {
     const resolver = createFakeCommandResolver({
       claude: "/usr/local/bin/claude",
