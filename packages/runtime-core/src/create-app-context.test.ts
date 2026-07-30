@@ -86,8 +86,6 @@ const makeFakeDeps = (): {
       return { append: () => ok({ seq: 0 }), read: () => ok([]) }
     }) as never,
     createFakeDriver: (() => ({ start: () => ok({}) })) as never,
-    createCodexDriver: (() => ({ start: () => ok({}) })) as never,
-    createOpencodeDriver: (() => ({ start: () => ok({}) })) as never,
     createAcpDriver: (() => ({ start: () => ok({}) })) as never,
     createDataAdmin: (() => ({
       deleteSession: () => ok(undefined),
@@ -586,42 +584,39 @@ describe("createAppContext native run path wiring", () => {
     expect(typeof ctx.runEvents.read).toBe("function")
   })
 
-  it("registers the claude driver as native by default (hard cutover)", () => {
+  it("does not register claude as native (bespoke driver retired — all harnesses route to ACP)", () => {
     const { deps } = makeFakeDeps()
     const ctx = createAppContext(deps)
     expect(ctx.driverRegistry.isNative("demo" as never)).toBe(false)
-    expect(ctx.driverRegistry.isNative("claude" as never)).toBe(true)
+    expect(ctx.driverRegistry.isNative("claude" as never)).toBe(false)
   })
 
-  it("routes the codex harness natively (driver registered)", () => {
+  it("does not register codex as native (bespoke driver retired)", () => {
     const ctx = createAppContext(makeFakeDeps().deps)
-    expect(ctx.driverRegistry.isNative("codex" as never)).toBe(true)
+    expect(ctx.driverRegistry.isNative("codex" as never)).toBe(false)
   })
 
-  it("registers the opencode native driver and routes opencode native", () => {
+  it("does not register opencode as native (bespoke driver retired)", () => {
     const ctx = createAppContext(makeFakeDeps().deps)
-    expect(ctx.driverRegistry.isNative("opencode" as never)).toBe(true)
+    expect(ctx.driverRegistry.isNative("opencode" as never)).toBe(false)
   })
 
-  it("registers the openclaw native driver and routes openclaw native", () => {
+  it("does not register openclaw as native (bespoke driver retired)", () => {
     const ctx = createAppContext(makeFakeDeps().deps)
-    expect(ctx.driverRegistry.isNative("openclaw" as never)).toBe(true)
+    expect(ctx.driverRegistry.isNative("openclaw" as never)).toBe(false)
   })
 
-  it("surfaces native:true for openclaw via the driver registry (getHarnesses maps def -> {..., native})", () => {
-    // getHarnesses maps each builtin definition -> { ...def, native: driverRegistry.isNative(def.id) }.
-    // The `openclaw` builtin is always listed (packages/harnesses builtinHarnesses); here we assert the
-    // native flag it gets is true now that the driver is registered.
+  it("surfaces native:false for openclaw (bespoke driver retired, routes to ACP)", () => {
     const ctx = createAppContext(makeFakeDeps().deps)
-    expect(ctx.driverRegistry.isNative("openclaw" as never)).toBe(true)
+    expect(ctx.driverRegistry.isNative("openclaw" as never)).toBe(false)
   })
 
-  it("registers the native claude driver even without the demo flag (hard cutover)", () => {
+  it("registers no native drivers when the demo flag is off (all harnesses route to ACP)", () => {
     const ctx = createAppContext({
       ...makeFakeDeps().deps,
       demoHarnessEnabled: false,
     })
-    expect(ctx.driverRegistry.isNative("claude" as never)).toBe(true)
+    expect(ctx.driverRegistry.isNative("claude" as never)).toBe(false)
     expect(ctx.driverRegistry.isNative("demo" as never)).toBe(false)
   })
 
@@ -882,9 +877,8 @@ describe("createAppContext ACP driver wiring", () => {
     expect(nativeStartCalled).toBe(false)
   })
 
-  it("routes opencode to the ACP driver (Phase 2 — native ACP agent)", () => {
+  it("routes opencode to the ACP driver (native ACP agent)", () => {
     let acpStartCalled = false
-    let nativeStartCalled = false
     const { deps } = makeFakeDeps()
     ;(deps as { createAcpDriver: unknown }).createAcpDriver = (() => ({
       start: () => {
@@ -892,13 +886,6 @@ describe("createAppContext ACP driver wiring", () => {
         return ok({}) as never
       },
     })) as never
-    ;(deps as { createOpencodeDriver: unknown }).createOpencodeDriver =
-      (() => ({
-        start: () => {
-          nativeStartCalled = true
-          return ok({}) as never
-        },
-      })) as never
     const ctx = createAppContext(deps)
     ctx.routingDriver.start({
       harnessId: "opencode" as never,
@@ -906,10 +893,9 @@ describe("createAppContext ACP driver wiring", () => {
       env: {},
     })
     expect(acpStartCalled).toBe(true)
-    expect(nativeStartCalled).toBe(false)
   })
 
-  it("routes claude to the ACP driver (Phase 4 — richest bespoke integration migrated)", () => {
+  it("routes claude to the ACP driver", () => {
     let acpStartCalled = false
     const { deps } = makeFakeDeps()
     ;(deps as { createAcpDriver: unknown }).createAcpDriver = (() => ({
@@ -927,19 +913,12 @@ describe("createAppContext ACP driver wiring", () => {
     expect(acpStartCalled).toBe(true)
   })
 
-  it("routes codex to the ACP driver (Phase 3 — JSON-RPC vocabulary swap)", () => {
+  it("routes codex to the ACP driver", () => {
     let acpStartCalled = false
-    let nativeStartCalled = false
     const { deps } = makeFakeDeps()
     ;(deps as { createAcpDriver: unknown }).createAcpDriver = (() => ({
       start: () => {
         acpStartCalled = true
-        return ok({}) as never
-      },
-    })) as never
-    ;(deps as { createCodexDriver: unknown }).createCodexDriver = (() => ({
-      start: () => {
-        nativeStartCalled = true
         return ok({}) as never
       },
     })) as never
@@ -950,6 +929,5 @@ describe("createAppContext ACP driver wiring", () => {
       env: {},
     })
     expect(acpStartCalled).toBe(true)
-    expect(nativeStartCalled).toBe(false)
   })
 })

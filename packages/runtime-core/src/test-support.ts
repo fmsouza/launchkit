@@ -10,8 +10,6 @@ import {
 import { createDataAdmin } from "@spectrum/data-admin"
 import { createSqliteClient, runMigrations } from "@spectrum/db"
 import { createAcpDriver } from "@spectrum/driver-acp"
-import { createCodexDriver } from "@spectrum/driver-codex"
-import { createOpencodeDriver } from "@spectrum/driver-opencode"
 import {
   createBunProcessSpawner,
   createPathCommandResolver,
@@ -183,11 +181,6 @@ export const buildFakeAppContextDeps = (
       ((() => ({ append: () => ok({ seq: 0 }), read: () => ok([]) })) as never),
     createFakeDriver:
       overrides.createFakeDriver ?? (record("createFakeDriver") as never),
-    createCodexDriver:
-      overrides.createCodexDriver ?? (record("createCodexDriver") as never),
-    createOpencodeDriver:
-      overrides.createOpencodeDriver ??
-      (record("createOpencodeDriver") as never),
     createAcpDriver:
       overrides.createAcpDriver ?? (record("createAcpDriver") as never),
     createDataAdmin:
@@ -232,8 +225,6 @@ export const realAdapterDefaults: Readonly<Record<string, unknown>> = {
   createFileRuntimeState,
   createRunStore,
   createFakeDriver,
-  createCodexDriver,
-  createOpencodeDriver,
   createAcpDriver,
   createDataAdmin,
   migrateLegacyMacosConfig,
