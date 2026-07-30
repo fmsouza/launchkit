@@ -26,4 +26,7 @@ export const claude: HarnessDefinition = {
     CLAUDE_CODE_MAX_RETRIES: "2",
   },
   builtIn: true,
+  // ACP launch: Claude Code exposes ACP via Zed's claude-agent-acp adapter (non-native shim).
+  // The exact launch flag is verified per ticket #122 against the live adapter.
+  acp: { args: ["--acp"], native: false },
 } satisfies HarnessDefinition

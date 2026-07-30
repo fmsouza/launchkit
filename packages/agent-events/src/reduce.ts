@@ -6,6 +6,7 @@ import type {
   CanonicalEvent,
   Json,
   PermissionMode,
+  PlanEntry,
   QuestionAnswer,
   QuestionPrompt,
   Usage,
@@ -61,6 +62,13 @@ export type QuestionItem = {
   prompt: QuestionPrompt
   answer?: QuestionAnswer
 }
+export type { PlanEntry } from "./events"
+export type PlanItem = {
+  kind: "plan"
+  planId: string
+  // `readonly` so re-emits replace cleanly; entries are snapshots, not append-deltas.
+  entries: readonly PlanEntry[]
+}
 export type TimelineItem =
   | MessageItem
   | ReasoningItem
@@ -68,6 +76,7 @@ export type TimelineItem =
   | FileChangeItem
   | ApprovalItem
   | QuestionItem
+  | PlanItem
 
 export type RunnerState = {
   id: RunnerId
@@ -366,6 +375,23 @@ export const reduce = (state: RunState, event: CanonicalEvent): RunState => {
       const runner = state.runners.get(event.runnerId)
       if (runner === undefined) return state
       return withRunner(state, { ...runner, usage: event.usage })
+    }
+
+    case "plan-update": {
+      // Replace semantics keyed by planId: re-emitting the same plan replaces (not appends),
+      // keeping the reducer idempotent on planId. Multiple distinct planIds are separate items.
+      return mapRunnerItems(state, event.runnerId, (items) => {
+        const existingIdx = items.findIndex(
+          (i) => i.kind === "plan" && i.planId === event.planId,
+        )
+        const planItem: PlanItem = {
+          kind: "plan",
+          planId: event.planId,
+          entries: event.entries,
+        }
+        if (existingIdx === -1) return [...items, planItem]
+        return items.map((i, j) => (j === existingIdx ? planItem : i))
+      })
     }
 
     case "turn-finished": {

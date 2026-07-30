@@ -23,9 +23,8 @@ import type {
 import { demoScript } from "@spectrum/agent-driver"
 import { ThinkingEffortSchema } from "@spectrum/agent-events"
 import { defaultConfig } from "@spectrum/config"
-import { createClaudeDriver } from "@spectrum/driver-claude"
-import { createOpenclawDriver } from "@spectrum/driver-openclaw"
 import {
+  type LaunchParams,
   createInMemoryHarnessFileSource,
   resolveHarnessLaunch,
 } from "@spectrum/harnesses"
@@ -419,7 +418,34 @@ export const createAppContext = (
     spawner: deps.createBunProcessSpawner(),
     logger: log.child("harness"),
   })
-  const resolveLaunch = resolveHarnessLaunch({ resolver })
+  // Per-harness driver mode: "native" (bespoke driver) or "acp" (shared ACP driver).
+  // All four supported harnesses (claude, codex, opencode, openclaw) are routed to the
+  // ACP driver. The bespoke native drivers remain registered as fallbacks but are no
+  // longer the production path. Live binary verification per harness:
+  //   - openclaw: #119 (openclaw acp)
+  //   - opencode: #120 (opencode acp)
+  //   - codex: #121 (codex acp — via Zed's codex-acp adapter)
+  //   - claude: #122 (claude --acp — via Zed's claude-agent-acp adapter)
+  const ACP_HARNESSES: ReadonlySet<string> = new Set([
+    "claude",
+    "codex",
+    "openclaw",
+    "opencode",
+  ])
+  const resolveDriverMode = (harnessId: HarnessId): "native" | "acp" =>
+    ACP_HARNESSES.has(String(harnessId)) ? "acp" : "native"
+
+  // `resolveLaunch` (resolve command + render proxy env, then hand to `runner.launch`).
+  // For ACP-mode harnesses, passes `mode: "acp"` so the harness's `acp.args` are used
+  // instead of `argsTemplate` (the ACP agent still reaches the LLM through the proxy via env).
+  const resolveLaunchRaw = resolveHarnessLaunch({ resolver })
+  const resolveLaunch = (params: LaunchParams) =>
+    resolveLaunchRaw({
+      ...params,
+      ...(resolveDriverMode(params.harness.id) === "acp"
+        ? { mode: "acp" as const }
+        : {}),
+    })
 
   // proxy provider layer: factory (secrets + lazy SDK loader) + real streamText gateway
   const factory = deps.createProviderFactory({
@@ -457,7 +483,6 @@ export const createAppContext = (
   // `ctx.reportResumeToken`, the runtime binds the current Spectrum `sessionId` and calls this
   // sink — which persists via the SessionStore. A failure is logged but never crashes the run:
   // the session simply loses the ability to true-resume (manager still emits a fresh-restart toast).
-  const idGen = deps.createCryptoIdGen()
   const driverIdGen = deps.createCryptoIdGen()
   const setResumeIdLog = log.child("runner")
   const setResumeId: (id: SessionId, token: string) => void = (id, token) => {
@@ -468,25 +493,24 @@ export const createAppContext = (
         kind: r.error.kind,
       })
   }
+
+  // The ACP (Agent Client Protocol) driver — the single driver for all supported harnesses.
+  // All four harnesses (claude, codex, opencode, openclaw) route to this driver via
+  // resolveDriverMode. The bespoke native drivers have been retired (#123); the driver
+  // registry now holds only the dev-only demo FakeDriver.
+  const acpDriver = deps.createAcpDriver({ idGen: driverIdGen, setResumeId })
+
   const driverRegistry: DriverRegistry = createDriverRegistry({
-    claude: createClaudeDriver({
-      idGen,
-      logger: log.child("driver.claude"),
-      setResumeId,
-    }),
-    codex: deps.createCodexDriver({ idGen: driverIdGen, setResumeId }),
-    opencode: deps.createOpencodeDriver({ idGen: driverIdGen, setResumeId }),
-    // Plan 4 (UNVERIFIED): OpenClaw gateway driver. No installed binary / published @openclaw/sdk; the
-    // real connector throws (→ runner-finished:errored) until wired, but it routes native like the others.
-    openclaw: createOpenclawDriver({ idGen, setResumeId }),
     ...(deps.demoHarnessEnabled
       ? { [DEMO_HARNESS_ID]: deps.createFakeDriver({ script: demoScript }) }
       : {}),
   })
 
-  // One AgentDriver for the RunManager: route start() to the registered driver for the harness.
+  // One AgentDriver for the RunManager: route start() to the ACP driver (or the demo driver).
   const routingDriver: AgentDriver = {
     start: (input) => {
+      const mode = resolveDriverMode(input.harnessId)
+      if (mode === "acp") return acpDriver.start(input)
       const driver = driverRegistry.get(input.harnessId)
       if (driver === undefined)
         return err({

@@ -29,10 +29,7 @@ Test-first (RED observed) → implemented (GREEN) → refactored → `bun run ty
 - `@spectrum/run-store` — append-only run-event persistence (depends on db, agent-events, types, utils)
 - `@spectrum/agent-driver` — driver seam + run manager + socket protocol + FakeDriver (depends on agent-events, types, utils)
 - `@spectrum/driver-runtime` — reusable driver core: createDriver(adapter) → AgentDriver (depends on agent-driver, agent-events, utils; no harness SDK)
-- `@spectrum/driver-claude` — Claude Code driver: createClaudeDriver + pure mapClaudeMessage (depends on driver-runtime, agent-events, agent-driver, utils, @anthropic-ai/claude-agent-sdk)
-- `@spectrum/driver-codex` — Codex driver over `codex app-server`: createCodexDriver + pure mapCodexEvent + CODEX_APP_SERVER_VERSION (depends on driver-runtime, agent-events, agent-driver, types, utils)
-- `@spectrum/driver-opencode` — OpenCode server adapter over driver-runtime: createOpencodeDriver + pure mapOpencodeEvent (depends on driver-runtime, agent-events, agent-driver, utils, @opencode-ai/sdk)
-- `@spectrum/driver-openclaw` — OpenClaw gateway adapter over driver-runtime (UNVERIFIED; depends on driver-runtime, agent-events, agent-driver, utils)
+- `@spectrum/driver-acp` — ACP client adapter: createAcpDriver + pure mapAcpUpdate (depends on driver-runtime, agent-events, agent-driver, types, utils, zod). Drives all ACP-compatible harnesses (Claude, Codex, OpenCode, OpenClaw, and any future ACP agent) over JSON-RPC 2.0 / stdio.
 
 ## Project skills
 `.agents/skills/spectrum-new-package` — creating a new internal package under `packages/`. Invoke it when it applies.
