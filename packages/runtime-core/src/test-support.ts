@@ -9,6 +9,7 @@ import {
 } from "@spectrum/config"
 import { createDataAdmin } from "@spectrum/data-admin"
 import { createSqliteClient, runMigrations } from "@spectrum/db"
+import { createAcpDriver } from "@spectrum/driver-acp"
 import { createCodexDriver } from "@spectrum/driver-codex"
 import { createOpencodeDriver } from "@spectrum/driver-opencode"
 import {
@@ -187,6 +188,8 @@ export const buildFakeAppContextDeps = (
     createOpencodeDriver:
       overrides.createOpencodeDriver ??
       (record("createOpencodeDriver") as never),
+    createAcpDriver:
+      overrides.createAcpDriver ?? (record("createAcpDriver") as never),
     createDataAdmin:
       overrides.createDataAdmin ?? (record("createDataAdmin") as never),
     createUploadStore:
@@ -231,6 +234,7 @@ export const realAdapterDefaults: Readonly<Record<string, unknown>> = {
   createFakeDriver,
   createCodexDriver,
   createOpencodeDriver,
+  createAcpDriver,
   createDataAdmin,
   migrateLegacyMacosConfig,
   migrateLaunchkitToSpectrum,
