@@ -139,6 +139,10 @@ session would stay fully featured.
 - **Mid-turn steering (Codex `turn/steer`) is gone.** ACP v1 is one prompt → one `stopReason`. (`claude-agent-acp` advertises `_meta.steering.supported`, so this may be reachable later via `_meta`.)
 - **Codex sandbox granularity is coarsened** to the three modes Codex advertises (`read-only`, `agent`, `agent-full-access`).
 - **Model switching depends on the agent.** It works where the agent advertises a `category: "model"` config option (OpenCode, Codex, Claude). Spectrum's own route ids will not match an agent's model list, so switching the Spectrum route still takes effect through the proxy env on the next session rather than mid-session.
+- **Codex resume is unresolved.** `codex-acp` advertises `loadSession: true` and a `resume` session
+  capability, but rejected a `session/load` of a live session with an internal error. OpenCode and
+  Claude both accept it. Needs a follow-up against the adapter's own semantics (it may want
+  `session/resume` rather than `session/load`).
 - **User-JSON harnesses declaring `acp` are not auto-registered.** The driver registry is built once at startup while the harness registry hot-reloads from disk. Builtins only.
 
 Reasoning effort is **not** a regression: both Claude (`thought_level`) and Codex (`reasoning_effort`) expose it as a session config option, and `setThinkingEffort` drives it.

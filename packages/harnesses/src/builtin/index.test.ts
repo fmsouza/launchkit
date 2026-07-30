@@ -127,14 +127,17 @@ describe("builtin ACP configs", () => {
     // back to the user's own ChatGPT login. Verified live against codex-acp.
     expect(codex.envTemplate.MODEL_PROVIDER).toBe("spectrum")
     expect(codex.envTemplate.CODEX_CONFIG).toContain("{{proxyUrl}}/v1")
-    expect(codex.envTemplate.CODEX_CONFIG).toContain("{{model}}")
+    // Deliberately NOT pinned to a Spectrum route id: Codex prints a "model metadata not found"
+    // warning into the conversation for one. The session key carries the route instead.
+    expect(codex.envTemplate.CODEX_CONFIG).not.toContain("{{model}}")
     expect(codex.envTemplate.OPENAI_API_KEY).toBe("{{proxyKey}}")
   })
 
   it("codex's ACP config env parses as JSON once rendered", () => {
-    const rendered = (codex.envTemplate.CODEX_CONFIG ?? "")
-      .replaceAll("{{proxyUrl}}", "http://127.0.0.1:4000")
-      .replaceAll("{{model}}", "mdl_x")
+    const rendered = (codex.envTemplate.CODEX_CONFIG ?? "").replaceAll(
+      "{{proxyUrl}}",
+      "http://127.0.0.1:4000",
+    )
     expect(() => JSON.parse(rendered) as unknown).not.toThrow()
   })
 

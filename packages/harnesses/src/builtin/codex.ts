@@ -17,8 +17,12 @@ export const codex: HarnessDefinition = {
     // codex-acp adapter reads MODEL_PROVIDER + CODEX_CONFIG (a JSON object merged into the Codex
     // session config) and honors OPENAI_API_KEY. Inert on the native path, which uses the args.
     MODEL_PROVIDER: "spectrum",
+    // NOTE: no "model" key. Pinning Codex to a Spectrum route id makes it print "Model metadata
+    // for `mdl_…` not found" into the conversation; leaving it unset lets Codex ask for its own
+    // default and the proxy routes it via the model encoded in the session key (resolvedVia
+    // "session-fallback"), which is exactly what that encoding is for.
     CODEX_CONFIG:
-      '{"model":"{{model}}","model_providers":{"spectrum":{"name":"Spectrum","base_url":"{{proxyUrl}}/v1","env_key":"OPENAI_API_KEY","wire_api":"responses"}}}',
+      '{"model_providers":{"spectrum":{"name":"Spectrum","base_url":"{{proxyUrl}}/v1","env_key":"OPENAI_API_KEY","wire_api":"responses"}}}',
   },
   argsTemplate: [
     "-c",

@@ -263,7 +263,11 @@ export const createAcpClient = async (deps: {
       call("session/set_mode", { sessionId, modeId }),
 
     sessionSetConfigOption: async (sessionId, configId, valueId) =>
-      call("session/set_config_option", { sessionId, configId, value: valueId }),
+      call("session/set_config_option", {
+        sessionId,
+        configId,
+        value: valueId,
+      }),
 
     sessionClose: async (sessionId) => call("session/close", { sessionId }),
 
