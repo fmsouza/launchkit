@@ -40,6 +40,30 @@ describe("pickAcpModeId", () => {
     // opencode names its default working mode "build" and its read-only one "plan".
     expect(pickAcpModeId("manual", ["build", "plan"])).toBe("build")
   })
+
+  it("maps codex's read-only / agent / agent-full-access vocabulary", () => {
+    // Observed live from `codex-acp`.
+    const codex = ["read-only", "agent", "agent-full-access"]
+    expect(pickAcpModeId("plan", codex)).toBe("read-only")
+    expect(pickAcpModeId("manual", codex)).toBe("agent")
+    expect(pickAcpModeId("bypass", codex)).toBe("agent-full-access")
+  })
+
+  it("maps claude's full mode vocabulary", () => {
+    // Observed live from `claude-agent-acp`.
+    const claude = [
+      "auto",
+      "default",
+      "acceptEdits",
+      "plan",
+      "dontAsk",
+      "bypassPermissions",
+    ]
+    expect(pickAcpModeId("manual", claude)).toBe("default")
+    expect(pickAcpModeId("auto-edits", claude)).toBe("acceptEdits")
+    expect(pickAcpModeId("plan", claude)).toBe("plan")
+    expect(pickAcpModeId("bypass", claude)).toBe("bypassPermissions")
+  })
 })
 
 describe("supportedModesFrom", () => {
@@ -60,5 +84,11 @@ describe("supportedModesFrom", () => {
         "bypassPermissions",
       ]),
     ).toEqual(["manual", "auto-edits", "plan", "bypass"])
+  })
+
+  it("reports manual/plan/bypass for codex, which has no accept-edits mode", () => {
+    expect(
+      supportedModesFrom(["read-only", "agent", "agent-full-access"]),
+    ).toEqual(["manual", "plan", "bypass"])
   })
 })

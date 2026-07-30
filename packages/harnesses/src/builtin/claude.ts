@@ -27,9 +27,10 @@ export const claude: HarnessDefinition = {
   },
   builtIn: true,
   // ACP launch: Claude Code has NO ACP mode of its own (verified: `claude --help` has no --acp
-  // flag). It reaches ACP through Zed's adapter, which is a separate binary from the
-  // `@zed-industries/claude-code-acp` package — install with
-  // `npm i -g @zed-industries/claude-code-acp`. The adapter drives Claude Code itself, so the
-  // proxy env below still applies to it.
-  acp: { command: "claude-code-acp", args: [], native: false },
+  // flag). It reaches ACP through the ACP project's adapter, a separate binary from the
+  // `@agentclientprotocol/claude-agent-acp` package — install with
+  // `npm i -g @agentclientprotocol/claude-agent-acp`. (The older `@zed-industries/claude-code-acp`
+  // is deprecated and its `session/new` fails.) The adapter drives Claude Code itself, so the
+  // proxy env above still applies.
+  acp: { command: "claude-agent-acp", args: [], native: false },
 } satisfies HarnessDefinition

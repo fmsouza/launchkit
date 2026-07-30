@@ -127,6 +127,29 @@ export const createAcpAdapter = (deps: AcpAdapterDeps): DriverAdapter => {
       }
       ctx.emit(rootStarted)
 
+      /** Apply a Spectrum permission mode through whichever surface this agent advertised. */
+      const applyMode = (mode: PermissionMode): void => {
+        const modeId = pickAcpModeId(mode, modeIds)
+        if (modeId === undefined) return
+        if (useSetMode) {
+          client.sessionSetMode(session.sessionId, modeId)
+          return
+        }
+        if (modeOption !== undefined)
+          client.sessionSetConfigOption(
+            session.sessionId,
+            modeOption.id,
+            modeId,
+          )
+      }
+
+      // Apply the run's permission mode UP FRONT rather than inheriting the agent's default.
+      // claude-agent-acp opens a session in `bypassPermissions` — every tool call auto-approved
+      // and the permission callback never consulted — so inheriting would silently disable
+      // Spectrum's approval cards. Absent an explicit mode, "manual" is Spectrum's default (and
+      // what the retired bespoke drivers used).
+      applyMode(input.permissionMode ?? "manual")
+
       const mapState: AcpMapState = {
         rootRunnerId: ctx.rootRunnerId,
         newRunnerId: ctx.newRunnerId,
@@ -212,20 +235,9 @@ export const createAcpAdapter = (deps: AcpAdapterDeps): DriverAdapter => {
         },
 
         setMode(mode: PermissionMode): void {
-          // Agent-defined mode ids: no-op when this agent cannot honor the mode. The UI only
+          // Agent-defined mode ids: a no-op when this agent cannot honor the mode. The UI only
           // offers modes from `supportedModes`, so this guard is defense in depth.
-          const modeId = pickAcpModeId(mode, modeIds)
-          if (modeId === undefined) return
-          if (useSetMode) {
-            client.sessionSetMode(session.sessionId, modeId)
-            return
-          }
-          if (modeOption !== undefined)
-            client.sessionSetConfigOption(
-              session.sessionId,
-              modeOption.id,
-              modeId,
-            )
+          applyMode(mode)
         },
 
         setModel(modelId: ModelId | null): void {

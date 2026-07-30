@@ -274,6 +274,36 @@ describe("createAcpAdapter — start", () => {
   })
 })
 
+describe("createAcpAdapter — initial permission mode", () => {
+  it("applies the run's permission mode at session start", async () => {
+    const client = createFakeClient({
+      availableModeIds: ["default", "acceptEdits", "plan", "bypassPermissions"],
+    })
+    await start(client, {}, { permissionMode: "plan" })
+    expect(client.modes).toEqual([{ sessionId: "acp-sess-1", modeId: "plan" }])
+  })
+
+  it("defaults to manual when the run carries no permission mode", async () => {
+    // claude-agent-acp starts a session in `bypassPermissions` — every tool call auto-approved and
+    // the permission callback never consulted. Spectrum's default has always been ask-me, so the
+    // adapter must set it rather than inherit whatever the agent chose.
+    const client = createFakeClient({
+      availableModeIds: ["default", "acceptEdits", "plan", "bypassPermissions"],
+    })
+    await start(client)
+    expect(client.modes).toEqual([
+      { sessionId: "acp-sess-1", modeId: "default" },
+    ])
+  })
+
+  it("does not set a mode when the agent advertises none", async () => {
+    const client = createFakeClient({ availableModeIds: [] })
+    await start(client, {}, { permissionMode: "plan" })
+    expect(client.modes).toEqual([])
+    expect(client.configCalls).toEqual([])
+  })
+})
+
 describe("createAcpAdapter — permission bridge", () => {
   it("answers a permission request with the option matching the user's decision", async () => {
     const client = createFakeClient()
@@ -398,6 +428,7 @@ describe("createAcpAdapter — handle", () => {
       availableModeIds: ["default", "bypassPermissions"],
     })
     const { handle } = await start(client)
+    client.modes.length = 0 // drop the start-time mode; assert the switch alone
     handle.setMode?.("bypass")
     expect(client.modes).toEqual([
       { sessionId: "acp-sess-1", modeId: "bypassPermissions" },
@@ -407,6 +438,7 @@ describe("createAcpAdapter — handle", () => {
   it("setMode does nothing when the agent cannot honor the mode", async () => {
     const client = createFakeClient({ availableModeIds: ["default"] })
     const { handle } = await start(client)
+    client.modes.length = 0
     handle.setMode?.("plan")
     expect(client.modes).toEqual([])
   })
@@ -616,6 +648,7 @@ describe("createAcpAdapter — session config options", () => {
       configOptions: [modeOption],
     })
     const { handle } = await start(client)
+    client.configCalls.length = 0 // drop the start-time mode; assert the switch alone
     handle.setMode?.("plan")
     expect(client.configCalls).toEqual([
       { sessionId: "acp-sess-1", configId: "mode", valueId: "plan" },
@@ -629,6 +662,7 @@ describe("createAcpAdapter — session config options", () => {
       configOptions: [modeOption],
     })
     const { handle } = await start(client)
+    client.modes.length = 0
     handle.setMode?.("plan")
     expect(client.modes).toEqual([{ sessionId: "acp-sess-1", modeId: "plan" }])
     expect(client.configCalls).toEqual([])

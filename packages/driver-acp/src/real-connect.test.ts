@@ -353,4 +353,66 @@ describe("createRealAcpConnect", () => {
 
     expect(killed).toBe(true)
   })
+
+  it("closes the child's stdin before killing it", async () => {
+    // An ACP agent exits cleanly on EOF; killing it with the pipe still open makes it die
+    // mid-write and spray EPIPE onto the app's stderr.
+    const order: string[] = []
+    const connect = createRealAcpConnect({
+      baseEnv: () => ({}),
+      spawn: () => ({
+        ...makeFakeProcess(),
+        stdin: {
+          write: () => {},
+          flush: () => {},
+          end: () => {
+            order.push("stdin.end")
+          },
+        },
+        kill: () => {
+          order.push("kill")
+        },
+      }),
+    })
+
+    const connection = await connect({
+      command: "/bin/agent",
+      args: [],
+      cwd: "/work",
+      env: {},
+    })
+    connection.close()
+
+    expect(order).toEqual(["stdin.end", "kill"])
+  })
+
+  it("still kills the child when closing stdin throws", async () => {
+    let killed = false
+    const connect = createRealAcpConnect({
+      baseEnv: () => ({}),
+      spawn: () => ({
+        ...makeFakeProcess(),
+        stdin: {
+          write: () => {},
+          flush: () => {},
+          end: () => {
+            throw new Error("already closed")
+          },
+        },
+        kill: () => {
+          killed = true
+        },
+      }),
+    })
+
+    const connection = await connect({
+      command: "/bin/agent",
+      args: [],
+      cwd: "/work",
+      env: {},
+    })
+    connection.close()
+
+    expect(killed).toBe(true)
+  })
 })

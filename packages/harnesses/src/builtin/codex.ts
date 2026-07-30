@@ -28,8 +28,9 @@ export const codex: HarnessDefinition = {
   ],
   builtIn: true,
   // ACP launch: `codex` has NO `acp` subcommand (verified against `codex --help`). It reaches ACP
-  // through Zed's adapter, a separate binary from the `@zed-industries/codex-acp` package —
-  // install with `npm i -g @zed-industries/codex-acp`. NOTE: `argsTemplate` above (the `-c`
+  // through a separate adapter binary from `@agentclientprotocol/codex-acp` — install with
+  // `npm i -g @agentclientprotocol/codex-acp`. (The older `@zed-industries/codex-acp` is
+  // deprecated but ships the same `codex-acp` binary.) NOTE: `argsTemplate` above (the `-c`
   // provider overrides that route codex through the proxy) is NOT passed in ACP mode; the shim's
   // provider routing is verified per ticket #121.
   acp: { command: "codex-acp", args: [], native: false },

@@ -104,9 +104,9 @@ describe("openclaw (gateway, re-architected)", () => {
 })
 
 describe("builtin ACP configs", () => {
-  it("claude reaches ACP through the claude-code-acp shim binary", () => {
+  it("claude reaches ACP through the claude-agent-acp adapter binary", () => {
     expect(claude.acp?.native).toBe(false)
-    expect(claude.acp?.command).toBe("claude-code-acp")
+    expect(claude.acp?.command).toBe("claude-agent-acp")
   })
 
   it("codex reaches ACP through the codex-acp shim binary", () => {

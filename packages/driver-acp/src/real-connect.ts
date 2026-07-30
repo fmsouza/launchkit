@@ -356,8 +356,25 @@ export const createRealAcpConnect = (deps: {
     return {
       client,
       close: () => {
-        client.close()
-        child.kill()
+        // Close stdin FIRST: an ACP agent exits cleanly on EOF, while killing it while the pipe is
+        // still open makes it die mid-write (EPIPE noise on the app's stderr). `kill` remains the
+        // backstop for an agent that ignores EOF. Each step is independently guarded so a failure
+        // in one still runs the rest — `close` must be idempotent and total.
+        try {
+          child.stdin.end()
+        } catch {
+          /* already closed */
+        }
+        try {
+          client.close()
+        } catch {
+          /* already closed */
+        }
+        try {
+          child.kill()
+        } catch {
+          /* already exited */
+        }
       },
     }
   }
