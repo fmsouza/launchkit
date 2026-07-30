@@ -584,39 +584,38 @@ describe("createAppContext native run path wiring", () => {
     expect(typeof ctx.runEvents.read).toBe("function")
   })
 
-  it("does not register claude as native (bespoke driver retired — all harnesses route to ACP)", () => {
+  it("registers claude as native (it routes to the shared ACP driver)", () => {
     const { deps } = makeFakeDeps()
     const ctx = createAppContext(deps)
+    expect(ctx.driverRegistry.isNative("claude" as never)).toBe(true)
+  })
+
+  it("registers codex as native (it routes to the shared ACP driver)", () => {
+    const ctx = createAppContext(makeFakeDeps().deps)
+    expect(ctx.driverRegistry.isNative("codex" as never)).toBe(true)
+  })
+
+  it("registers opencode as native (it routes to the shared ACP driver)", () => {
+    const ctx = createAppContext(makeFakeDeps().deps)
+    expect(ctx.driverRegistry.isNative("opencode" as never)).toBe(true)
+  })
+
+  it("registers openclaw as native (it routes to the shared ACP driver)", () => {
+    const ctx = createAppContext(makeFakeDeps().deps)
+    expect(ctx.driverRegistry.isNative("openclaw" as never)).toBe(true)
+  })
+
+  it("does not register the demo harness as native when the demo flag is off", () => {
+    const ctx = createAppContext(makeFakeDeps().deps)
     expect(ctx.driverRegistry.isNative("demo" as never)).toBe(false)
-    expect(ctx.driverRegistry.isNative("claude" as never)).toBe(false)
   })
 
-  it("does not register codex as native (bespoke driver retired)", () => {
-    const ctx = createAppContext(makeFakeDeps().deps)
-    expect(ctx.driverRegistry.isNative("codex" as never)).toBe(false)
-  })
-
-  it("does not register opencode as native (bespoke driver retired)", () => {
-    const ctx = createAppContext(makeFakeDeps().deps)
-    expect(ctx.driverRegistry.isNative("opencode" as never)).toBe(false)
-  })
-
-  it("does not register openclaw as native (bespoke driver retired)", () => {
-    const ctx = createAppContext(makeFakeDeps().deps)
-    expect(ctx.driverRegistry.isNative("openclaw" as never)).toBe(false)
-  })
-
-  it("surfaces native:false for openclaw (bespoke driver retired, routes to ACP)", () => {
-    const ctx = createAppContext(makeFakeDeps().deps)
-    expect(ctx.driverRegistry.isNative("openclaw" as never)).toBe(false)
-  })
-
-  it("registers no native drivers when the demo flag is off (all harnesses route to ACP)", () => {
+  it("still registers the ACP harnesses as native when the demo flag is off", () => {
     const ctx = createAppContext({
       ...makeFakeDeps().deps,
       demoHarnessEnabled: false,
     })
-    expect(ctx.driverRegistry.isNative("claude" as never)).toBe(false)
+    expect(ctx.driverRegistry.isNative("claude" as never)).toBe(true)
     expect(ctx.driverRegistry.isNative("demo" as never)).toBe(false)
   })
 
@@ -929,5 +928,38 @@ describe("createAppContext ACP driver wiring", () => {
       env: {},
     })
     expect(acpStartCalled).toBe(true)
+  })
+
+  it("reports ACP-routed harnesses as native so the GUI can launch them", () => {
+    const { deps } = makeFakeDeps()
+    const ctx = createAppContext(deps)
+    expect(ctx.driverRegistry.isNative("claude" as HarnessId)).toBe(true)
+    expect(ctx.driverRegistry.isNative("codex" as HarnessId)).toBe(true)
+    expect(ctx.driverRegistry.isNative("opencode" as HarnessId)).toBe(true)
+    expect(ctx.driverRegistry.isNative("openclaw" as HarnessId)).toBe(true)
+  })
+
+  it("does not report an unknown harness as native", () => {
+    const { deps } = makeFakeDeps()
+    const ctx = createAppContext(deps)
+    expect(ctx.driverRegistry.isNative("nope" as HarnessId)).toBe(false)
+  })
+
+  it("resolves the ACP driver from the registry for an ACP harness", () => {
+    let started = false
+    const { deps } = makeFakeDeps()
+    ;(deps as { createAcpDriver: unknown }).createAcpDriver = (() => ({
+      start: () => {
+        started = true
+        return ok({}) as never
+      },
+    })) as never
+    const ctx = createAppContext(deps)
+    ctx.driverRegistry.get("claude" as HarnessId)?.start({
+      harnessId: "claude" as HarnessId,
+      cwd: "/tmp",
+      env: {},
+    })
+    expect(started).toBe(true)
   })
 })
