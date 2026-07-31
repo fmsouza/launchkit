@@ -2,7 +2,13 @@ import { describe, expect, it } from "bun:test"
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { isLauncherEntry, resolveAppExecutable, smokeHealthPort } from "./smoke"
+import {
+  isLauncherEntry,
+  resolveAppExecutable,
+  smokeHealthPort,
+  teardownPlan,
+  terminateAppTree,
+} from "./smoke"
 
 describe("smokeHealthPort", () => {
   it("polls the dev bundle's channel-offset proxy port, not the base port", () => {
@@ -79,5 +85,72 @@ describe("resolveAppExecutable", () => {
         "macos",
       ),
     ).toThrow(/build dir not found/)
+  })
+})
+
+describe("teardownPlan", () => {
+  // The Electrobun launcher spawns the real app as its OWN child, so signalling only the
+  // launcher pid leaves the app (and its CEF helpers) alive holding the inherited stdout —
+  // the runner's log pipe never reaches EOF and the job hangs to the 6h default timeout.
+  // Teardown must therefore target the whole process GROUP, not the direct child.
+  it("signals the whole process group on posix, escalating TERM to KILL", () => {
+    expect(teardownPlan("linux")).toEqual([
+      { kind: "signal-group", signal: "SIGTERM" },
+      { kind: "signal-group", signal: "SIGKILL" },
+    ])
+    expect(teardownPlan("macos")).toEqual(teardownPlan("linux"))
+  })
+
+  it("kills the process tree via taskkill on windows (no posix process groups)", () => {
+    expect(teardownPlan("windows")).toEqual([{ kind: "taskkill-tree" }])
+  })
+})
+
+describe("terminateAppTree", () => {
+  it("escalates to SIGKILL on the group when SIGTERM leaves the tree alive", () => {
+    const signalled: ReadonlyArray<string>[] = []
+    terminateAppTree(4242, {
+      platform: "linux",
+      signalGroup: (pid, signal) => {
+        signalled.push([String(pid), signal])
+      },
+      killTree: () => {
+        throw new Error("taskkill must not be used on linux")
+      },
+    })
+    // Negative pid = "the whole process group led by 4242", which is what actually
+    // reaps the launcher's grandchildren.
+    expect(signalled).toEqual([
+      ["-4242", "SIGTERM"],
+      ["-4242", "SIGKILL"],
+    ])
+  })
+
+  it("uses taskkill on windows instead of group signals", () => {
+    let treeKilled: number | null = null
+    terminateAppTree(777, {
+      platform: "windows",
+      signalGroup: () => {
+        throw new Error("posix group signals must not be used on windows")
+      },
+      killTree: (pid) => {
+        treeKilled = pid
+      },
+    })
+    expect(treeKilled).toBe(777)
+  })
+
+  it("keeps going when the group is already gone (ESRCH is success, not failure)", () => {
+    // A tree that died on its own must not fail the smoke — the goal is "nothing survives",
+    // and an already-dead group satisfies it.
+    expect(() =>
+      terminateAppTree(1, {
+        platform: "linux",
+        signalGroup: () => {
+          throw new Error("ESRCH: no such process")
+        },
+        killTree: () => {},
+      }),
+    ).not.toThrow()
   })
 })
