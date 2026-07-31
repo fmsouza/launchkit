@@ -112,9 +112,10 @@ curl -LO https://github.com/fmsouza/spectrum/releases/latest/download/checksums-
 shasum -a 256 -c checksums-sha256.txt --ignore-missing
 ```
 
-Prefer the bleeding edge? Every push to `main` publishes a
+Prefer the bleeding edge? A nightly build of `main` publishes a
 [pre-release canary](https://github.com/fmsouza/spectrum/releases) (`vX.Y.Z-canary.N`)
-with the same set of assets — unstable, but current.
+with the same set of assets — unstable, but current. Nights with nothing new
+merged are skipped, so every canary carries real changes.
 
 ## Build from source
 
