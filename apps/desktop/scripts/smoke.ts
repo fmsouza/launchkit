@@ -62,6 +62,49 @@ export const resolveAppExecutable = (
   return exe
 }
 
+/**
+ * How the smoked app is torn down. The Electrobun launcher spawns the real app as its OWN
+ * child (and CEF spawns helpers under that), so signalling just the launcher pid leaves the
+ * tree alive holding the smoke's stdio — the CI step's log pipe never reaches EOF and the job
+ * hangs to GitHub's 6h default timeout (v1.9.0 / the 2026-07-30 canary, on linux-arm64, where
+ * the orphaned app entered a `stack smashing detected` respawn loop AFTER the smoke passed).
+ * Teardown therefore targets the whole process GROUP, never the direct child alone.
+ */
+export type TeardownStep =
+  | { readonly kind: "signal-group"; readonly signal: "SIGTERM" | "SIGKILL" }
+  | { readonly kind: "taskkill-tree" }
+
+/** Windows has no posix process groups — `taskkill /T` is its tree-kill equivalent. */
+export const teardownPlan = (platform: Platform): readonly TeardownStep[] =>
+  platform === "windows"
+    ? [{ kind: "taskkill-tree" }]
+    : [
+        { kind: "signal-group", signal: "SIGTERM" },
+        { kind: "signal-group", signal: "SIGKILL" },
+      ]
+
+export type TerminateDeps = {
+  readonly platform: Platform
+  /** Signal a process GROUP; `pid` is already negated (`-1234`) per posix convention. */
+  readonly signalGroup: (pid: string, signal: string) => void
+  readonly killTree: (pid: number) => void
+}
+
+/**
+ * Reap the smoked app's entire process tree. Every step is best-effort: a group that already
+ * exited raises ESRCH, which means "nothing survives" — the goal — so it must not fail the smoke.
+ */
+export const terminateAppTree = (pid: number, deps: TerminateDeps): void => {
+  for (const step of teardownPlan(deps.platform)) {
+    try {
+      if (step.kind === "taskkill-tree") deps.killTree(pid)
+      else deps.signalGroup(`-${pid}`, step.signal)
+    } catch {
+      // already dead (ESRCH) or unsignalable — either way nothing is left to reap
+    }
+  }
+}
+
 const pollHealth = async (): Promise<boolean> => {
   for (let i = 0; i < 40; i++) {
     try {
@@ -77,22 +120,55 @@ const pollHealth = async (): Promise<boolean> => {
   return false
 }
 
+/** Forward the child's output to our own stdio WITHOUT ever awaiting completion. */
+const forward = (
+  stream: ReadableStream<Uint8Array> | undefined,
+  sink: NodeJS.WriteStream,
+): void => {
+  if (!stream) return
+  void (async (): Promise<void> => {
+    try {
+      for await (const chunk of stream) sink.write(chunk)
+    } catch {
+      // the app died mid-write; its exit is the signal we care about, not this stream
+    }
+  })()
+}
+
+const realTerminateDeps: TerminateDeps = {
+  platform: detectPlatform(),
+  signalGroup: (pid, signal) => process.kill(Number(pid), signal),
+  killTree: (pid) => {
+    Bun.spawnSync(["taskkill", "/pid", String(pid), "/T", "/F"])
+  },
+}
+
 const main = async (): Promise<void> => {
   const exe = resolveAppExecutable()
   console.log(`==> launching ${exe}`)
-  const proc = Bun.spawn([exe], { stdout: "inherit", stderr: "inherit" })
-  try {
-    const ok = await pollHealth()
-    if (!ok) {
-      console.error(
-        `FAIL: proxy never answered /health on 127.0.0.1:${PORT} after launch`,
-      )
-      process.exit(1)
-    }
+  // `detached` makes the child a process-GROUP leader, so teardown can reap the launcher's
+  // grandchildren (the real app + CEF helpers) in one signal. Piping rather than inheriting
+  // means the CI step's stdout is held by THIS process alone: even if a grandchild survives,
+  // the log pipe still reaches EOF when the smoke exits, so the step can never hang.
+  const proc = Bun.spawn([exe], {
+    stdout: "pipe",
+    stderr: "pipe",
+    detached: true,
+  })
+  forward(proc.stdout, process.stdout)
+  forward(proc.stderr, process.stderr)
+  const ok = await pollHealth()
+  if (ok) {
     console.log("PASS: app launched and proxy answered /health on loopback")
-  } finally {
-    proc.kill()
+  } else {
+    console.error(
+      `FAIL: proxy never answered /health on 127.0.0.1:${PORT} after launch`,
+    )
   }
+  terminateAppTree(proc.pid, realTerminateDeps)
+  // Exit explicitly: a wedged app (or a CEF crash-respawn loop) must never keep the smoke
+  // alive waiting on a stray handle — the verdict is already decided above.
+  process.exit(ok ? 0 : 1)
 }
 
 // Only launch when run directly (`bun scripts/smoke.ts`); importing for tests must not spawn.
