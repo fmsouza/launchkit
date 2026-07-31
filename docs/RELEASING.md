@@ -11,6 +11,35 @@ need no credentials.
 > your certificate + API key actually work, locally, before adding any GitHub
 > Secrets. See [Validate locally first](#validate-locally-first) below.
 
+## Release cadence
+
+| Channel | Trigger | Tag |
+|---------|---------|-----|
+| **stable** | pushing a `v*` tag (`bun run release:patch\|minor\|major` bumps + tags; push it to fire `release.yml`) | `vX.Y.Z` |
+| **canary** | nightly schedule at **03:17 UTC**, plus manual dispatch | `vX.Y.Z-canary.N` |
+
+Canary is a *nightly* channel: one build per night covering everything merged
+since the previous canary — not one build per merge. A night with nothing new
+publishes nothing: the `version` job compares `main`'s HEAD against the commit
+behind the newest canary tag and skips the rest of the pipeline when they match,
+so every `canary.N` carries real changes.
+
+Need a canary before the next scheduled run:
+
+```sh
+gh workflow run canary.yml
+```
+
+(or **Actions → Canary Release → Run workflow**). A manual run always builds,
+bypassing the no-new-commits guard.
+
+Every push to `main` and every pull request still runs the full verify gate
+(`ci.yml`: typecheck, lint, test, audit) — only the *build* is nightly.
+
+> GitHub disables scheduled workflows in a repository with no activity for 60
+> days. Any push re-enables them; check **Actions → Canary Release** if nightly
+> canaries stop appearing.
+
 ## Prerequisites
 
 - An **Apple Developer Program** membership (the team that owns the Developer ID).

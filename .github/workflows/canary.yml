@@ -1,36 +1,45 @@
 name: Canary Release
 
+# Canary is a NIGHTLY channel: one build per night covering everything merged
+# since the previous canary — never one build per merge. `ci.yml` still runs the
+# full verify gate on every push to main and every PR, so main stays verified
+# per-merge; only the five-platform build + publish is nightly.
 on:
-  push:
-    branches: [main]
+  schedule:
+    # 03:17 UTC. GitHub cron is UTC-only (no DST shift) and scheduled runs fire
+    # on the DEFAULT BRANCH only — i.e. main, the same source the old
+    # `push: branches: [main]` trigger used, so `github.sha` is still main's tip.
+    # The `:17` is deliberate: the scheduler is congested at :00 and delays runs
+    # queued there.
+    # NOTE: GitHub disables scheduled workflows in a repository with no activity
+    # for 60 days. Any push re-enables them.
+    - cron: "17 3 * * *"
+  # Manual "Run workflow" (Actions tab, or `gh workflow run canary.yml`) for an
+  # on-demand canary. A manual run ALWAYS builds — it bypasses the
+  # no-new-commits guard in the `version` job.
+  workflow_dispatch:
 
 concurrency:
   group: canary-release
-  cancel-in-progress: true
+  # Queue, never cancel. Under the per-merge trigger a newer commit legitimately
+  # superseded an in-flight run. Now the realistic collision is a manual dispatch
+  # landing on a running nightly, and killing that between `gh release create`
+  # (tag + release page already published) and the update-feed upload would leave
+  # a half-published canary behind.
+  cancel-in-progress: false
 
 permissions:
   contents: write
 
 jobs:
-  gate:
-    name: Quality Gate
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.3.14
-      - run: bun install --frozen-lockfile
-      - run: bun run typecheck
-      - run: bun run lint
-      - run: bun test
-      - run: bun audit
-
+  # Runs FIRST and is read-only (it only lists releases), so an idle night is
+  # decided before a single runner-minute is spent on the gate or the build
+  # matrices.
   version:
     name: Determine canary version
-    needs: gate
     runs-on: ubuntu-latest
     outputs:
+      should-build: ${{ steps.version.outputs.should-build }}
       canary-build: ${{ steps.version.outputs.canary-build }}
       canary-tag: ${{ steps.version.outputs.tag }}
       start-tag: ${{ steps.version.outputs.start-tag }}
@@ -40,6 +49,7 @@ jobs:
         id: version
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          EVENT_NAME: ${{ github.event_name }}
         run: |
           VERSION=$(jq -r .version package.json)
           LATEST=$(gh release list --limit 200 --json tagName --jq \
@@ -66,6 +76,53 @@ jobs:
               | sort -V | tail -n1)
           fi
           echo "start-tag=${START_TAG}" >> "$GITHUB_OUTPUT"
+
+          # Nightly guard — the previous canary (START_TAG) doubles as the "last
+          # built commit" marker, so no extra release lookup is needed. Skip only
+          # when that tag points at the exact commit this run would rebuild.
+          # `gh release create` writes LIGHTWEIGHT tags, so `.object.sha` IS the
+          # commit sha; were a tag ever annotated it would be the tag object
+          # instead and the comparison would report "changed" — erring toward
+          # building, never toward silently skipping. Same on API failure
+          # (PREV_SHA empty). Resolving via the API keeps the default shallow
+          # checkout (no fetch-depth: 0).
+          SHOULD_BUILD=true
+          if [ "${EVENT_NAME}" = "workflow_dispatch" ]; then
+            echo "Manual dispatch — building regardless of new commits."
+          elif [ -n "${START_TAG}" ]; then
+            PREV_SHA=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${START_TAG}" --jq '.object.sha' || echo "")
+            echo "Previous canary ${START_TAG} -> ${PREV_SHA:-<unresolved>}; HEAD -> ${GITHUB_SHA}"
+            if [ "${PREV_SHA}" = "${GITHUB_SHA}" ]; then
+              SHOULD_BUILD=false
+            fi
+          fi
+          echo "should-build=${SHOULD_BUILD}" >> "$GITHUB_OUTPUT"
+          if [ "${SHOULD_BUILD}" = "false" ]; then
+            {
+              echo "### Canary skipped"
+              echo
+              echo "No commits on \`main\` since \`${START_TAG}\` (\`${GITHUB_SHA}\`) — nothing to build."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  gate:
+    name: Quality Gate
+    needs: version
+    # An idle night stops here. GitHub skips the dependents of a skipped job, so
+    # build-cli, build-desktop and release fall away with the gate — a night with
+    # no new commits costs one short `version` job and nothing else.
+    if: needs.version.outputs.should-build == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - run: bun install --frozen-lockfile
+      - run: bun run typecheck
+      - run: bun run lint
+      - run: bun test
+      - run: bun audit
 
   build-cli:
     name: Build CLI (${{ matrix.name }})
