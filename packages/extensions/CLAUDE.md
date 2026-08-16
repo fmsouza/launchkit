@@ -16,7 +16,24 @@ task that consumes `parseManifest`.
   then reports which `contributes` keys were present but unknown (`ignoredContributions`)
 - `KNOWN_CONTRIBUTION_KEYS` — the `contributes` keys this Spectrum understands (`["providers"]`)
 - `SUPPORTED_API_MAJOR`, `parseApiVersion`, `isSupportedApiVersion`
-- `ProviderContributionSchema` — stub (`z.unknown()`) pending the provider-contribution shape
+- `ProviderContributionSchema` / `ProviderContribution` — one LLM provider a plugin
+  contributes: a descriptor (config/secret fields, reasoning, discovery, actions — mirrors
+  `@spectrum/providers`' builtin shape) + a transport (`kind: "http"`, `wire`, an optional
+  `launch` for a Spectrum-spawned server). A contribution declaring no `actions` defaults to
+  `defaultActions` from `@spectrum/providers`, same as a builtin.
+- `PluginLaunchSchema` / `PluginLaunch` — how a plugin's provider server is launched as a
+  local child process: `command`, `args`, `envTemplate`, optional `cwd`, `healthPath`
+  (default `/models`), `readyTimeoutMs` (default 10 000)
+- `RUNTIME_TOKENS` — the fixed template tokens every launch may use regardless of what the
+  contribution declares: `port`, `host`, `baseUrl`, `hostToken`
+- `allowedTokensFor(contribution): ReadonlySet<string>` — RUNTIME_TOKENS plus the
+  contribution's own declared secret and config field names; computed per contribution,
+  unlike harnesses' fixed token list
+- `validateContributionTemplates(contribution): Result<void, PluginError>` — rejects any
+  `{{token}}` in the launch's env or args that isn't in `allowedTokensFor`
+- `renderPluginEnv(launch, values)` / `renderPluginArgs(launch, values)` — substitute
+  `{{token}}` in a launch's env/args; a token with no supplied value renders to `""`
+  (rendering assumes `validateContributionTemplates` already ran — it never errors)
 - `PluginError` — the complete extension error union; declared complete here so no later
   plan adds variants to it
 
@@ -27,3 +44,10 @@ task that consumes `parseManifest`.
   untouched rather than rejecting them, so an older Spectrum can still install a manifest
   written for a newer one and simply contribute less.
 - Zero IO. `parseManifest` takes `unknown` and returns `Result`; it never throws.
+- `ProviderContributionSchema`'s `reasoning`/`discovery` fields validate against
+  `ReasoningSupportSchema`/`DiscoverySchema` from `@spectrum/providers` — zod counterparts to
+  that package's hand-written `ReasoningSupport`/`DiscoverySpec` types, pinned to them by a
+  compile-time assertion so the two can't silently drift.
+- Template validation and rendering are split: `validateContributionTemplates` is the only
+  place unknown tokens are rejected; `renderPluginEnv`/`renderPluginArgs` are pure
+  substitution and never fail, so callers must validate before spawning.

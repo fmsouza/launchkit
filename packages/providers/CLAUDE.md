@@ -2,7 +2,7 @@
 
 **Responsibility:** the provider catalog — one declarative `ProviderDescriptor` per `SdkProvider` (config/secret field specs, per-provider zod config schema, SDK-option mapping, discovery spec) + the presentational `ProviderCatalogEntry` projection + `validateProviderConfig`.
 
-**Public API (barrel `src/index.ts`):** `ProviderDescriptor`/`ConfigFieldSpec(Schema)`/`SecretFieldSpec(Schema)`/`ProviderCatalogEntry(Schema)`/`ProviderAction(Schema)`/`ApiKeyMapping`/`DiscoverySpec`/`SdkMapping`/`ProviderConfigError`; `getDescriptor`, `listDescriptors`, `toCatalogEntry`, `providerCatalog`, `defaultActions`; `validateProviderConfig`; `createProviderRegistry`/`ProviderRegistry`.
+**Public API (barrel `src/index.ts`):** `ProviderDescriptor`/`ConfigFieldSpec(Schema)`/`SecretFieldSpec(Schema)`/`ProviderCatalogEntry(Schema)`/`ProviderAction(Schema)`/`ApiKeyMapping`/`DiscoverySpec`/`DiscoverySchema`/`SdkMapping`/`ProviderConfigError`/`ReasoningSupport`/`ReasoningSupportSchema`/`ReasoningShape`; `getDescriptor`, `listDescriptors`, `toCatalogEntry`, `providerCatalog`, `defaultActions`; `validateProviderConfig`; `createProviderRegistry`/`ProviderRegistry`. `DiscoverySchema`/`ReasoningSupportSchema` are zod counterparts to the hand-written `DiscoverySpec`/`ReasoningSupport` types (used by `@spectrum/extensions` to validate plugin-contributed descriptors); each type stays authoritative and a compile-time assertion pins the schema to it so they can't drift silently.
 
 **Depends on:** `@spectrum/types`, `@spectrum/utils`, zod.
 
