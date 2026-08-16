@@ -1,10 +1,10 @@
-import type { SdkProvider } from "@spectrum/types"
+import type { ProviderKey } from "@spectrum/types"
 import type { ModelHandle } from "./providers/factory"
 import type { NormalizedRequest, StreamEvent } from "./types"
 
 /** Per-request context the gateway uses to pick provider-aware behavior. */
 export interface StreamContext {
-  readonly sdkProvider: SdkProvider
+  readonly sdkProvider: ProviderKey
   readonly providerModel: string
 }
 

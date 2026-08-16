@@ -3,6 +3,7 @@ import {
   reasoningDisablesTemperature,
   resolveReasoning,
 } from "@spectrum/providers"
+import { SdkProviderSchema } from "@spectrum/types"
 import { jsonSchema, streamText } from "ai"
 import type {
   LanguageModelGateway,
@@ -24,7 +25,9 @@ export const reasoningOptionsFor = (
   tier: NormalizedRequest["thinkingEffort"],
 ): Record<string, unknown> | undefined => {
   if (tier === undefined) return undefined
-  const support = resolveReasoning(ctx.sdkProvider, ctx.providerModel)
+  const validated = SdkProviderSchema.safeParse(ctx.sdkProvider)
+  if (!validated.success) return undefined
+  const support = resolveReasoning(validated.data, ctx.providerModel)
   return buildProviderOptions(support, tier)
 }
 
@@ -271,9 +274,14 @@ export const createRealGateway = (opts?: {
     const dropTemp =
       reasoning !== undefined &&
       ctx !== undefined &&
-      reasoningDisablesTemperature(
-        resolveReasoning(ctx.sdkProvider, ctx.providerModel),
-      )
+      (() => {
+        const validated = SdkProviderSchema.safeParse(ctx.sdkProvider)
+        return validated.success
+          ? reasoningDisablesTemperature(
+              resolveReasoning(validated.data, ctx.providerModel),
+            )
+          : false
+      })()
 
     // firstChunkSeen is shared across both run() invocations so the fallback
     // retry is only attempted in the pre-first-chunk window.

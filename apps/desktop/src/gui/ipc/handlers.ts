@@ -11,8 +11,8 @@ import {
   providerCatalog,
   validateProviderConfig,
 } from "@spectrum/providers"
+import { SdkProviderSchema, wireModelFor } from "@spectrum/types"
 import type { ModelId, ModelRoute, Provider, SecretRef } from "@spectrum/types"
-import { wireModelFor } from "@spectrum/types"
 import { isOk } from "@spectrum/utils"
 import type { GuiContext } from "../../composition"
 import { buildUpdateState as buildUpdateStateShared } from "../updater/build-update-state"
@@ -793,13 +793,16 @@ export const createIpcHandlers = (ctx: GuiContext): IpcHandlers => {
       secrets,
       providerModel,
     }) => {
-      const valid = validateProviderConfig(sdkProvider, config)
+      const validated = SdkProviderSchema.safeParse(sdkProvider)
+      if (!validated.success)
+        return fail(`provider key not supported: ${sdkProvider}`)
+      const valid = validateProviderConfig(validated.data, config)
       if (!valid.ok) return fail(`invalid provider config: ${valid.error.kind}`)
       // A connectivity probe needs a model to ping; fall back to the sdkProvider name
       // when none was chosen yet (mirrors testProvider's provider.models[0] ?? id fallback).
-      const model = providerModel.trim() !== "" ? providerModel : sdkProvider
+      const model = providerModel.trim() !== "" ? providerModel : validated.data
       const result = await ctx.testProviderDraft({
-        sdkProvider,
+        sdkProvider: validated.data,
         config,
         secrets,
         providerModel: model,
@@ -812,10 +815,13 @@ export const createIpcHandlers = (ctx: GuiContext): IpcHandlers => {
     },
 
     listProviderModelsDraft: async ({ sdkProvider, config, secrets }) => {
-      const valid = validateProviderConfig(sdkProvider, config)
+      const validated = SdkProviderSchema.safeParse(sdkProvider)
+      if (!validated.success)
+        return fail(`provider key not supported: ${sdkProvider}`)
+      const valid = validateProviderConfig(validated.data, config)
       if (!valid.ok) return fail(`invalid provider config: ${valid.error.kind}`)
       const result = await ctx.listProviderModelsDraft({
-        sdkProvider,
+        sdkProvider: validated.data,
         config,
         secrets,
       })

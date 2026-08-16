@@ -10,6 +10,7 @@ import type { SecretStore } from "@spectrum/secrets"
 import {
   type HarnessId,
   type ModelId,
+  SdkProviderSchema,
   type SessionId,
   wireModelFor,
 } from "@spectrum/types"
@@ -133,8 +134,16 @@ const createListProviderModels = (
       apiKey = got.value
     }
 
+    const validated = SdkProviderSchema.safeParse(provider.sdkProvider)
+    if (!validated.success) {
+      return err({
+        kind: "provider-failed",
+        detail: `provider key not supported: ${provider.sdkProvider}`,
+      })
+    }
+
     return lister({
-      sdkProvider: provider.sdkProvider,
+      sdkProvider: validated.data,
       config: provider.config,
       ...(apiKey !== undefined ? { apiKey } : {}),
     })
@@ -463,9 +472,10 @@ export const createAppContext = (
         firstTokenTimeoutMs: s.firstTokenTimeoutMs,
         interTokenTimeoutMs: s.interTokenTimeoutMs,
       }
-      return ctx === undefined
-        ? windows
-        : resolveTimeouts(getDescriptor(ctx.sdkProvider).streaming, windows)
+      if (ctx === undefined) return windows
+      const validated = SdkProviderSchema.safeParse(ctx.sdkProvider)
+      if (!validated.success) return windows
+      return resolveTimeouts(getDescriptor(validated.data).streaming, windows)
     },
   })
 
