@@ -137,8 +137,8 @@ const createListProviderModels = (
     const validated = SdkProviderSchema.safeParse(provider.sdkProvider)
     if (!validated.success) {
       return err({
-        kind: "provider-failed",
-        detail: `provider key not supported: ${provider.sdkProvider}`,
+        kind: "unsupported-provider",
+        sdkProvider: provider.sdkProvider,
       })
     }
 

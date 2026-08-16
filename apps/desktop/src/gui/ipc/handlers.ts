@@ -11,7 +11,7 @@ import {
   providerCatalog,
   validateProviderConfig,
 } from "@spectrum/providers"
-import { SdkProviderSchema, wireModelFor } from "@spectrum/types"
+import { wireModelFor } from "@spectrum/types"
 import type { ModelId, ModelRoute, Provider, SecretRef } from "@spectrum/types"
 import { isOk } from "@spectrum/utils"
 import type { GuiContext } from "../../composition"
@@ -793,16 +793,13 @@ export const createIpcHandlers = (ctx: GuiContext): IpcHandlers => {
       secrets,
       providerModel,
     }) => {
-      const validated = SdkProviderSchema.safeParse(sdkProvider)
-      if (!validated.success)
-        return fail(`provider key not supported: ${sdkProvider}`)
-      const valid = validateProviderConfig(validated.data, config)
+      const valid = validateProviderConfig(sdkProvider, config)
       if (!valid.ok) return fail(`invalid provider config: ${valid.error.kind}`)
       // A connectivity probe needs a model to ping; fall back to the sdkProvider name
       // when none was chosen yet (mirrors testProvider's provider.models[0] ?? id fallback).
-      const model = providerModel.trim() !== "" ? providerModel : validated.data
+      const model = providerModel.trim() !== "" ? providerModel : sdkProvider
       const result = await ctx.testProviderDraft({
-        sdkProvider: validated.data,
+        sdkProvider,
         config,
         secrets,
         providerModel: model,
@@ -815,13 +812,10 @@ export const createIpcHandlers = (ctx: GuiContext): IpcHandlers => {
     },
 
     listProviderModelsDraft: async ({ sdkProvider, config, secrets }) => {
-      const validated = SdkProviderSchema.safeParse(sdkProvider)
-      if (!validated.success)
-        return fail(`provider key not supported: ${sdkProvider}`)
-      const valid = validateProviderConfig(validated.data, config)
+      const valid = validateProviderConfig(sdkProvider, config)
       if (!valid.ok) return fail(`invalid provider config: ${valid.error.kind}`)
       const result = await ctx.listProviderModelsDraft({
-        sdkProvider: validated.data,
+        sdkProvider,
         config,
         secrets,
       })

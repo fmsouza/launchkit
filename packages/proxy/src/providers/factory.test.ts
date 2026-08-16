@@ -3,7 +3,7 @@ import {
   createInMemoryKeychainBackend,
   createSecretStore,
 } from "@spectrum/secrets"
-import type { Provider } from "@spectrum/types"
+import type { Provider, ProviderKey } from "@spectrum/types"
 import { createSequentialIdGen } from "@spectrum/utils"
 import { createProviderFactory } from "./factory"
 
@@ -137,5 +137,22 @@ describe("createProviderFactory.getModelFromResolved", () => {
     expect(loadSdk).toHaveBeenCalledWith("openai")
     // The returned model handle carries the requested model id.
     expect(r.ok && (r.value as { id: string }).id).toBe("gpt-4o")
+  })
+  it("rejects a plugin-contributed provider with unsupported-provider error", async () => {
+    const store = createSecretStore({
+      backend: createInMemoryKeychainBackend(),
+      idGen: createSequentialIdGen(),
+    })
+    const loadSdk = mock(async () => ({ create: () => ({}) }))
+    const factory = createProviderFactory({ secretStore: store, loadSdk })
+    const pluginProvider = makeProvider({
+      sdkProvider: "plugin:my-provider" as ProviderKey,
+    })
+    const r = await factory.getModel(pluginProvider, "some-model")
+    expect(r.ok).toBe(false)
+    if (!r.ok && "sdkProvider" in r.error) {
+      expect(r.error.kind).toBe("unsupported-provider")
+      expect(r.error.sdkProvider).toBe("plugin:my-provider")
+    }
   })
 })

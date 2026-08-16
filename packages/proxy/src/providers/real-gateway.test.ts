@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test"
 import { APICallError, RetryError } from "ai"
+import type { StreamContext } from "../gateway"
 import type { NormalizedRequest } from "../types"
 import {
   describeStreamError,
@@ -344,6 +345,14 @@ describe("reasoningOptionsFor", () => {
         "high",
       ),
     ).toBeUndefined()
+  })
+
+  it("returns undefined when the provider is a plugin key (not yet supported)", () => {
+    const pluginCtx: StreamContext = {
+      sdkProvider: "plugin:my-provider",
+      providerModel: "some-model",
+    }
+    expect(reasoningOptionsFor(pluginCtx, "low")).toBeUndefined()
   })
 })
 

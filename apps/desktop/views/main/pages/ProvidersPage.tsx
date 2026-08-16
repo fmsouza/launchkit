@@ -1,5 +1,6 @@
 import type { ProviderView } from "@spectrum/ipc"
-import type { ProviderKey } from "@spectrum/types"
+import { SdkProviderSchema } from "@spectrum/types"
+import type { SdkProvider } from "@spectrum/types"
 import {
   Button,
   EmptyState,
@@ -79,8 +80,8 @@ export const ProvidersPage = (): ReactElement => {
       "apiKey",
     ]
     // Use the typed key from the catalog entry; fall back to a cast if catalog not yet loaded.
-    const sdkProvider: ProviderKey =
-      selectedEntry?.key ?? (newSdk as ProviderKey)
+    const sdkProvider: SdkProvider =
+      selectedEntry?.key ?? (newSdk as SdkProvider)
     const r = await add({
       ...(trimmed !== "" ? { name: trimmed } : {}),
       sdkProvider,
@@ -135,9 +136,17 @@ export const ProvidersPage = (): ReactElement => {
 
   const submitEdit = async (): Promise<void> => {
     if (editFor === undefined) return
+    const validated = SdkProviderSchema.safeParse(editFor.sdkProvider)
+    if (!validated.success) {
+      notify({
+        tone: "error",
+        message: `Provider key not supported: ${editFor.sdkProvider}`,
+      })
+      return
+    }
     const r = await update(editFor.id, {
       name: editFor.name,
-      sdkProvider: editFor.sdkProvider,
+      sdkProvider: validated.data,
       config: editConfig,
       secretFieldNames: Object.keys(editFor.secretFields),
       models: editFor.models,
@@ -243,7 +252,7 @@ export const ProvidersPage = (): ReactElement => {
               onClick={() => {
                 void (async () => {
                   const sdkProvider =
-                    selectedEntry?.key ?? (newSdk as ProviderKey)
+                    selectedEntry?.key ?? (newSdk as SdkProvider)
                   const config = omitEmpty(newConfig)
                   // The probe needs a target model: use the first discoverable one
                   // (the handler falls back to the provider name when none exists).

@@ -1,10 +1,10 @@
 import type { IpcError } from "@spectrum/ipc"
-import type { ProviderKey } from "@spectrum/types"
+import type { SdkProvider } from "@spectrum/types"
 import { useCallback, useState } from "react"
 import { useIpcClient } from "../IpcClientContext"
 
 export type DraftTestInput = {
-  readonly sdkProvider: ProviderKey
+  readonly sdkProvider: SdkProvider
   readonly config: Readonly<Record<string, string>>
   readonly secrets: Readonly<Record<string, string>>
   readonly providerModel: string

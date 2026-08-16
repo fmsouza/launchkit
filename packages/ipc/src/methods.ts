@@ -15,7 +15,7 @@ import {
   ModelRouteSchema,
   ProjectIdSchema,
   ProviderIdSchema,
-  ProviderKeySchema,
+  SdkProviderSchema,
   SessionIdSchema,
   SessionSchema,
 } from "@spectrum/types"
@@ -44,7 +44,7 @@ export const GetProviderCatalogResultSchema = z.array(
 const ProviderMutationInputSchema = z
   .object({
     name: z.string().optional(),
-    sdkProvider: ProviderKeySchema,
+    sdkProvider: SdkProviderSchema,
     config: z.record(z.string(), z.string()),
     secretFieldNames: z.array(z.string()),
     models: z.array(z.string()),
@@ -265,7 +265,7 @@ export const ListProviderModelsResultSchema = z
  */
 const DraftProbeInputSchema = z
   .object({
-    sdkProvider: ProviderKeySchema,
+    sdkProvider: SdkProviderSchema,
     config: z.record(z.string(), z.string()),
     secrets: z.record(z.string(), z.string()),
   })

@@ -172,6 +172,42 @@ describe("createAppContext listProviderModels wiring", () => {
       expect((result.error as { kind: string }).kind).toBe("not-found")
     }
   })
+
+  it("returns unsupported-provider error when the provider has a plugin key", async () => {
+    const { deps } = makeFakeDeps()
+
+    // Provider with a plugin key.
+    ;(deps as { createCachedConfigStore: unknown }).createCachedConfigStore =
+      () => ({
+        load: async () =>
+          ok({
+            version: 2,
+            providers: [
+              {
+                id: "p_plugin",
+                sdkProvider: "plugin:my-provider" as never,
+                label: "Plugin Provider",
+                models: ["model1"],
+                config: {},
+                secrets: {},
+              },
+            ],
+            models: [],
+            settings: { proxyPort: 4000, proxyHost: "127.0.0.1" },
+          }),
+        save: async () => ok(undefined),
+      })
+
+    const ctx = createAppContext(deps)
+    const result = await ctx.listProviderModels("p_plugin")
+
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect((result.error as { kind: string }).kind).toBe(
+        "unsupported-provider",
+      )
+    }
+  })
 })
 
 describe("createAppContext wiring", () => {
