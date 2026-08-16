@@ -1,4 +1,5 @@
 export * from "./api-version"
+export * from "./descriptor"
 export * from "./env-template"
 export * from "./errors"
 export * from "./manifest"
