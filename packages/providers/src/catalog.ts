@@ -28,7 +28,7 @@ const emptyConfig = z.object({}).strict()
 export const defaultActions = (
   hasSecrets: boolean,
 ): readonly ProviderAction[] => [
-  { kind: "edit-config", id: "edit", label: "Edit provider", context: "both" },
+  { kind: "edit-config", id: "edit", label: "Edit", context: "both" },
   ...(hasSecrets
     ? [
         {

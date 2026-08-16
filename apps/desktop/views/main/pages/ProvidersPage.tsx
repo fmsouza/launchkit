@@ -58,7 +58,7 @@ const fallbackAction = (kind: "edit-config" | "set-secrets"): ProviderAction =>
     ? {
         kind: "edit-config",
         id: "edit",
-        label: "Edit provider",
+        label: "Edit",
         context: "both",
       }
     : {
@@ -78,14 +78,20 @@ const resolveAction = (
   return entry?.actions.find((a) => a.kind === kind) ?? fallbackAction(kind)
 }
 
-const toRow = (view: ProviderView): ProviderRow => {
+/** Project a provider + its catalog entry to the row shape ProviderList renders. */
+const toRow = (
+  view: ProviderView,
+  catalog: readonly ProviderCatalogEntry[] | undefined,
+): ProviderRow => {
   const fields = Object.values(view.secretFields)
   const secretSet = fields.length > 0 && fields.every((s) => s.isSet)
+  const entry = catalog?.find((c) => c.key === view.sdkProvider)
   return {
     id: view.id,
     name: view.name,
     sdkProvider: view.sdkProvider,
     secretSet,
+    ...(entry !== undefined ? { actions: entry.actions } : {}),
   }
 }
 
@@ -233,7 +239,7 @@ export const ProvidersPage = (): ReactElement => {
         <>
           <Button onClick={() => setAddOpen(true)}>Add provider</Button>
           <ProviderList
-            providers={data.map(toRow)}
+            providers={data.map((v) => toRow(v, catalog.data))}
             onSetSecret={(id) => {
               const p = data.find((x) => x.id === id)
               if (p !== undefined) {

@@ -19,7 +19,7 @@ const view: ProviderView = {
 
 /** Minimal catalog used as default stub in all tests. */
 const defaultProviderActions: ProviderCatalogEntry["actions"] = [
-  { kind: "edit-config", id: "edit", label: "Edit provider", context: "both" },
+  { kind: "edit-config", id: "edit", label: "Edit", context: "both" },
   { kind: "set-secrets", id: "secrets", label: "Set secret", context: "both" },
 ]
 
