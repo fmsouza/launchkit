@@ -7,6 +7,7 @@ import {
 } from "@spectrum/agent-events"
 import type { IpcHandlers, ProviderView } from "@spectrum/ipc"
 import {
+  createProviderRegistry,
   heuristicAttachments,
   providerCatalog,
   validateProviderConfig,
@@ -113,7 +114,11 @@ export const createIpcHandlers = (ctx: GuiContext): IpcHandlers => {
 
     addProvider: async (input) => {
       const config = await loadConfig()
-      const valid = validateProviderConfig(input.sdkProvider, input.config)
+      const valid = validateProviderConfig(
+        createProviderRegistry(),
+        input.sdkProvider,
+        input.config,
+      )
       if (!valid.ok) return fail(`invalid provider config: ${valid.error.kind}`)
       // A blank/missing name falls back to the SDK provider name so a persisted provider always
       // has a RESOLVED non-empty name (ProviderSchema.name stays min(1)). The fallback lives here
@@ -152,7 +157,11 @@ export const createIpcHandlers = (ctx: GuiContext): IpcHandlers => {
       const config = await loadConfig()
       const existing = config.providers.find((p) => p.id === id)
       if (existing === undefined) return fail(`unknown provider: ${String(id)}`)
-      const valid = validateProviderConfig(input.sdkProvider, input.config)
+      const valid = validateProviderConfig(
+        createProviderRegistry(),
+        input.sdkProvider,
+        input.config,
+      )
       if (!valid.ok) return fail(`invalid provider config: ${valid.error.kind}`)
       // Same fallback as addProvider: a blank/missing name resolves to the SDK provider name.
       const name =
@@ -793,7 +802,11 @@ export const createIpcHandlers = (ctx: GuiContext): IpcHandlers => {
       secrets,
       providerModel,
     }) => {
-      const valid = validateProviderConfig(sdkProvider, config)
+      const valid = validateProviderConfig(
+        createProviderRegistry(),
+        sdkProvider,
+        config,
+      )
       if (!valid.ok) return fail(`invalid provider config: ${valid.error.kind}`)
       // A connectivity probe needs a model to ping; fall back to the sdkProvider name
       // when none was chosen yet (mirrors testProvider's provider.models[0] ?? id fallback).
@@ -812,7 +825,11 @@ export const createIpcHandlers = (ctx: GuiContext): IpcHandlers => {
     },
 
     listProviderModelsDraft: async ({ sdkProvider, config, secrets }) => {
-      const valid = validateProviderConfig(sdkProvider, config)
+      const valid = validateProviderConfig(
+        createProviderRegistry(),
+        sdkProvider,
+        config,
+      )
       if (!valid.ok) return fail(`invalid provider config: ${valid.error.kind}`)
       const result = await ctx.listProviderModelsDraft({
         sdkProvider,
