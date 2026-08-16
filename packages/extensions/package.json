@@ -11,6 +11,7 @@
     "test": "bun test"
   },
   "dependencies": {
+    "@spectrum/logger": "workspace:*",
     "@spectrum/platform": "workspace:*",
     "@spectrum/proc": "workspace:*",
     "@spectrum/providers": "workspace:*",

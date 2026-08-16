@@ -20,6 +20,9 @@ describe("resolveAppPaths", () => {
     expect(p.harnessDir).toBe(
       "/Users/me/Library/Application Support/Spectrum/harnesses",
     )
+    expect(p.providerPluginDir).toBe(
+      "/Users/me/Library/Application Support/Spectrum/providers",
+    )
     expect(p.runtimeFile).toBe(
       "/Users/me/Library/Application Support/Spectrum/runtime.json",
     )
