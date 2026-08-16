@@ -1,5 +1,6 @@
 import { readdir, rm, stat } from "node:fs/promises"
 import { join } from "node:path"
+import type { PluginId } from "@spectrum/types"
 import { type Result, err, ok } from "@spectrum/utils"
 import type { PluginError } from "./errors"
 import type { ExtensionEntry, ExtensionFileSource } from "./file-source"
@@ -153,6 +154,9 @@ export const createDirExtensionFileSource = (
       }
     },
 
-    extensionDir: resolveDir,
+    // Guarded structurally by the `PluginId` brand (see file-source.ts) rather than by
+    // `safeId` — `extensionDir` returns a bare `string` and has no `Result` to reject
+    // through, so the type itself must be the thing that makes an unsafe id unreachable.
+    extensionDir: (id: PluginId): string => resolveDir(id),
   }
 }

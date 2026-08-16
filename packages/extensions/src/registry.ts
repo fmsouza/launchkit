@@ -59,6 +59,17 @@ export const createExtensionRegistry = (deps: {
       if (isErr(parsed)) return parsed
       const { manifest, ignoredContributions } = parsed.value
 
+      // The directory an extension was read from (entry.id) and the identity it declares
+      // (manifest.id, which becomes plugin:<id>) must agree — otherwise `dir` below would
+      // point at a location the manifest never actually claimed, silently breaking
+      // uninstall-by-id later.
+      if (entry.id !== manifest.id) {
+        return err({
+          kind: "invalid-manifest",
+          detail: `extension directory id "${entry.id}" does not match manifest id "${manifest.id}"`,
+        })
+      }
+
       if (seenIds.has(manifest.id)) {
         return err({ kind: "duplicate-id", id: manifest.id })
       }

@@ -1,8 +1,18 @@
 import { afterEach, describe, expect, it } from "bun:test"
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { PluginIdSchema } from "@spectrum/types"
 import { createDirExtensionFileSource } from "./adapters"
+
+/** A validated `PluginId` — `extensionDir` only accepts ids that already passed this. */
+const pid = (id: string) => PluginIdSchema.parse(id)
 
 const tempDirs: string[] = []
 const makeTempDir = (): string => {
@@ -113,7 +123,7 @@ describe("createDirExtensionFileSource (real)", () => {
         },
       })
     }
-    expect(source.extensionDir("linked")).toBe(linkedDir)
+    expect(source.extensionDir(pid("linked"))).toBe(linkedDir)
   })
 
   it("reads a single extension by id via readExtension", async () => {
@@ -160,6 +170,21 @@ describe("createDirExtensionFileSource (real)", () => {
     expect(after).toEqual({ ok: true, value: [] })
   })
 
+  it("leaves a linked extension's source directory untouched when removed", async () => {
+    const root = makeTempDir()
+    const linkedDir = makeTempDir()
+    writeManifest(linkedDir, "linked")
+
+    const source = createDirExtensionFileSource(root, { linked: linkedDir })
+    const removed = await source.removeExtension("linked")
+    expect(removed.ok).toBe(true)
+
+    // The external, caller-owned directory the link points at must survive — removeExtension
+    // only ever deletes root-owned copies, never a linked source.
+    expect(existsSync(linkedDir)).toBe(true)
+    expect(existsSync(join(linkedDir, "spectrum-extension.json"))).toBe(true)
+  })
+
   it("treats removing a missing extension as success", async () => {
     const root = makeTempDir()
     const r = await createDirExtensionFileSource(root, {}).removeExtension(
@@ -171,7 +196,16 @@ describe("createDirExtensionFileSource (real)", () => {
   it("resolves extensionDir to root/id for an unlinked extension", async () => {
     const root = makeTempDir()
     const source = createDirExtensionFileSource(root, {})
-    expect(source.extensionDir("a")).toBe(join(root, "a"))
+    expect(source.extensionDir(pid("a"))).toBe(join(root, "a"))
+  })
+
+  it("makes a path-traversal id unrepresentable as the PluginId extensionDir requires", () => {
+    // extensionDir(id: PluginId) has no Result to reject through, so the guard has to be
+    // that a traversal string can never become a PluginId in the first place — proven here
+    // by showing PluginIdSchema itself refuses every form safeId also rejects.
+    for (const badId of ["../escape", "a/b", "a\\b", "..", ""]) {
+      expect(PluginIdSchema.safeParse(badId).success).toBe(false)
+    }
   })
 
   for (const badId of ["../escape", "a/b", "a\\b", ".."]) {

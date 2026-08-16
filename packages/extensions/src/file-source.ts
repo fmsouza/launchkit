@@ -1,3 +1,4 @@
+import type { PluginId } from "@spectrum/types"
 import { type Result, err, ok } from "@spectrum/utils"
 import type { PluginError } from "./errors"
 
@@ -27,8 +28,14 @@ export interface ExtensionFileSource {
   >
   readExtension(id: string): Promise<Result<ExtensionEntry, PluginError>>
   removeExtension(id: string): Promise<Result<void, PluginError>>
-  /** The directory an extension's files live in. Pure and synchronous — no IO, no existence check. */
-  extensionDir(id: string): string
+  /**
+   * The directory an extension's files live in. Pure and synchronous — no IO, no existence
+   * check, and so no `Result` to signal rejection through. Takes a branded `PluginId`
+   * (`/^[a-z0-9][a-z0-9-]*$/`) rather than a plain `string` so the path-traversal guard is
+   * structural: a value that carries the brand cannot contain `/`, `\`, or `..`, so there is
+   * no unsafe input this function can be called with. Do not weaken this back to `string`.
+   */
+  extensionDir(id: PluginId): string
 }
 
 /**
@@ -62,6 +69,6 @@ export const createInMemoryExtensionFileSource = (
     },
 
     // No real directory backs an in-memory entry; the path is purely informational.
-    extensionDir: (id: string): string => `/in-memory/${id}`,
+    extensionDir: (id: PluginId): string => `/in-memory/${id}`,
   }
 }

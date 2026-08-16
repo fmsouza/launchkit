@@ -1,7 +1,9 @@
 import { describe, expect, it } from "bun:test"
+import { PluginIdSchema } from "@spectrum/types"
 import { createInMemoryExtensionFileSource } from "./file-source"
 
 const entry = (id: string, raw: unknown = { id, name: id }) => ({ id, raw })
+const pid = (id: string) => PluginIdSchema.parse(id)
 
 describe("createInMemoryExtensionFileSource", () => {
   it("lists every entry it was constructed with", async () => {
@@ -52,7 +54,9 @@ describe("createInMemoryExtensionFileSource", () => {
 
   it("returns a distinct informational path per id from extensionDir", () => {
     const source = createInMemoryExtensionFileSource([])
-    expect(source.extensionDir("a")).not.toBe(source.extensionDir("b"))
+    expect(source.extensionDir(pid("a"))).not.toBe(
+      source.extensionDir(pid("b")),
+    )
   })
 
   it("returns the preset failure from every method when configured", async () => {

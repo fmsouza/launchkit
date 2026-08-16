@@ -1,7 +1,10 @@
 import { describe, expect, it } from "bun:test"
 import type { Logger } from "@spectrum/logger"
+import { PluginIdSchema } from "@spectrum/types"
 import { createInMemoryExtensionFileSource } from "./file-source"
 import { createExtensionRegistry } from "./registry"
+
+const pid = (id: string) => PluginIdSchema.parse(id)
 
 /** Overrides for the identity-bearing fields of a provider-contribution fixture. */
 type ProviderOverrides = {
@@ -111,7 +114,9 @@ describe("createExtensionRegistry", () => {
       const registry = createExtensionRegistry({
         fileSource: createInMemoryExtensionFileSource([
           {
-            id: "one",
+            // Directory id matches manifest id on both entries — the collision under test
+            // is the shared "dup" identity, not a directory/manifest-id mismatch.
+            id: "dup",
             raw: {
               apiVersion: "spectrum.dev/v1",
               id: "dup",
@@ -121,7 +126,7 @@ describe("createExtensionRegistry", () => {
             },
           },
           {
-            id: "two",
+            id: "dup",
             raw: {
               apiVersion: "spectrum.dev/v1",
               id: "dup",
@@ -136,6 +141,32 @@ describe("createExtensionRegistry", () => {
       expect(result.ok).toBe(false)
       if (!result.ok) {
         expect(result.error).toEqual({ kind: "duplicate-id", id: "dup" })
+      }
+    })
+
+    it("fails with invalid-manifest when the manifest id disagrees with the directory it was read from", async () => {
+      const registry = createExtensionRegistry({
+        fileSource: createInMemoryExtensionFileSource([
+          {
+            id: "myext", // the directory/entry id the file source read this from
+            raw: {
+              apiVersion: "spectrum.dev/v1",
+              id: "different", // what the manifest itself claims
+              name: "Mismatched",
+              version: "1.0.0",
+              contributes: { providers: [] },
+            },
+          },
+        ]),
+      })
+      const result = await registry.list()
+      expect(result.ok).toBe(false)
+      if (!result.ok) {
+        expect(result.error.kind).toBe("invalid-manifest")
+        if (result.error.kind === "invalid-manifest") {
+          expect(result.error.detail).toContain("myext")
+          expect(result.error.detail).toContain("different")
+        }
       }
     })
 
@@ -224,7 +255,7 @@ describe("createExtensionRegistry", () => {
       const result = await registry.list()
       expect(result.ok).toBe(true)
       if (result.ok) {
-        expect(result.value[0]?.dir).toBe(fileSource.extensionDir("a"))
+        expect(result.value[0]?.dir).toBe(fileSource.extensionDir(pid("a")))
       }
     })
 
