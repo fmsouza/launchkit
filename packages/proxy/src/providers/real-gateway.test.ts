@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test"
+import { getDescriptor } from "@spectrum/providers"
 import { APICallError, RetryError } from "ai"
-import type { StreamContext } from "../gateway"
 import type { NormalizedRequest } from "../types"
 import {
   describeStreamError,
@@ -323,7 +323,7 @@ describe("reasoningOptionsFor", () => {
   it("returns undefined when the request has no thinkingEffort", () => {
     expect(
       reasoningOptionsFor(
-        { sdkProvider: "openai", providerModel: "gpt-5" },
+        { descriptor: getDescriptor("openai"), providerModel: "gpt-5" },
         undefined,
       ),
     ).toBeUndefined()
@@ -332,7 +332,7 @@ describe("reasoningOptionsFor", () => {
   it("builds openai reasoning options for a tier", () => {
     expect(
       reasoningOptionsFor(
-        { sdkProvider: "openai", providerModel: "gpt-5" },
+        { descriptor: getDescriptor("openai"), providerModel: "gpt-5" },
         "low",
       ),
     ).toEqual({ openai: { reasoningEffort: "low" } })
@@ -341,18 +341,29 @@ describe("reasoningOptionsFor", () => {
   it("returns undefined for a non-reasoning model (override → none)", () => {
     expect(
       reasoningOptionsFor(
-        { sdkProvider: "openai", providerModel: "gpt-4o" },
+        { descriptor: getDescriptor("openai"), providerModel: "gpt-4o" },
         "high",
       ),
     ).toBeUndefined()
   })
 
-  it("returns undefined when the provider is a plugin key (not yet supported)", () => {
-    const pluginCtx: StreamContext = {
-      sdkProvider: "plugin:my-provider",
-      providerModel: "some-model",
-    }
-    expect(reasoningOptionsFor(pluginCtx, "low")).toBeUndefined()
+  it("builds anthropic thinking options when the descriptor is anthropic", () => {
+    const options = reasoningOptionsFor(
+      {
+        descriptor: getDescriptor("anthropic"),
+        providerModel: "claude-opus-5",
+      },
+      "high",
+    )
+    expect(options).toBeDefined()
+  })
+
+  it("returns undefined when the descriptor declares no reasoning support", () => {
+    const options = reasoningOptionsFor(
+      { descriptor: getDescriptor("custom"), providerModel: "local-model" },
+      "high",
+    )
+    expect(options).toBeUndefined()
   })
 })
 

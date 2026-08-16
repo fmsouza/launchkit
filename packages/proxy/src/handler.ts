@@ -1,4 +1,5 @@
 import { type Logger, createNoopLogger } from "@spectrum/logger"
+import type { ProviderDescriptor } from "@spectrum/providers"
 import { isErr } from "@spectrum/utils"
 import { parseAnthropicRequest } from "./adapters/anthropic-request"
 import { serializeAnthropicStream } from "./adapters/anthropic-stream"
@@ -18,6 +19,8 @@ export interface HandlerDeps {
   factory: ProviderFactory
   gateway: LanguageModelGateway
   listModels: () => readonly string[]
+  /** Resolve a provider key to its descriptor. Injected so plugin providers resolve too. */
+  getDescriptor: (key: string) => ProviderDescriptor | undefined
   /** Optional observer (default noop). Logs only `{ kind }` on every error Result: `warn` for client errors (unauthorized/bad-request), `error` for provider/outbound failures. */
   logger?: Logger
 }
@@ -179,8 +182,14 @@ export const createHandler = (
       route.value.providerModel,
     )
     if (isErr(model)) return fail(model.error)
+    const descriptor = deps.getDescriptor(route.value.provider.sdkProvider)
+    if (descriptor === undefined)
+      return fail({
+        kind: "unsupported-provider",
+        sdkProvider: route.value.provider.sdkProvider,
+      })
     const events = deps.gateway.stream(model.value, parsed.value, {
-      sdkProvider: route.value.provider.sdkProvider,
+      descriptor,
       providerModel: route.value.providerModel,
     })
     const checked = await errorOrStream(events)

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "bun:test"
 import type { Config } from "@spectrum/config"
 import type { Logger } from "@spectrum/logger"
+import { createProviderRegistry } from "@spectrum/providers"
 import { createScriptedGateway } from "./gateway"
 import { createRouter } from "./router"
 import { isProxyRunning, startProxy } from "./server"
@@ -57,6 +58,7 @@ describe("startProxy", () => {
         { type: "finish", finishReason: "stop" },
       ]),
       listModels: () => ["mdl_default"],
+      getDescriptor: createProviderRegistry().get,
     })
     stop = s.stop
     expect(s.hostname).toBe("127.0.0.1")
@@ -77,6 +79,7 @@ describe("startProxy", () => {
         { type: "finish", finishReason: "stop" },
       ]),
       listModels: () => ["mdl_default"],
+      getDescriptor: createProviderRegistry().get,
       logger,
     })
     stop = s.stop
@@ -101,6 +104,7 @@ describe("startProxy", () => {
         { type: "finish", finishReason: "stop" },
       ]),
       listModels: () => ["mdl_default"],
+      getDescriptor: createProviderRegistry().get,
       logger,
     })
     s.stop()
@@ -121,6 +125,7 @@ describe("startProxy", () => {
         { type: "finish", finishReason: "stop" },
       ]),
       listModels: () => ["mdl_default"],
+      getDescriptor: createProviderRegistry().get,
     })
     stop = s.stop
     const res = await fetch(`http://127.0.0.1:${s.port}/v1/messages`, {

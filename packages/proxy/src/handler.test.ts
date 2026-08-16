@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test"
 import type { Config } from "@spectrum/config"
 import type { Logger } from "@spectrum/logger"
+import { createProviderRegistry } from "@spectrum/providers"
 import { createScriptedGateway } from "./gateway"
 import { createHandler } from "./handler"
 import { createRouter } from "./router"
@@ -70,6 +71,7 @@ const deps = (key: string) => ({
     { type: "finish", finishReason: "stop" },
   ]),
   listModels: () => config.models.map((m) => m.id as string),
+  getDescriptor: createProviderRegistry().get,
 })
 
 type MakeDepsOpts = {
@@ -105,6 +107,7 @@ const makeDeps = ({ proxyKey, models }: MakeDepsOpts) => {
       { type: "finish", finishReason: "stop" },
     ]),
     listModels: () => models.map((m) => m.id as string),
+    getDescriptor: createProviderRegistry().get,
   }
 }
 

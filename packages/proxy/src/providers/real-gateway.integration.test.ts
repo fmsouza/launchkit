@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test"
+import { getDescriptor } from "@spectrum/providers"
 import { APICallError } from "ai"
 import { MockLanguageModelV3, simulateReadableStream } from "ai/test"
 import type { NormalizedRequest, StreamEvent } from "../types"
@@ -292,7 +293,7 @@ describe("createRealGateway", () => {
     })
     const gw = createRealGateway({
       getTimeouts: (ctx) => {
-        seen.push(ctx?.sdkProvider)
+        seen.push(ctx?.descriptor.key)
         return { firstTokenTimeoutMs: 1000, interTokenTimeoutMs: 1000 }
       },
     })
@@ -303,7 +304,7 @@ describe("createRealGateway", () => {
     }
     const events: StreamEvent[] = []
     for await (const e of gw.stream(model, req, {
-      sdkProvider: "ollama",
+      descriptor: getDescriptor("ollama"),
       providerModel: "llama3",
     }))
       events.push(e)

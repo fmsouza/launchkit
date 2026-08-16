@@ -44,7 +44,7 @@ import {
   resolveAppEnv,
   resolveChannel,
 } from "@spectrum/platform"
-import { getDescriptor } from "@spectrum/providers"
+import { createProviderRegistry } from "@spectrum/providers"
 import {
   createDraftProviderTester,
   createFetchHttpGet,
@@ -460,6 +460,9 @@ export const createAppContext = (
   const resolveLaunchEnvOnly = (params: LaunchParams) =>
     resolveLaunchRaw(params)
 
+  // Builtin-only for now; plugin descriptors join this once plugin loading is wired in.
+  const providerRegistry = createProviderRegistry()
+
   // proxy provider layer: factory (secrets + lazy SDK loader) + real streamText gateway
   const factory = deps.createProviderFactory({
     secretStore: secrets,
@@ -472,10 +475,9 @@ export const createAppContext = (
         firstTokenTimeoutMs: s.firstTokenTimeoutMs,
         interTokenTimeoutMs: s.interTokenTimeoutMs,
       }
-      if (ctx === undefined) return windows
-      const validated = SdkProviderSchema.safeParse(ctx.sdkProvider)
-      if (!validated.success) return windows
-      return resolveTimeouts(getDescriptor(validated.data).streaming, windows)
+      return ctx === undefined
+        ? windows
+        : resolveTimeouts(ctx.descriptor.streaming, windows)
     },
   })
 
@@ -702,6 +704,7 @@ export const createAppContext = (
       factory,
       gateway,
       listModels: () => getConfig().models.map((m) => String(m.id)),
+      getDescriptor: providerRegistry.get,
       logger: log.child("proxy"),
     })
   }

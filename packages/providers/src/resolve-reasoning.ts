@@ -1,6 +1,6 @@
 import type { SdkProvider } from "@spectrum/types"
-import { getDescriptor } from "./catalog"
 import type { ReasoningSupport } from "./reasoning-types"
+import type { ProviderDescriptor } from "./types"
 
 const NONE: ReasoningSupport = { shape: "none", supportedTiers: [] }
 
@@ -24,16 +24,16 @@ const OVERRIDES: ReadonlyArray<{
   },
 ]
 
-/** Resolve the reasoning capability for a provider, refined by a model-id override list. */
+/** Resolve the reasoning capability for a provider descriptor, refined by a model-id override list. */
 export const resolveReasoning = (
-  provider: SdkProvider,
+  descriptor: ProviderDescriptor,
   modelId?: string,
 ): ReasoningSupport => {
   if (modelId !== undefined) {
     const hit = OVERRIDES.find(
-      (o) => o.provider === provider && o.match.test(modelId),
+      (o) => o.provider === descriptor.key && o.match.test(modelId),
     )
     if (hit !== undefined) return hit.support
   }
-  return getDescriptor(provider).reasoning
+  return descriptor.reasoning
 }
