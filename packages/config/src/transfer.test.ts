@@ -39,6 +39,7 @@ const configWithProvider = (): Config => ({
     windowBounds: null,
     sessionNameModelId: null,
   },
+  providerPlugins: [],
 })
 
 describe("exportConfig", () => {

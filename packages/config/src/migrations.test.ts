@@ -84,7 +84,10 @@ describe("runMigrations", () => {
         sessionNameModelId: null,
       },
     }
-    expect(runMigrations(current)).toEqual({ ok: true, value: current })
+    expect(runMigrations(current)).toEqual({
+      ok: true,
+      value: { ...current, providerPlugins: [] },
+    })
   })
 
   it("migrates a v2 config through the chain and drops profiles by the current version", () => {
