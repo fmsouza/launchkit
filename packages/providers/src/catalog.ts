@@ -205,100 +205,111 @@ const descriptors: Record<SdkProvider, ProviderDescriptor> = {
   ),
 
   // ── Custom: generic OpenAI-compatible endpoint ──────────────────────────────
-  custom: {
-    key: "custom",
-    label: "Custom (OpenAI-compatible)",
-    configFields: CUSTOM_CONFIG_FIELDS,
-    secretFields: [API_KEY_OPTIONAL],
-    supportsCustomHeaders: true,
-    streaming: "incremental",
-    configSchema: configSchemaFromFields(CUSTOM_CONFIG_FIELDS),
-    sdkMapping: {
-      baseUrlOption: "baseURL",
-      apiKey: { kind: "option", name: "apiKey" },
-      // Local OpenAI-compatible servers (Ollama, LM Studio, …) need no key, but
-      // @ai-sdk/openai throws without one — send a harmless placeholder when unset.
-      placeholderApiKey: "not-needed",
-      wire: "openai",
-    },
-    discovery: { strategy: "openai-models" },
-    reasoning: NO_REASONING,
-    actions: defaultActions(true),
-  },
+  custom: (() => {
+    const secretFields = [API_KEY_OPTIONAL]
+    return {
+      key: "custom",
+      label: "Custom (OpenAI-compatible)",
+      configFields: CUSTOM_CONFIG_FIELDS,
+      secretFields,
+      supportsCustomHeaders: true,
+      streaming: "incremental",
+      configSchema: configSchemaFromFields(CUSTOM_CONFIG_FIELDS),
+      sdkMapping: {
+        baseUrlOption: "baseURL",
+        apiKey: { kind: "option", name: "apiKey" },
+        // Local OpenAI-compatible servers (Ollama, LM Studio, …) need no key, but
+        // @ai-sdk/openai throws without one — send a harmless placeholder when unset.
+        placeholderApiKey: "not-needed",
+        wire: "openai",
+      },
+      discovery: { strategy: "openai-models" },
+      reasoning: NO_REASONING,
+      actions: defaultActions(secretFields.length > 0),
+    }
+  })(),
 
   // ── Ollama Cloud ────────────────────────────────────────────────────────────
-  ollama: {
-    key: "ollama",
-    label: "Ollama Cloud",
-    configFields: [
-      {
-        name: "serverUrl",
-        label: "Server URL",
-        kind: "url",
-        required: false,
-        default: "https://ollama.com/api",
-        placeholder: "https://ollama.com/api",
+  ollama: (() => {
+    const secretFields = [API_KEY_REQUIRED]
+    return {
+      key: "ollama",
+      label: "Ollama Cloud",
+      configFields: [
+        {
+          name: "serverUrl",
+          label: "Server URL",
+          kind: "url",
+          required: false,
+          default: "https://ollama.com/api",
+          placeholder: "https://ollama.com/api",
+        },
+      ],
+      secretFields,
+      supportsCustomHeaders: false,
+      streaming: "buffered",
+      configSchema: z
+        .object({ serverUrl: z.string().url().optional() })
+        .strict(),
+      sdkMapping: {
+        baseUrlOption: "baseURL",
+        defaultBaseUrl: "https://ollama.com/api",
+        apiKey: { kind: "header", name: "Authorization", scheme: "Bearer" },
       },
-    ],
-    secretFields: [API_KEY_REQUIRED],
-    supportsCustomHeaders: false,
-    streaming: "buffered",
-    configSchema: z.object({ serverUrl: z.string().url().optional() }).strict(),
-    sdkMapping: {
-      baseUrlOption: "baseURL",
-      defaultBaseUrl: "https://ollama.com/api",
-      apiKey: { kind: "header", name: "Authorization", scheme: "Bearer" },
-    },
-    discovery: {
-      strategy: "ollama-tags",
-      sendAuthHeader: true,
-      defaultBaseUrl: "https://ollama.com/api",
-    },
-    reasoning: NO_REASONING,
-    actions: defaultActions(true),
-  },
+      discovery: {
+        strategy: "ollama-tags",
+        sendAuthHeader: true,
+        defaultBaseUrl: "https://ollama.com/api",
+      },
+      reasoning: NO_REASONING,
+      actions: defaultActions(secretFields.length > 0),
+    }
+  })(),
 
   // ── OpenRouter ──────────────────────────────────────────────────────────────
-  openrouter: {
-    key: "openrouter",
-    label: "OpenRouter",
-    configFields: [
-      {
-        name: "httpReferer",
-        label: "App URL (HTTP-Referer)",
-        kind: "text",
-        required: false,
-        mapsToHeader: "HTTP-Referer",
+  openrouter: (() => {
+    const secretFields = [API_KEY_REQUIRED]
+    return {
+      key: "openrouter",
+      label: "OpenRouter",
+      configFields: [
+        {
+          name: "httpReferer",
+          label: "App URL (HTTP-Referer)",
+          kind: "text",
+          required: false,
+          mapsToHeader: "HTTP-Referer",
+        },
+        {
+          name: "appTitle",
+          label: "App title (X-Title)",
+          kind: "text",
+          required: false,
+          mapsToHeader: "X-Title",
+        },
+      ],
+      secretFields,
+      supportsCustomHeaders: false,
+      streaming: "incremental",
+      configSchema: z
+        .object({
+          httpReferer: z.string().optional(),
+          appTitle: z.string().optional(),
+        })
+        .strict(),
+      sdkMapping: {
+        baseUrlOption: "baseURL",
+        defaultBaseUrl: "https://openrouter.ai/api/v1",
+        apiKey: { kind: "option", name: "apiKey" },
       },
-      {
-        name: "appTitle",
-        label: "App title (X-Title)",
-        kind: "text",
-        required: false,
-        mapsToHeader: "X-Title",
+      discovery: {
+        strategy: "openai-models",
+        defaultBaseUrl: "https://openrouter.ai/api/v1",
       },
-    ],
-    secretFields: [API_KEY_REQUIRED],
-    supportsCustomHeaders: false,
-    streaming: "incremental",
-    configSchema: z
-      .object({
-        httpReferer: z.string().optional(),
-        appTitle: z.string().optional(),
-      })
-      .strict(),
-    sdkMapping: {
-      baseUrlOption: "baseURL",
-      defaultBaseUrl: "https://openrouter.ai/api/v1",
-      apiKey: { kind: "option", name: "apiKey" },
-    },
-    discovery: {
-      strategy: "openai-models",
-      defaultBaseUrl: "https://openrouter.ai/api/v1",
-    },
-    reasoning: NO_REASONING,
-    actions: defaultActions(true),
-  },
+      reasoning: NO_REASONING,
+      actions: defaultActions(secretFields.length > 0),
+    }
+  })(),
 }
 
 /** Look up the descriptor for an SDK provider. Total over the `SdkProvider` union. */

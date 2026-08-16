@@ -47,37 +47,6 @@ const resolveSdkProvider = (
   return undefined
 }
 
-/**
- * The action a builtin has always offered for a given kind, used when the catalog entry
- * for a provider hasn't loaded yet (or declares no matching action) — same fallback shape
- * as `defaultActions` in `@spectrum/providers`, kept local so the click always resolves to
- * something rather than silently doing nothing.
- */
-const fallbackAction = (kind: "edit-config" | "set-secrets"): ProviderAction =>
-  kind === "edit-config"
-    ? {
-        kind: "edit-config",
-        id: "edit",
-        label: "Edit",
-        context: "both",
-      }
-    : {
-        kind: "set-secrets",
-        id: "secrets",
-        label: "Set secret",
-        context: "both",
-      }
-
-/** Resolve the descriptor-declared action of `kind` for `provider`, falling back if unloaded. */
-const resolveAction = (
-  provider: ProviderView,
-  kind: "edit-config" | "set-secrets",
-  catalog: readonly ProviderCatalogEntry[] | undefined,
-): ProviderAction => {
-  const entry = catalog?.find((c) => c.key === provider.sdkProvider)
-  return entry?.actions.find((a) => a.kind === kind) ?? fallbackAction(kind)
-}
-
 /** Project a provider + its catalog entry to the row shape ProviderList renders. */
 const toRow = (
   view: ProviderView,
@@ -240,17 +209,9 @@ export const ProvidersPage = (): ReactElement => {
           <Button onClick={() => setAddOpen(true)}>Add provider</Button>
           <ProviderList
             providers={data.map((v) => toRow(v, catalog.data))}
-            onSetSecret={(id) => {
+            onAction={(id, action) => {
               const p = data.find((x) => x.id === id)
-              if (p !== undefined) {
-                onAction(p, resolveAction(p, "set-secrets", catalog.data))
-              }
-            }}
-            onEdit={(id) => {
-              const p = data.find((x) => x.id === id)
-              if (p !== undefined) {
-                onAction(p, resolveAction(p, "edit-config", catalog.data))
-              }
+              if (p !== undefined) onAction(p, action)
             }}
           />
         </>

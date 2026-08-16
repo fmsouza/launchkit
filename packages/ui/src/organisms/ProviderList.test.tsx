@@ -1,4 +1,5 @@
 import { describe, expect, it, mock } from "bun:test"
+import type { ProviderAction } from "@spectrum/providers"
 import { fireEvent, render, screen, within } from "@testing-library/react"
 import { ProviderList } from "./ProviderList"
 import type { ProviderRow } from "./ProviderList"
@@ -15,9 +16,7 @@ const providers: readonly ProviderRow[] = [
 
 describe("ProviderList", () => {
   it("shows an empty state when there are no providers", () => {
-    render(
-      <ProviderList providers={[]} onSetSecret={() => {}} onEdit={() => {}} />,
-    )
+    render(<ProviderList providers={[]} onAction={() => {}} />)
     expect(
       screen.getByRole("heading", { name: /no providers/i }),
     ).toBeInTheDocument()
@@ -25,11 +24,7 @@ describe("ProviderList", () => {
 
   it("renders a table with a row per provider", () => {
     const { container } = render(
-      <ProviderList
-        providers={providers}
-        onSetSecret={() => {}}
-        onEdit={() => {}}
-      />,
+      <ProviderList providers={providers} onAction={() => {}} />,
     )
     expect(container.querySelector("table")).not.toBeNull()
     const rows = container.querySelectorAll("tbody tr")
@@ -37,24 +32,14 @@ describe("ProviderList", () => {
   })
 
   it("renders the provider name in each row", () => {
-    render(
-      <ProviderList
-        providers={providers}
-        onSetSecret={() => {}}
-        onEdit={() => {}}
-      />,
-    )
+    render(<ProviderList providers={providers} onAction={() => {}} />)
     expect(screen.getByText("OpenAI")).toBeInTheDocument()
     expect(screen.getByText("Anthropic")).toBeInTheDocument()
   })
 
   it("renders an info Badge with sdkProvider in each row", () => {
     const { container } = render(
-      <ProviderList
-        providers={providers}
-        onSetSecret={() => {}}
-        onEdit={() => {}}
-      />,
+      <ProviderList providers={providers} onAction={() => {}} />,
     )
     const infoBadges = Array.from(
       container.querySelectorAll("span[data-tone='info']"),
@@ -72,11 +57,7 @@ describe("ProviderList", () => {
       secretSet: true,
     }
     const { container } = render(
-      <ProviderList
-        providers={[setProvider]}
-        onSetSecret={() => {}}
-        onEdit={() => {}}
-      />,
+      <ProviderList providers={[setProvider]} onAction={() => {}} />,
     )
     const badge = container.querySelector("span[data-tone='success']")
     expect(badge).not.toBeNull()
@@ -91,11 +72,7 @@ describe("ProviderList", () => {
       secretSet: false,
     }
     const { container } = render(
-      <ProviderList
-        providers={[unsetProvider]}
-        onSetSecret={() => {}}
-        onEdit={() => {}}
-      />,
+      <ProviderList providers={[unsetProvider]} onAction={() => {}} />,
     )
     const badge = container.querySelector("span[data-tone='neutral']")
     expect(badge).not.toBeNull()
@@ -104,11 +81,7 @@ describe("ProviderList", () => {
 
   it("renders a 'Set secret' button in lk-cell-actions td per row", () => {
     const { container } = render(
-      <ProviderList
-        providers={providers}
-        onSetSecret={() => {}}
-        onEdit={() => {}}
-      />,
+      <ProviderList providers={providers} onAction={() => {}} />,
     )
     const rows = Array.from(container.querySelectorAll("tbody tr"))
     for (const row of rows) {
@@ -121,29 +94,24 @@ describe("ProviderList", () => {
     }
   })
 
-  it("calls onSetSecret with the provider id when 'Set secret' is clicked", () => {
-    const onSetSecret = mock((_id: string) => {})
+  it("calls onAction with the provider id and the set-secrets action when 'Set secret' is clicked", () => {
+    const onAction = mock((_id: string, _a: ProviderAction) => {})
     const { container } = render(
-      <ProviderList
-        providers={providers}
-        onSetSecret={onSetSecret}
-        onEdit={() => {}}
-      />,
+      <ProviderList providers={providers} onAction={onAction} />,
     )
     // Click the first row's Set secret button
     const firstRow = container.querySelector("tbody tr") as HTMLElement
     const btn = within(firstRow).getByRole("button", { name: /set secret/i })
     fireEvent.click(btn)
-    expect(onSetSecret).toHaveBeenCalledWith("p_openai")
+    expect(onAction).toHaveBeenCalledTimes(1)
+    const [id, action] = onAction.mock.calls[0] as [string, ProviderAction]
+    expect(id).toBe("p_openai")
+    expect(action.kind).toBe("set-secrets")
   })
 
   it("does not render an article element or lk-list-row--card class", () => {
     const { container } = render(
-      <ProviderList
-        providers={providers}
-        onSetSecret={() => {}}
-        onEdit={() => {}}
-      />,
+      <ProviderList providers={providers} onAction={() => {}} />,
     )
     expect(container.querySelector("article")).toBeNull()
     expect(container.querySelector(".lk-list-row--card")).toBeNull()
@@ -151,11 +119,7 @@ describe("ProviderList", () => {
 
   it("renders an 'Edit' button in lk-cell-actions td per row", () => {
     const { container } = render(
-      <ProviderList
-        providers={providers}
-        onSetSecret={() => {}}
-        onEdit={() => {}}
-      />,
+      <ProviderList providers={providers} onAction={() => {}} />,
     )
     const rows = Array.from(container.querySelectorAll("tbody tr"))
     for (const row of rows) {
@@ -168,18 +132,17 @@ describe("ProviderList", () => {
     }
   })
 
-  it("calls onEdit with the provider id when 'Edit' is clicked", () => {
-    const onEdit = mock((_id: string) => {})
+  it("calls onAction with the provider id and the edit-config action when 'Edit' is clicked", () => {
+    const onAction = mock((_id: string, _a: ProviderAction) => {})
     const { container } = render(
-      <ProviderList
-        providers={providers}
-        onSetSecret={() => {}}
-        onEdit={onEdit}
-      />,
+      <ProviderList providers={providers} onAction={onAction} />,
     )
     const firstRow = container.querySelector("tbody tr") as HTMLElement
     const btn = within(firstRow).getByRole("button", { name: /^edit$/i })
     fireEvent.click(btn)
-    expect(onEdit).toHaveBeenCalledWith("p_openai")
+    expect(onAction).toHaveBeenCalledTimes(1)
+    const [id, action] = onAction.mock.calls[0] as [string, ProviderAction]
+    expect(id).toBe("p_openai")
+    expect(action.kind).toBe("edit-config")
   })
 })
