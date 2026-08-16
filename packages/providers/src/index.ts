@@ -20,6 +20,7 @@ export {
   providerCatalog,
 } from "./catalog"
 export { validateProviderConfig } from "./validate"
+export { configSchemaFromFields } from "./config-schema-from-fields"
 export { ALL_TIERS } from "./reasoning-types"
 export type { ReasoningShape, ReasoningSupport } from "./reasoning-types"
 export { resolveReasoning } from "./resolve-reasoning"

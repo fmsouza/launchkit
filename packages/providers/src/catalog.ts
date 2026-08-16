@@ -1,7 +1,9 @@
 import type { SdkProvider } from "@spectrum/types"
 import { z } from "zod"
+import { configSchemaFromFields } from "./config-schema-from-fields"
 import { ALL_TIERS, type ReasoningSupport } from "./reasoning-types"
 import type {
+  ConfigFieldSpec,
   ProviderCatalogEntry,
   ProviderDescriptor,
   SecretFieldSpec,
@@ -20,6 +22,22 @@ const API_KEY_REQUIRED: SecretFieldSpec = {
 
 /** Reusable empty/strict config schema for providers whose SDK needs no extra config. */
 const emptyConfig = z.object({}).strict()
+
+const CUSTOM_CONFIG_FIELDS: readonly ConfigFieldSpec[] = [
+  {
+    name: "serverUrl",
+    label: "Server URL",
+    kind: "url",
+    required: false,
+    placeholder: "http://localhost:11434/v1",
+  },
+  {
+    name: "headers",
+    label: "Custom headers",
+    kind: "headers",
+    required: false,
+  },
+]
 
 const NO_REASONING: ReasoningSupport = { shape: "none", supportedTiers: [] }
 const OPENAI_EFFORT: ReasoningSupport = {
@@ -164,45 +182,11 @@ const descriptors: Record<SdkProvider, ProviderDescriptor> = {
   custom: {
     key: "custom",
     label: "Custom (OpenAI-compatible)",
-    configFields: [
-      {
-        name: "serverUrl",
-        label: "Server URL",
-        kind: "url",
-        required: false,
-        placeholder: "http://localhost:11434/v1",
-      },
-      {
-        name: "headers",
-        label: "Custom headers",
-        kind: "headers",
-        required: false,
-      },
-    ],
+    configFields: CUSTOM_CONFIG_FIELDS,
     secretFields: [API_KEY_OPTIONAL],
     supportsCustomHeaders: true,
     streaming: "incremental",
-    configSchema: z
-      .object({
-        serverUrl: z.string().url().optional(),
-        headers: z
-          .string()
-          .optional()
-          .refine(
-            (v) => {
-              if (v === undefined || v === "") return true
-              try {
-                const parsed: unknown = JSON.parse(v)
-                if (typeof parsed !== "object" || parsed === null) return false
-                return Object.values(parsed).every((x) => typeof x === "string")
-              } catch {
-                return false
-              }
-            },
-            { message: "headers must be a JSON object of string values" },
-          ),
-      })
-      .strict(),
+    configSchema: configSchemaFromFields(CUSTOM_CONFIG_FIELDS),
     sdkMapping: {
       baseUrlOption: "baseURL",
       apiKey: { kind: "option", name: "apiKey" },
