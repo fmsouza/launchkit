@@ -117,3 +117,23 @@ describe("descriptor actions", () => {
       expect(a.context).toBe("both")
   })
 })
+
+describe("anthropic descriptor", () => {
+  it("exposes a serverUrl config field so a local endpoint can be targeted", () => {
+    const fields = getDescriptor("anthropic").configFields
+    expect(fields.map((f) => f.name)).toContain("serverUrl")
+  })
+
+  it("accepts a config carrying only a serverUrl", () => {
+    const schema = getDescriptor("anthropic").configSchema
+    expect(
+      schema.safeParse({ serverUrl: "http://127.0.0.1:9100" }).success,
+    ).toBe(true)
+  })
+
+  it("accepts an empty config so cloud Anthropic keeps working", () => {
+    expect(getDescriptor("anthropic").configSchema.safeParse({}).success).toBe(
+      true,
+    )
+  })
+})

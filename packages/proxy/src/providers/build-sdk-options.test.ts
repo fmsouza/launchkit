@@ -90,4 +90,33 @@ describe("buildSdkOptions", () => {
     )
     expect(opts).toEqual({ apiKey: "not-needed" })
   })
+
+  it("sets baseURL from serverUrl for anthropic", () => {
+    const opts = buildSdkOptions(
+      getDescriptor("anthropic"),
+      { serverUrl: "http://127.0.0.1:9100" },
+      { apiKey: "sk-ant-test" },
+    )
+    expect(opts.baseURL).toBe("http://127.0.0.1:9100")
+  })
+
+  it("omits the baseURL key entirely for anthropic when serverUrl is absent", () => {
+    const opts = buildSdkOptions(
+      getDescriptor("anthropic"),
+      {},
+      {
+        apiKey: "sk-ant-test",
+      },
+    )
+    expect("baseURL" in opts).toBe(false)
+  })
+
+  it("still maps apiKey to the apiKey option for anthropic", () => {
+    const opts = buildSdkOptions(
+      getDescriptor("anthropic"),
+      { serverUrl: "http://127.0.0.1:9100" },
+      { apiKey: "sk-ant-test" },
+    )
+    expect(opts.apiKey).toBe("sk-ant-test")
+  })
 })

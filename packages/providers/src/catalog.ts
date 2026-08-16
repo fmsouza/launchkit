@@ -63,6 +63,16 @@ const OPENAI_EFFORT: ReasoningSupport = {
   // OpenAI reasoning models expose minimal|low|medium|high (no xhigh/max).
   supportedTiers: ["off", "minimal", "low", "medium", "high"],
 }
+const ANTHROPIC_CONFIG_FIELDS: readonly ConfigFieldSpec[] = [
+  {
+    name: "serverUrl",
+    label: "Server URL",
+    kind: "url",
+    required: false,
+    placeholder: "https://api.anthropic.com/v1",
+  },
+]
+
 const ANTHROPIC_THINKING: ReasoningSupport = {
   shape: "anthropic-thinking",
   supportedTiers: ALL_TIERS,
@@ -102,7 +112,7 @@ const openAiCompatible = (
 const noDiscovery = (
   key: SdkProvider,
   label: string,
-  configSchema = emptyConfig,
+  configSchema: z.ZodTypeAny = emptyConfig,
   configFields: ProviderDescriptor["configFields"] = [],
   reasoning: ReasoningSupport = NO_REASONING,
 ): ProviderDescriptor => {
@@ -159,8 +169,8 @@ const descriptors: Record<SdkProvider, ProviderDescriptor> = {
   anthropic: noDiscovery(
     "anthropic",
     "Anthropic",
-    emptyConfig,
-    [],
+    configSchemaFromFields(ANTHROPIC_CONFIG_FIELDS),
+    ANTHROPIC_CONFIG_FIELDS,
     ANTHROPIC_THINKING,
   ),
   google: noDiscovery("google", "Google", emptyConfig, [], GOOGLE_THINKING),
