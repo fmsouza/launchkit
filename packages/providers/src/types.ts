@@ -80,14 +80,11 @@ export type ApiKeyMapping =
 
 /** How to list models for a provider. */
 export type DiscoverySpec =
-  | {
-      readonly strategy: "openai-models"
-      readonly defaultBaseUrl?: string | undefined
-    }
+  | { readonly strategy: "openai-models"; readonly defaultBaseUrl?: string }
   | {
       readonly strategy: "ollama-tags"
       readonly sendAuthHeader: boolean
-      readonly defaultBaseUrl?: string | undefined
+      readonly defaultBaseUrl?: string
     }
   | { readonly strategy: "none" }
 
@@ -112,10 +109,21 @@ export const DiscoverySchema = z.discriminatedUnion("strategy", [
   z.object({ strategy: z.literal("none") }).strict(),
 ])
 
+/**
+ * Pin-only helper: zod's `.optional()` infers `T | undefined` on the property, which
+ * under this repo's `exactOptionalPropertyTypes` does not assign into a hand-written
+ * `foo?: T` (no explicit `undefined`). Strip the explicit `undefined` so the pin below
+ * checks real shape compatibility instead of tripping on that artifact. Not exported —
+ * this is not part of the package's API.
+ */
+type StripUndefined<T> = T extends unknown
+  ? { [K in keyof T]: Exclude<T[K], undefined> }
+  : never
+
 // Compile-time pin: keep DiscoverySchema's inferred shape assignable to DiscoverySpec.
 // If the schema and the hand-written type drift, this line fails `bun run typecheck`.
-const _discoverySchemaMatchesType: DiscoverySpec = {} as z.infer<
-  typeof DiscoverySchema
+const _discoverySchemaMatchesType: DiscoverySpec = {} as StripUndefined<
+  z.infer<typeof DiscoverySchema>
 >
 
 /** How non-secret config + secrets map onto the SDK factory's `create()` options. */
