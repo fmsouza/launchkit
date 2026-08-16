@@ -184,6 +184,18 @@
         "@spectrum/utils": "workspace:*",
       },
     },
+    "packages/extensions": {
+      "name": "@spectrum/extensions",
+      "version": "1.9.0",
+      "dependencies": {
+        "@spectrum/platform": "workspace:*",
+        "@spectrum/proc": "workspace:*",
+        "@spectrum/providers": "workspace:*",
+        "@spectrum/types": "workspace:*",
+        "@spectrum/utils": "workspace:*",
+        "zod": "catalog:",
+      },
+    },
     "packages/harnesses": {
       "name": "@spectrum/harnesses",
       "version": "1.9.0",
@@ -582,6 +594,8 @@
     "@spectrum/driver-acp": ["@spectrum/driver-acp@workspace:packages/driver-acp"],
 
     "@spectrum/driver-runtime": ["@spectrum/driver-runtime@workspace:packages/driver-runtime"],
+
+    "@spectrum/extensions": ["@spectrum/extensions@workspace:packages/extensions"],
 
     "@spectrum/harnesses": ["@spectrum/harnesses@workspace:packages/harnesses"],
 

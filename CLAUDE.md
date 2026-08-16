@@ -37,6 +37,7 @@ Test-first (RED observed) → implemented (GREEN) → refactored → `bun run ty
 - `@spectrum/agent-driver` — driver seam + run manager + socket protocol + FakeDriver (depends on agent-events, types, utils)
 - `@spectrum/driver-runtime` — reusable driver core: createDriver(adapter) → AgentDriver (depends on agent-driver, agent-events, utils; no harness SDK)
 - `@spectrum/driver-acp` — the ONE agent driver: an ACP (Agent Client Protocol) client — createAcpDriver + pure mapAcpUpdate + pure negotiation helpers, over a real stdio JSON-RPC transport (depends on driver-runtime, agent-events, agent-driver, types, utils, @agentclientprotocol/sdk). Drives every harness that declares an `acp` launch config; adding a new ACP agent is a harness definition, not a package. See `docs/01-conventions/acp-architecture.md`.
+- `@spectrum/extensions` — versioned extension manifest schema: `ExtensionManifestSchema`/`parseManifest`, api-version gate (`spectrum.dev/v<major>`), and the complete `PluginError` union (depends on platform, proc, providers, types, utils; zero IO)
 
 ## Project skills
 `.claude/skills/spectrum-new-package` — creating a new internal package under `packages/`. Invoke it when it applies.

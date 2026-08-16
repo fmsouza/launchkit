@@ -11,6 +11,7 @@
     { "path": "packages/sessions" },
     { "path": "packages/projects" },
     { "path": "packages/db" },
+    { "path": "packages/extensions" },
     { "path": "packages/ipc" },
     { "path": "packages/platform" },
     { "path": "packages/proc" },
