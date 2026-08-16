@@ -16,7 +16,7 @@ export interface ProviderRegistry {
  *
  * A plugin descriptor whose key is not `plugin:`-prefixed is DISCARDED — a plugin may never
  * claim or shadow a builtin key. Duplicate plugin keys resolve first-wins; the caller
- * (`@spectrum/provider-plugins`) rejects duplicates before they reach here, so this is a
+ * (`@spectrum/extensions`) rejects duplicates before they reach here, so this is a
  * defensive tiebreak rather than the enforcement point.
  *
  * `createProviderRegistry()` with no plugins is behaviourally identical to the previous

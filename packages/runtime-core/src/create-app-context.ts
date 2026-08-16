@@ -10,7 +10,6 @@ import type { SecretStore } from "@spectrum/secrets"
 import {
   type HarnessId,
   type ModelId,
-  SdkProviderSchema,
   type SessionId,
   wireModelFor,
 } from "@spectrum/types"
@@ -138,16 +137,8 @@ const createListProviderModels = (
       apiKey = got.value
     }
 
-    const validated = SdkProviderSchema.safeParse(provider.sdkProvider)
-    if (!validated.success) {
-      return err({
-        kind: "unsupported-provider",
-        sdkProvider: provider.sdkProvider,
-      })
-    }
-
     return lister({
-      sdkProvider: validated.data,
+      sdkProvider: provider.sdkProvider,
       config: provider.config,
       ...(apiKey !== undefined ? { apiKey } : {}),
     })

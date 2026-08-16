@@ -34,6 +34,11 @@ describe("configSchemaFromFields", () => {
     expect(schema.safeParse({ serverUrl: "not a url" }).success).toBe(false)
   })
 
+  it("rejects an empty string for an optional url field", () => {
+    const schema = configSchemaFromFields([urlField])
+    expect(schema.safeParse({ serverUrl: "" }).success).toBe(false)
+  })
+
   it("omits an optional field when it is absent", () => {
     const schema = configSchemaFromFields([urlField])
     expect(schema.safeParse({}).success).toBe(true)

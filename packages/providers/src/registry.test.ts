@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test"
-import { getDescriptor } from "./catalog"
+import { getDescriptor, listDescriptors, providerCatalog } from "./catalog"
 import { createProviderRegistry } from "./registry"
 import type { ProviderDescriptor } from "./types"
 
@@ -42,9 +42,9 @@ describe("createProviderRegistry", () => {
     expect(registry.get("plugin:dup")?.label).toBe("First")
   })
 
-  it("lists exactly the builtins when no plugins are registered", () => {
-    expect(createProviderRegistry().list().length).toBe(
-      createProviderRegistry([]).list().length,
-    )
+  it("is identical to the old static catalog when no plugins are registered", () => {
+    const registry = createProviderRegistry()
+    expect(registry.list()).toEqual(listDescriptors())
+    expect(registry.catalog()).toEqual(providerCatalog())
   })
 })

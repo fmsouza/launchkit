@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test"
 import { SdkProviderSchema } from "@spectrum/types"
 import {
+  defaultActions,
   getDescriptor,
   listDescriptors,
   providerCatalog,
@@ -97,9 +98,10 @@ describe("descriptor actions", () => {
   })
 
   it("omits set-secrets when the provider declares no secret fields", () => {
-    const d = listDescriptors().find((x) => x.secretFields.length === 0)
-    if (d === undefined) return
-    expect(d.actions.map((a) => a.kind)).not.toContain("set-secrets")
+    const actions = defaultActions(false)
+    expect(actions).toEqual([
+      { kind: "edit-config", id: "edit", label: "Edit", context: "both" },
+    ])
   })
 
   it("declares no flow actions on any builtin descriptor", () => {

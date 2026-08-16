@@ -1,7 +1,6 @@
 import type { ProviderDescriptor } from "@spectrum/providers"
 import type { SecretStore } from "@spectrum/secrets"
 import type { Provider } from "@spectrum/types"
-import { SdkProviderSchema } from "@spectrum/types"
 import { type Result, err, ok } from "@spectrum/utils"
 import type { ProxyError } from "../types"
 import { buildSdkOptions } from "./build-sdk-options"
@@ -81,20 +80,13 @@ export const createProviderFactory = (deps: {
     getModel: async (provider, providerModel) => {
       const secrets = await resolveSecrets(provider)
       if (!secrets.ok) return secrets
-      const validated = SdkProviderSchema.safeParse(provider.sdkProvider)
-      if (!validated.success) {
-        return err({
-          kind: "unsupported-provider",
-          sdkProvider: provider.sdkProvider,
-        })
-      }
       const cacheKey = JSON.stringify({
         s: provider.sdkProvider,
         c: provider.config,
         r: provider.secrets,
       })
       return buildFromResolved(
-        validated.data,
+        provider.sdkProvider,
         provider.config,
         secrets.value,
         providerModel,

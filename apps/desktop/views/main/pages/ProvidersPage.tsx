@@ -163,7 +163,7 @@ export const ProvidersPage = (): ReactElement => {
     const r = await update(editFor.id, {
       name: editFor.name,
       sdkProvider,
-      config: editConfig,
+      config: omitEmpty(editConfig),
       secretFieldNames: Object.keys(editFor.secretFields),
       models: editFor.models,
     })

@@ -679,4 +679,49 @@ describe("ProvidersPage", () => {
       }),
     })
   })
+
+  it("omits an emptied optional config field when the edit form is saved", async () => {
+    const customView: ProviderView = {
+      id: "p_custom",
+      name: "My Custom",
+      sdkProvider: "custom",
+      config: { serverUrl: "http://old:1/v1" },
+      secretFields: {},
+      models: [],
+    } as unknown as ProviderView
+
+    const client = renderPage({
+      getProviders: async () => ({ ok: true, value: [customView] }),
+      updateProvider: async () => ({ ok: true, value: customView }),
+    })
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("cell", { name: "My Custom" }),
+      ).toBeInTheDocument(),
+    )
+
+    const row = document.querySelector("tbody tr") as HTMLElement
+    const actionsCell = row.querySelector("td.lk-cell-actions") as HTMLElement
+    fireEvent.click(
+      within(actionsCell).getByRole("button", { name: /^edit$/i }),
+    )
+
+    await screen.findByRole("dialog", { name: /edit provider/i })
+
+    // Clear the previously-set Server URL and submit
+    fireEvent.change(screen.getByLabelText("Server URL"), {
+      target: { value: "" },
+    })
+
+    fireEvent.click(screen.getByRole("button", { name: /save changes/i }))
+
+    await waitFor(() => expect(client.calls.updateProvider.length).toBe(1))
+    expect(client.calls.updateProvider[0]).toMatchObject({
+      id: "p_custom",
+      input: expect.objectContaining({
+        config: {},
+      }),
+    })
+  })
 })
