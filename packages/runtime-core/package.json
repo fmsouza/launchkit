@@ -21,6 +21,7 @@
     "@spectrum/harnesses": "workspace:*",
     "@spectrum/logger": "workspace:*",
     "@spectrum/platform": "workspace:*",
+    "@spectrum/proc": "workspace:*",
     "@spectrum/projects": "workspace:*",
     "@spectrum/providers": "workspace:*",
     "@spectrum/proxy": "workspace:*",

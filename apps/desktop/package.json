@@ -27,6 +27,7 @@
     "@spectrum/ipc": "workspace:*",
     "@spectrum/logger": "workspace:*",
     "@spectrum/platform": "workspace:*",
+    "@spectrum/proc": "workspace:*",
     "@spectrum/providers": "workspace:*",
     "@spectrum/proxy": "workspace:*",
     "@spectrum/pty": "workspace:*",

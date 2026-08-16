@@ -1,11 +1,11 @@
 import { describe, expect, it } from "bun:test"
 import {
   claude,
-  createFakeCommandResolver,
   createInMemoryHarnessFileSource,
   createRegistry,
 } from "@spectrum/harnesses"
 import { resolveAppPaths } from "@spectrum/platform"
+import { createFakeCommandResolver } from "@spectrum/proc"
 import { createProjectStore } from "@spectrum/projects"
 import { createInMemoryRuntimeState } from "@spectrum/proxy"
 import type { HarnessId } from "@spectrum/types"

@@ -1,5 +1,5 @@
 {
-  "name": "@spectrum/harnesses",
+  "name": "@spectrum/proc",
   "version": "1.9.0",
   "private": true,
   "type": "module",
@@ -11,10 +11,7 @@
     "test": "bun test"
   },
   "dependencies": {
-    "@spectrum/logger": "workspace:*",
-    "@spectrum/proc": "workspace:*",
-    "@spectrum/types": "workspace:*",
-    "@spectrum/utils": "workspace:*",
-    "zod": "catalog:"
+    "@spectrum/platform": "workspace:*",
+    "@spectrum/utils": "workspace:*"
   }
 }

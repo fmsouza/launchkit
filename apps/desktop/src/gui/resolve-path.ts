@@ -88,7 +88,7 @@ export const __resetGuiPathAsyncForTest = (): void => {
  * Resolve the GUI PATH off the Worker's hot startup path. Runs the login-shell probe via an
  * ASYNC `Bun.spawn` (never `spawnSync`), memoized so the shell is forked at most once per
  * process. Mutates `process.env.PATH` once when the probe settles. The sole consumer
- * (`@spectrum/harnesses`' `createPathCommandResolver`) reads `process.env.PATH` LIVE at
+ * (`@spectrum/proc`'s `createPathCommandResolver`) reads `process.env.PATH` LIVE at
  * harness-launch time via `Bun.which(command, { PATH: process.env.PATH })`, so the enrichment
  * only needs to settle before the first harness launch — not before the window opens. Never
  * rejects; a failed/throwing probe falls back to the static common bin dirs (same behavior as

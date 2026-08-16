@@ -1,9 +1,12 @@
 import { type Logger, createNoopLogger } from "@spectrum/logger"
+import type {
+  CommandResolver,
+  ProcessSpawner,
+  SpawnedProcess,
+} from "@spectrum/proc"
 import type { HarnessDefinition, ModelId } from "@spectrum/types"
 import { type Result, err, isErr, ok, renderTemplate } from "@spectrum/utils"
-import type { CommandResolver } from "./command-resolver"
 import type { HarnessError } from "./errors"
-import type { ProcessSpawner, SpawnedProcess } from "./process-spawner"
 import { validateEnvTemplate } from "./validate-env-template"
 
 export type LaunchRoute =

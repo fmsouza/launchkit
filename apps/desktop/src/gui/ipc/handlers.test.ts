@@ -3,11 +3,9 @@ import type { AttachmentKind, AttachmentRef } from "@spectrum/agent-events"
 import type { StoredEvent } from "@spectrum/agent-events"
 import type { Config } from "@spectrum/config"
 import { defaultConfig } from "@spectrum/config"
-import {
-  createFakeCommandResolver,
-  resolveHarnessLaunch,
-} from "@spectrum/harnesses"
+import { resolveHarnessLaunch } from "@spectrum/harnesses"
 import { type Logger, createNoopLogger } from "@spectrum/logger"
+import { createFakeCommandResolver } from "@spectrum/proc"
 import type { UploadStore } from "@spectrum/runtime-core"
 import type {
   HarnessId,

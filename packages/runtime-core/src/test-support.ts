@@ -10,13 +10,12 @@ import {
 import { createDataAdmin } from "@spectrum/data-admin"
 import { createSqliteClient, runMigrations } from "@spectrum/db"
 import { createAcpDriver } from "@spectrum/driver-acp"
+import { createRegistry, launchHarness } from "@spectrum/harnesses"
+import { detectPlatform, resolveAppPaths } from "@spectrum/platform"
 import {
   createBunProcessSpawner,
   createPathCommandResolver,
-  createRegistry,
-  launchHarness,
-} from "@spectrum/harnesses"
-import { detectPlatform, resolveAppPaths } from "@spectrum/platform"
+} from "@spectrum/proc"
 import { createProjectStore } from "@spectrum/projects"
 import {
   createFileRuntimeState,

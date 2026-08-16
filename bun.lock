@@ -21,7 +21,7 @@
     },
     "apps/cli": {
       "name": "spectrum-cli",
-      "version": "1.8.1",
+      "version": "1.9.0",
       "bin": {
         "spectrum-cli": "./src/main.ts",
       },
@@ -43,7 +43,7 @@
     },
     "apps/desktop": {
       "name": "spectrum",
-      "version": "1.8.1",
+      "version": "1.9.0",
       "dependencies": {
         "@spectrum/agent-driver": "workspace:*",
         "@spectrum/agent-events": "workspace:*",
@@ -55,6 +55,7 @@
         "@spectrum/ipc": "workspace:*",
         "@spectrum/logger": "workspace:*",
         "@spectrum/platform": "workspace:*",
+        "@spectrum/proc": "workspace:*",
         "@spectrum/projects": "workspace:*",
         "@spectrum/providers": "workspace:*",
         "@spectrum/proxy": "workspace:*",
@@ -82,7 +83,7 @@
     },
     "packages/agent-driver": {
       "name": "@spectrum/agent-driver",
-      "version": "1.8.1",
+      "version": "1.9.0",
       "dependencies": {
         "@spectrum/agent-events": "workspace:*",
         "@spectrum/logger": "workspace:*",
@@ -93,7 +94,7 @@
     },
     "packages/agent-events": {
       "name": "@spectrum/agent-events",
-      "version": "1.8.1",
+      "version": "1.9.0",
       "dependencies": {
         "@spectrum/types": "workspace:*",
         "@spectrum/utils": "workspace:*",
@@ -102,14 +103,14 @@
     },
     "packages/brand": {
       "name": "@spectrum/brand",
-      "version": "1.8.1",
+      "version": "1.9.0",
       "dependencies": {
         "react": "catalog:",
       },
     },
     "packages/cli": {
       "name": "@spectrum/cli",
-      "version": "1.8.1",
+      "version": "1.9.0",
       "dependencies": {
         "@spectrum/config": "workspace:*",
         "@spectrum/db": "workspace:*",
@@ -125,7 +126,7 @@
     },
     "packages/config": {
       "name": "@spectrum/config",
-      "version": "1.8.1",
+      "version": "1.9.0",
       "dependencies": {
         "@spectrum/logger": "workspace:*",
         "@spectrum/platform": "workspace:*",
@@ -136,7 +137,7 @@
     },
     "packages/data-admin": {
       "name": "@spectrum/data-admin",
-      "version": "1.8.1",
+      "version": "1.9.0",
       "dependencies": {
         "@spectrum/db": "workspace:*",
         "@spectrum/types": "workspace:*",
@@ -150,7 +151,7 @@
     },
     "packages/db": {
       "name": "@spectrum/db",
-      "version": "1.8.1",
+      "version": "1.9.0",
       "dependencies": {
         "@spectrum/logger": "workspace:*",
         "@spectrum/utils": "workspace:*",
@@ -162,7 +163,7 @@
     },
     "packages/driver-acp": {
       "name": "@spectrum/driver-acp",
-      "version": "1.8.1",
+      "version": "1.9.0",
       "dependencies": {
         "@agentclientprotocol/sdk": "^1.3.0",
         "@spectrum/agent-driver": "workspace:*",
@@ -175,7 +176,7 @@
     },
     "packages/driver-runtime": {
       "name": "@spectrum/driver-runtime",
-      "version": "1.8.1",
+      "version": "1.9.0",
       "dependencies": {
         "@spectrum/agent-driver": "workspace:*",
         "@spectrum/agent-events": "workspace:*",
@@ -185,10 +186,10 @@
     },
     "packages/harnesses": {
       "name": "@spectrum/harnesses",
-      "version": "1.8.1",
+      "version": "1.9.0",
       "dependencies": {
         "@spectrum/logger": "workspace:*",
-        "@spectrum/platform": "workspace:*",
+        "@spectrum/proc": "workspace:*",
         "@spectrum/types": "workspace:*",
         "@spectrum/utils": "workspace:*",
         "zod": "catalog:",
@@ -196,7 +197,7 @@
     },
     "packages/ipc": {
       "name": "@spectrum/ipc",
-      "version": "1.8.1",
+      "version": "1.9.0",
       "dependencies": {
         "@spectrum/agent-events": "workspace:*",
         "@spectrum/providers": "workspace:*",
@@ -207,18 +208,26 @@
     },
     "packages/logger": {
       "name": "@spectrum/logger",
-      "version": "1.8.1",
+      "version": "1.9.0",
       "dependencies": {
         "@spectrum/utils": "workspace:*",
       },
     },
     "packages/platform": {
       "name": "@spectrum/platform",
-      "version": "1.8.1",
+      "version": "1.9.0",
+    },
+    "packages/proc": {
+      "name": "@spectrum/proc",
+      "version": "1.9.0",
+      "dependencies": {
+        "@spectrum/platform": "workspace:*",
+        "@spectrum/utils": "workspace:*",
+      },
     },
     "packages/projects": {
       "name": "@spectrum/projects",
-      "version": "1.8.1",
+      "version": "1.9.0",
       "dependencies": {
         "@spectrum/db": "workspace:*",
         "@spectrum/types": "workspace:*",
@@ -228,7 +237,7 @@
     },
     "packages/providers": {
       "name": "@spectrum/providers",
-      "version": "1.8.1",
+      "version": "1.9.0",
       "dependencies": {
         "@spectrum/agent-events": "workspace:*",
         "@spectrum/types": "workspace:*",
@@ -238,7 +247,7 @@
     },
     "packages/proxy": {
       "name": "@spectrum/proxy",
-      "version": "1.8.1",
+      "version": "1.9.0",
       "dependencies": {
         "@ai-sdk/amazon-bedrock": "^4",
         "@ai-sdk/anthropic": "^3",
@@ -270,7 +279,7 @@
     },
     "packages/pty": {
       "name": "@spectrum/pty",
-      "version": "1.8.1",
+      "version": "1.9.0",
       "dependencies": {
         "@spectrum/logger": "workspace:*",
         "@spectrum/types": "workspace:*",
@@ -280,7 +289,7 @@
     },
     "packages/run-store": {
       "name": "@spectrum/run-store",
-      "version": "1.8.1",
+      "version": "1.9.0",
       "dependencies": {
         "@spectrum/agent-events": "workspace:*",
         "@spectrum/db": "workspace:*",
@@ -294,7 +303,7 @@
     },
     "packages/runtime-core": {
       "name": "@spectrum/runtime-core",
-      "version": "1.8.1",
+      "version": "1.9.0",
       "dependencies": {
         "@spectrum/agent-driver": "workspace:*",
         "@spectrum/agent-events": "workspace:*",
@@ -306,6 +315,7 @@
         "@spectrum/harnesses": "workspace:*",
         "@spectrum/logger": "workspace:*",
         "@spectrum/platform": "workspace:*",
+        "@spectrum/proc": "workspace:*",
         "@spectrum/projects": "workspace:*",
         "@spectrum/providers": "workspace:*",
         "@spectrum/proxy": "workspace:*",
@@ -318,7 +328,7 @@
     },
     "packages/secrets": {
       "name": "@spectrum/secrets",
-      "version": "1.8.1",
+      "version": "1.9.0",
       "dependencies": {
         "@spectrum/logger": "workspace:*",
         "@spectrum/platform": "workspace:*",
@@ -328,7 +338,7 @@
     },
     "packages/sessions": {
       "name": "@spectrum/sessions",
-      "version": "1.8.1",
+      "version": "1.9.0",
       "dependencies": {
         "@spectrum/db": "workspace:*",
         "@spectrum/types": "workspace:*",
@@ -338,14 +348,14 @@
     },
     "packages/types": {
       "name": "@spectrum/types",
-      "version": "1.8.1",
+      "version": "1.9.0",
       "dependencies": {
         "zod": "catalog:",
       },
     },
     "packages/ui": {
       "name": "@spectrum/ui",
-      "version": "1.8.1",
+      "version": "1.9.0",
       "dependencies": {
         "@spectrum/agent-events": "workspace:*",
         "@spectrum/brand": "workspace:*",
@@ -360,15 +370,15 @@
     },
     "packages/utils": {
       "name": "@spectrum/utils",
-      "version": "1.8.1",
+      "version": "1.9.0",
     },
     "tooling/biome-config": {
       "name": "@spectrum/biome-config",
-      "version": "1.8.1",
+      "version": "1.9.0",
     },
     "tooling/tsconfig": {
       "name": "@spectrum/tsconfig",
-      "version": "1.8.1",
+      "version": "1.9.0",
     },
   },
   "overrides": {
@@ -579,6 +589,8 @@
     "@spectrum/logger": ["@spectrum/logger@workspace:packages/logger"],
 
     "@spectrum/platform": ["@spectrum/platform@workspace:packages/platform"],
+
+    "@spectrum/proc": ["@spectrum/proc@workspace:packages/proc"],
 
     "@spectrum/projects": ["@spectrum/projects@workspace:packages/projects"],
 

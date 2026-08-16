@@ -13,25 +13,10 @@ export {
 export type { HarnessFileSource } from "./file-source"
 export { createInMemoryHarnessFileSource } from "./file-source"
 
-export type { CommandResolver } from "./command-resolver"
-export { createFakeCommandResolver } from "./command-resolver"
-
-export type {
-  ProcessSpawner,
-  SpawnedProcess,
-  SpawnCall,
-  RecordingProcessSpawner,
-} from "./process-spawner"
-export { createRecordingProcessSpawner } from "./process-spawner"
-
 export type { HarnessRegistry } from "./registry"
 export { createRegistry } from "./registry"
 
 export type { LaunchParams, LaunchRoute, ResolvedHarnessLaunch } from "./launch"
 export { launchHarness, resolveHarnessLaunch } from "./launch"
 
-export {
-  createPathCommandResolver,
-  createBunProcessSpawner,
-  createDirHarnessFileSource,
-} from "./adapters"
+export { createDirHarnessFileSource } from "./adapters"

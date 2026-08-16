@@ -4,11 +4,11 @@ import {
   isAbsolutePath,
 } from "@spectrum/platform"
 import { type Result, err, ok } from "@spectrum/utils"
-import type { HarnessError } from "./errors"
+import type { ProcError } from "./errors"
 
 /** Resolves a command name/path to a validated absolute path, or rejects it. */
 export interface CommandResolver {
-  resolve(command: string): Result<string, HarnessError>
+  resolve(command: string): Result<string, ProcError>
 }
 
 const hasSeparator = (p: string): boolean => p.includes("/") || p.includes("\\")
@@ -27,7 +27,7 @@ const isRelativePath = (p: string, platform: Platform): boolean =>
 export const guardCommand = (
   command: string,
   platform: Platform = detectPlatform(),
-): Result<string, HarnessError> => {
+): Result<string, ProcError> => {
   if (isRelativePath(command, platform)) {
     return err({
       kind: "invalid-command",
@@ -51,7 +51,7 @@ export const createFakeCommandResolver = (
   pathTable: Readonly<Record<string, string>>,
   platform: Platform = detectPlatform(),
 ): CommandResolver => ({
-  resolve: (command: string): Result<string, HarnessError> => {
+  resolve: (command: string): Result<string, ProcError> => {
     const guarded = guardCommand(command, platform)
     if (!guarded.ok) return guarded
     if (isAbsolutePath(command, platform)) return ok(command)

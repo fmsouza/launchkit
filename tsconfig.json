@@ -13,6 +13,7 @@
     { "path": "packages/db" },
     { "path": "packages/ipc" },
     { "path": "packages/platform" },
+    { "path": "packages/proc" },
     { "path": "packages/pty" },
     { "path": "packages/agent-events" },
     { "path": "packages/run-store" },
