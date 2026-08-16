@@ -1,5 +1,6 @@
 import type { ProviderView } from "@spectrum/ipc"
 import { SdkProviderSchema } from "@spectrum/types"
+import type { SdkProvider } from "@spectrum/types"
 import {
   Button,
   EmptyState,
@@ -20,6 +21,7 @@ import { type ReactElement, useState } from "react"
 import { useDraftConnectionTest } from "../hooks/useDraftConnectionTest"
 import { useDraftProviderModels } from "../hooks/useDraftProviderModels"
 import { useNotifications } from "../hooks/useNotifications"
+import type { UseNotifications } from "../hooks/useNotifications"
 import { useProviderCatalog } from "../hooks/useProviderCatalog"
 import { useProviders } from "../hooks/useProviders"
 
@@ -28,6 +30,21 @@ const omitEmpty = (
   config: Readonly<Record<string, string>>,
 ): Record<string, string> =>
   Object.fromEntries(Object.entries(config).filter(([, v]) => v !== ""))
+
+/**
+ * Narrow a catalog key to a builtin SdkProvider. Add/discover/test are builtin-only for
+ * now — a plugin key (or an unloaded catalog) fails validation. Never fails silently:
+ * notifies and returns undefined so every caller has an explicit "stop here" signal.
+ */
+const resolveSdkProvider = (
+  key: string,
+  notify: UseNotifications["notify"],
+): SdkProvider | undefined => {
+  const validated = SdkProviderSchema.safeParse(key)
+  if (validated.success) return validated.data
+  notify({ tone: "error", message: `Provider key not supported: ${key}` })
+  return undefined
+}
 
 const toRow = (view: ProviderView): ProviderRow => {
   const fields = Object.values(view.secretFields)
@@ -78,18 +95,11 @@ export const ProvidersPage = (): ReactElement => {
     const secretFieldNames = selectedEntry?.secretFields.map((s) => s.name) ?? [
       "apiKey",
     ]
-    // The catalog entry's key may be a plugin key; add-provider is builtin-only for now.
-    const validated = SdkProviderSchema.safeParse(selectedEntry?.key ?? newSdk)
-    if (!validated.success) {
-      notify({
-        tone: "error",
-        message: `Provider key not supported: ${newSdk}`,
-      })
-      return
-    }
+    const sdkProvider = resolveSdkProvider(selectedEntry?.key ?? newSdk, notify)
+    if (sdkProvider === undefined) return
     const r = await add({
       ...(trimmed !== "" ? { name: trimmed } : {}),
-      sdkProvider: validated.data,
+      sdkProvider,
       config: omitEmpty(newConfig),
       secretFieldNames,
       ...(Object.keys(newSecrets).length > 0 ? { secrets: newSecrets } : {}),
@@ -141,17 +151,11 @@ export const ProvidersPage = (): ReactElement => {
 
   const submitEdit = async (): Promise<void> => {
     if (editFor === undefined) return
-    const validated = SdkProviderSchema.safeParse(editFor.sdkProvider)
-    if (!validated.success) {
-      notify({
-        tone: "error",
-        message: `Provider key not supported: ${editFor.sdkProvider}`,
-      })
-      return
-    }
+    const sdkProvider = resolveSdkProvider(editFor.sdkProvider, notify)
+    if (sdkProvider === undefined) return
     const r = await update(editFor.id, {
       name: editFor.name,
-      sdkProvider: validated.data,
+      sdkProvider,
       config: editConfig,
       secretFieldNames: Object.keys(editFor.secretFields),
       models: editFor.models,
@@ -256,12 +260,11 @@ export const ProvidersPage = (): ReactElement => {
               disabled={discovery.loading || conn.testing}
               onClick={() => {
                 void (async () => {
-                  // Draft discovery/connection-test probes are builtin-only for now.
-                  const validated = SdkProviderSchema.safeParse(
+                  const sdkProvider = resolveSdkProvider(
                     selectedEntry?.key ?? newSdk,
+                    notify,
                   )
-                  if (!validated.success) return
-                  const sdkProvider = validated.data
+                  if (sdkProvider === undefined) return
                   const config = omitEmpty(newConfig)
                   // The probe needs a target model: use the first discoverable one
                   // (the handler falls back to the provider name when none exists).

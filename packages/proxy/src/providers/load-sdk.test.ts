@@ -43,14 +43,14 @@ describe("loadSdk", () => {
     expect(typeof mod.create).toBe("function")
   })
 
-  it("returns a create function when a plugin descriptor declares the openai wire", async () => {
+  it("returns the openai factory when a plugin descriptor declares the openai wire", async () => {
     const mod = await loadSdk(pluginDescriptor("openai"))
-    expect(typeof mod.create).toBe("function")
+    expect(mod.create).toBe((await import("@ai-sdk/openai")).createOpenAI)
   })
 
-  it("returns a create function when a plugin descriptor declares the anthropic wire", async () => {
+  it("returns the anthropic factory when a plugin descriptor declares the anthropic wire", async () => {
     const mod = await loadSdk(pluginDescriptor("anthropic"))
-    expect(typeof mod.create).toBe("function")
+    expect(mod.create).toBe((await import("@ai-sdk/anthropic")).createAnthropic)
   })
 
   it("throws when a plugin descriptor declares no wire", async () => {

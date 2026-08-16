@@ -17,7 +17,7 @@ const loadByWire = async (
 export const loadSdk: LoadSdk = async (
   descriptor: ProviderDescriptor,
 ): Promise<SdkModule> => {
-  const key = descriptor.key as string
+  const key = descriptor.key
   if (isPluginKey(key)) return loadByWire(descriptor.sdkMapping.wire, key)
   switch (key) {
     case "openai":
