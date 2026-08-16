@@ -1,4 +1,6 @@
 import { describe, expect, it, mock } from "bun:test"
+import { getDescriptor } from "@spectrum/providers"
+import type { ProviderDescriptor } from "@spectrum/providers"
 import {
   createInMemoryKeychainBackend,
   createSecretStore,
@@ -30,7 +32,7 @@ describe("createProviderFactory", () => {
       provider: "openai",
       apiKey: cfg.apiKey,
     }))
-    const loadSdk = mock(async (_p: string) => ({ create }))
+    const loadSdk = mock(async (_d: ProviderDescriptor) => ({ create }))
     const factory = createProviderFactory({ secretStore: store, loadSdk })
     const r = await factory.getModel(
       makeProvider({ secrets: { apiKey: ref } }),
@@ -106,7 +108,7 @@ describe("createProviderFactory", () => {
 describe("createProviderFactory.getModelFromResolved", () => {
   it("builds a model from inline resolved secret values without touching the SecretStore", async () => {
     const captured: Array<Record<string, unknown>> = []
-    const loadSdk = mock(async (_p: string) => ({
+    const loadSdk = mock(async (_d: ProviderDescriptor) => ({
       create: (cfg: Record<string, unknown>) => {
         captured.push(cfg)
         return (id: string) => ({ id })
@@ -133,8 +135,8 @@ describe("createProviderFactory.getModelFromResolved", () => {
     expect(r.ok).toBe(true)
     // The inline apiKey reached the SDK options (openai maps apiKey as an option).
     expect(captured[0]?.apiKey).toBe("sk-inline")
-    // loadSdk was called with the correct sdkProvider.
-    expect(loadSdk).toHaveBeenCalledWith("openai")
+    // loadSdk was called with the descriptor for the resolved sdkProvider.
+    expect(loadSdk).toHaveBeenCalledWith(getDescriptor("openai"))
     // The returned model handle carries the requested model id.
     expect(r.ok && (r.value as { id: string }).id).toBe("gpt-4o")
   })

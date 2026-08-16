@@ -1,4 +1,5 @@
 import { getDescriptor } from "@spectrum/providers"
+import type { ProviderDescriptor } from "@spectrum/providers"
 import type { SecretStore } from "@spectrum/secrets"
 import type { Provider, SdkProvider } from "@spectrum/types"
 import { SdkProviderSchema } from "@spectrum/types"
@@ -11,7 +12,7 @@ export type ModelHandle = unknown
 export interface SdkModule {
   create(config: Record<string, unknown>): unknown
 }
-export type LoadSdk = (sdkProvider: string) => Promise<SdkModule>
+export type LoadSdk = (descriptor: ProviderDescriptor) => Promise<SdkModule>
 
 export interface ProviderFactory {
   getModel(
@@ -59,15 +60,14 @@ export const createProviderFactory = (deps: {
     let instance =
       cacheKey !== undefined ? instanceCache.get(cacheKey) : undefined
     if (instance === undefined) {
+      const descriptor = getDescriptor(sdkProvider)
       let mod: SdkModule
       try {
-        mod = await deps.loadSdk(sdkProvider)
+        mod = await deps.loadSdk(descriptor)
       } catch {
         return err({ kind: "unsupported-provider", sdkProvider })
       }
-      instance = mod.create(
-        buildSdkOptions(getDescriptor(sdkProvider), config, secrets),
-      )
+      instance = mod.create(buildSdkOptions(descriptor, config, secrets))
       if (cacheKey !== undefined) instanceCache.set(cacheKey, instance)
     }
     const inst = instance as (id: string) => unknown

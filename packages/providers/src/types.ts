@@ -1,5 +1,5 @@
-import type { SdkProvider } from "@spectrum/types"
-import { SdkProviderSchema } from "@spectrum/types"
+import type { ProviderKey } from "@spectrum/types"
+import { ProviderKeySchema } from "@spectrum/types"
 import { type ZodTypeAny, z } from "zod"
 import type { ReasoningSupport } from "./reasoning-types"
 
@@ -34,7 +34,7 @@ export type SecretFieldSpec = z.infer<typeof SecretFieldSpecSchema>
  */
 export const ProviderCatalogEntrySchema = z
   .object({
-    key: SdkProviderSchema,
+    key: ProviderKeySchema,
     label: z.string().min(1),
     configFields: z.array(ConfigFieldSpecSchema),
     secretFields: z.array(SecretFieldSpecSchema),
@@ -79,11 +79,18 @@ export type SdkMapping = {
   readonly placeholderApiKey?: string
   /** Static headers always sent (rare; most attribution headers come from config fields). */
   readonly defaultHeaders?: Readonly<Record<string, string>>
+  /**
+   * Which AI SDK factory serves this provider, for descriptors whose key is not a
+   * builtin. Builtins select their factory from `descriptor.key`; a plugin descriptor
+   * has no builtin key, so it names the wire format its server speaks and `loadSdk`
+   * maps that to `createOpenAI` / `createAnthropic`.
+   */
+  readonly wire?: "openai" | "anthropic"
 }
 
 /** The full, runtime descriptor for one provider. Internal to backend packages. */
 export type ProviderDescriptor = {
-  readonly key: SdkProvider
+  readonly key: ProviderKey
   readonly label: string
   readonly configFields: readonly ConfigFieldSpec[]
   readonly secretFields: readonly SecretFieldSpec[]

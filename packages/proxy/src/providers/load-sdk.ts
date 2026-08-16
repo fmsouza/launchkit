@@ -1,7 +1,25 @@
+import type { ProviderDescriptor } from "@spectrum/providers"
+import { isPluginKey } from "@spectrum/types"
 import type { LoadSdk, SdkModule } from "./factory"
 
-export const loadSdk: LoadSdk = async (sdkProvider): Promise<SdkModule> => {
-  switch (sdkProvider) {
+/** Lazily import the AI SDK factory a plugin descriptor's wire format maps to. */
+const loadByWire = async (
+  wire: "openai" | "anthropic" | undefined,
+  key: string,
+): Promise<SdkModule> => {
+  if (wire === "openai")
+    return { create: (await import("@ai-sdk/openai")).createOpenAI }
+  if (wire === "anthropic")
+    return { create: (await import("@ai-sdk/anthropic")).createAnthropic }
+  throw new Error(`plugin provider declares no wire format: ${key}`)
+}
+
+export const loadSdk: LoadSdk = async (
+  descriptor: ProviderDescriptor,
+): Promise<SdkModule> => {
+  const key = descriptor.key as string
+  if (isPluginKey(key)) return loadByWire(descriptor.sdkMapping.wire, key)
+  switch (key) {
     case "openai":
       return { create: (await import("@ai-sdk/openai")).createOpenAI }
     case "anthropic":
@@ -39,6 +57,6 @@ export const loadSdk: LoadSdk = async (sdkProvider): Promise<SdkModule> => {
     case "openrouter":
       return { create: (await import("@ai-sdk/openai")).createOpenAI }
     default:
-      throw new Error(`unsupported sdkProvider: ${sdkProvider}`)
+      throw new Error(`unsupported sdkProvider: ${key}`)
   }
 }

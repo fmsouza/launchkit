@@ -1,6 +1,5 @@
 import type { ProviderView } from "@spectrum/ipc"
 import { SdkProviderSchema } from "@spectrum/types"
-import type { SdkProvider } from "@spectrum/types"
 import {
   Button,
   EmptyState,
@@ -79,12 +78,18 @@ export const ProvidersPage = (): ReactElement => {
     const secretFieldNames = selectedEntry?.secretFields.map((s) => s.name) ?? [
       "apiKey",
     ]
-    // Use the typed key from the catalog entry; fall back to a cast if catalog not yet loaded.
-    const sdkProvider: SdkProvider =
-      selectedEntry?.key ?? (newSdk as SdkProvider)
+    // The catalog entry's key may be a plugin key; add-provider is builtin-only for now.
+    const validated = SdkProviderSchema.safeParse(selectedEntry?.key ?? newSdk)
+    if (!validated.success) {
+      notify({
+        tone: "error",
+        message: `Provider key not supported: ${newSdk}`,
+      })
+      return
+    }
     const r = await add({
       ...(trimmed !== "" ? { name: trimmed } : {}),
-      sdkProvider,
+      sdkProvider: validated.data,
       config: omitEmpty(newConfig),
       secretFieldNames,
       ...(Object.keys(newSecrets).length > 0 ? { secrets: newSecrets } : {}),
@@ -251,8 +256,12 @@ export const ProvidersPage = (): ReactElement => {
               disabled={discovery.loading || conn.testing}
               onClick={() => {
                 void (async () => {
-                  const sdkProvider =
-                    selectedEntry?.key ?? (newSdk as SdkProvider)
+                  // Draft discovery/connection-test probes are builtin-only for now.
+                  const validated = SdkProviderSchema.safeParse(
+                    selectedEntry?.key ?? newSdk,
+                  )
+                  if (!validated.success) return
+                  const sdkProvider = validated.data
                   const config = omitEmpty(newConfig)
                   // The probe needs a target model: use the first discoverable one
                   // (the handler falls back to the provider name when none exists).

@@ -193,6 +193,7 @@ const descriptors: Record<SdkProvider, ProviderDescriptor> = {
       // Local OpenAI-compatible servers (Ollama, LM Studio, …) need no key, but
       // @ai-sdk/openai throws without one — send a harmless placeholder when unset.
       placeholderApiKey: "not-needed",
+      wire: "openai",
     },
     discovery: { strategy: "openai-models" },
     reasoning: NO_REASONING,
