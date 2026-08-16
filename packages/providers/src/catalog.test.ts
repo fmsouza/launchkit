@@ -1,6 +1,11 @@
 import { describe, expect, it } from "bun:test"
 import { SdkProviderSchema } from "@spectrum/types"
-import { getDescriptor, listDescriptors, providerCatalog } from "./catalog"
+import {
+  getDescriptor,
+  listDescriptors,
+  providerCatalog,
+  toCatalogEntry,
+} from "./catalog"
 
 describe("provider catalog", () => {
   it("has exactly one descriptor for every SdkProvider value", () => {
@@ -54,6 +59,7 @@ describe("provider catalog", () => {
     expect(entry).toBeDefined()
     expect(Object.keys(entry ?? {}).sort()).toEqual(
       [
+        "actions",
         "configFields",
         "key",
         "label",
@@ -81,5 +87,33 @@ describe("provider catalog", () => {
     )
     expect(getDescriptor("openai").reasoning.shape).toBe("openai-effort")
     expect(getDescriptor("google").reasoning.shape).toBe("google-thinking")
+  })
+})
+
+describe("descriptor actions", () => {
+  it("offers edit-config and set-secrets when the provider has secret fields", () => {
+    const kinds = getDescriptor("openai").actions.map((a) => a.kind)
+    expect(kinds).toEqual(["edit-config", "set-secrets"])
+  })
+
+  it("omits set-secrets when the provider declares no secret fields", () => {
+    const d = listDescriptors().find((x) => x.secretFields.length === 0)
+    if (d === undefined) return
+    expect(d.actions.map((a) => a.kind)).not.toContain("set-secrets")
+  })
+
+  it("declares no flow actions on any builtin descriptor", () => {
+    for (const d of listDescriptors())
+      expect(d.actions.some((a) => a.kind === "flow")).toBe(false)
+  })
+
+  it("projects actions onto the catalog entry so the GUI can render them", () => {
+    const entry = toCatalogEntry(getDescriptor("openai"))
+    expect(entry.actions.map((a) => a.id)).toEqual(["edit", "secrets"])
+  })
+
+  it("marks both default actions as available in create and provider contexts", () => {
+    for (const a of getDescriptor("openai").actions)
+      expect(a.context).toBe("both")
   })
 })

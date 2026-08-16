@@ -12,6 +12,7 @@ const fakeEntry: ProviderCatalogEntry = {
   configFields: [],
   secretFields: [],
   supportsCustomHeaders: true,
+  actions: [],
 }
 
 const Probe = (): JSX.Element => {

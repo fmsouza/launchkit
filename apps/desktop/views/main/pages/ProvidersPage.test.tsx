@@ -18,6 +18,11 @@ const view: ProviderView = {
 } as unknown as ProviderView
 
 /** Minimal catalog used as default stub in all tests. */
+const defaultProviderActions: ProviderCatalogEntry["actions"] = [
+  { kind: "edit-config", id: "edit", label: "Edit provider", context: "both" },
+  { kind: "set-secrets", id: "secrets", label: "Set secret", context: "both" },
+]
+
 const defaultCatalog: ProviderCatalogEntry[] = [
   {
     key: "openai",
@@ -25,6 +30,7 @@ const defaultCatalog: ProviderCatalogEntry[] = [
     configFields: [],
     secretFields: [{ name: "apiKey", label: "API key", required: true }],
     supportsCustomHeaders: false,
+    actions: defaultProviderActions,
   },
   {
     key: "groq",
@@ -32,6 +38,7 @@ const defaultCatalog: ProviderCatalogEntry[] = [
     configFields: [],
     secretFields: [{ name: "apiKey", label: "API key", required: true }],
     supportsCustomHeaders: false,
+    actions: defaultProviderActions,
   },
   {
     key: "custom",
@@ -52,6 +59,7 @@ const defaultCatalog: ProviderCatalogEntry[] = [
     ],
     secretFields: [{ name: "apiKey", label: "API key", required: false }],
     supportsCustomHeaders: true,
+    actions: defaultProviderActions,
   },
 ]
 

@@ -1,4 +1,5 @@
 import type { ProviderView } from "@spectrum/ipc"
+import type { ProviderAction, ProviderCatalogEntry } from "@spectrum/providers"
 import { SdkProviderSchema } from "@spectrum/types"
 import type { SdkProvider } from "@spectrum/types"
 import {
@@ -44,6 +45,37 @@ const resolveSdkProvider = (
   if (validated.success) return validated.data
   notify({ tone: "error", message: `Provider key not supported: ${key}` })
   return undefined
+}
+
+/**
+ * The action a builtin has always offered for a given kind, used when the catalog entry
+ * for a provider hasn't loaded yet (or declares no matching action) — same fallback shape
+ * as `defaultActions` in `@spectrum/providers`, kept local so the click always resolves to
+ * something rather than silently doing nothing.
+ */
+const fallbackAction = (kind: "edit-config" | "set-secrets"): ProviderAction =>
+  kind === "edit-config"
+    ? {
+        kind: "edit-config",
+        id: "edit",
+        label: "Edit provider",
+        context: "both",
+      }
+    : {
+        kind: "set-secrets",
+        id: "secrets",
+        label: "Set secret",
+        context: "both",
+      }
+
+/** Resolve the descriptor-declared action of `kind` for `provider`, falling back if unloaded. */
+const resolveAction = (
+  provider: ProviderView,
+  kind: "edit-config" | "set-secrets",
+  catalog: readonly ProviderCatalogEntry[] | undefined,
+): ProviderAction => {
+  const entry = catalog?.find((c) => c.key === provider.sdkProvider)
+  return entry?.actions.find((a) => a.kind === kind) ?? fallbackAction(kind)
 }
 
 const toRow = (view: ProviderView): ProviderRow => {
@@ -170,6 +202,23 @@ export const ProvidersPage = (): ReactElement => {
       ? catalog.data?.find((c) => c.key === editFor.sdkProvider)
       : undefined
 
+  /** Dispatch on the descriptor-declared action kind — one switch, not two hardcoded modal triggers. */
+  const onAction = (provider: ProviderView, action: ProviderAction): void => {
+    if (action.kind === "edit-config") {
+      setEditFor(provider)
+      setEditConfig({ ...provider.config })
+      return
+    }
+    if (action.kind === "set-secrets") {
+      setSecretFor(provider)
+      setSecretValues({})
+      return
+    }
+    // "flow" arrives in Plan 4; unreachable today — no builtin declares one and no
+    // contribution exists yet. Never swallow it silently if it ever does fire.
+    notify({ tone: "error", message: "This action needs a newer Spectrum" })
+  }
+
   return (
     <SettingsLayout title="Providers">
       {loading ? <Spinner label="Loading providers" /> : null}
@@ -188,15 +237,13 @@ export const ProvidersPage = (): ReactElement => {
             onSetSecret={(id) => {
               const p = data.find((x) => x.id === id)
               if (p !== undefined) {
-                setSecretFor(p)
-                setSecretValues({})
+                onAction(p, resolveAction(p, "set-secrets", catalog.data))
               }
             }}
             onEdit={(id) => {
               const p = data.find((x) => x.id === id)
               if (p !== undefined) {
-                setEditFor(p)
-                setEditConfig({ ...p.config })
+                onAction(p, resolveAction(p, "edit-config", catalog.data))
               }
             }}
           />

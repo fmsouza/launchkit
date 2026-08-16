@@ -2,6 +2,7 @@ export {
   ConfigFieldSpecSchema,
   SecretFieldSpecSchema,
   ProviderCatalogEntrySchema,
+  ProviderActionSchema,
 } from "./types"
 export type {
   ConfigFieldSpec,
@@ -12,12 +13,14 @@ export type {
   DiscoverySpec,
   SdkMapping,
   ProviderConfigError,
+  ProviderAction,
 } from "./types"
 export {
   getDescriptor,
   listDescriptors,
   toCatalogEntry,
   providerCatalog,
+  defaultActions,
 } from "./catalog"
 export { validateProviderConfig } from "./validate"
 export { createProviderRegistry } from "./registry"

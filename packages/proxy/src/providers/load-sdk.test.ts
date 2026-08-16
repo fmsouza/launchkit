@@ -20,6 +20,7 @@ const pluginDescriptor = (
   },
   discovery: { strategy: "none" },
   reasoning: { shape: "none", supportedTiers: [] },
+  actions: [],
 })
 
 describe("loadSdk", () => {

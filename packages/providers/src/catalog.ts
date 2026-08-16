@@ -4,6 +4,7 @@ import { configSchemaFromFields } from "./config-schema-from-fields"
 import { ALL_TIERS, type ReasoningSupport } from "./reasoning-types"
 import type {
   ConfigFieldSpec,
+  ProviderAction,
   ProviderCatalogEntry,
   ProviderDescriptor,
   SecretFieldSpec,
@@ -22,6 +23,23 @@ const API_KEY_REQUIRED: SecretFieldSpec = {
 
 /** Reusable empty/strict config schema for providers whose SDK needs no extra config. */
 const emptyConfig = z.object({}).strict()
+
+/** The two actions every builtin has always offered, as data. */
+export const defaultActions = (
+  hasSecrets: boolean,
+): readonly ProviderAction[] => [
+  { kind: "edit-config", id: "edit", label: "Edit provider", context: "both" },
+  ...(hasSecrets
+    ? [
+        {
+          kind: "set-secrets" as const,
+          id: "secrets",
+          label: "Set secret",
+          context: "both" as const,
+        },
+      ]
+    : []),
+]
 
 const CUSTOM_CONFIG_FIELDS: readonly ConfigFieldSpec[] = [
   {
@@ -60,21 +78,25 @@ const openAiCompatible = (
   label: string,
   discoveryBaseUrl: string,
   reasoning: ReasoningSupport = NO_REASONING,
-): ProviderDescriptor => ({
-  key,
-  label,
-  configFields: [],
-  secretFields: [API_KEY_REQUIRED],
-  supportsCustomHeaders: false,
-  streaming: "incremental",
-  configSchema: emptyConfig,
-  sdkMapping: {
-    baseUrlOption: "baseURL",
-    apiKey: { kind: "option", name: "apiKey" },
-  },
-  discovery: { strategy: "openai-models", defaultBaseUrl: discoveryBaseUrl },
-  reasoning,
-})
+): ProviderDescriptor => {
+  const secretFields = [API_KEY_REQUIRED]
+  return {
+    key,
+    label,
+    configFields: [],
+    secretFields,
+    supportsCustomHeaders: false,
+    streaming: "incremental",
+    configSchema: emptyConfig,
+    sdkMapping: {
+      baseUrlOption: "baseURL",
+      apiKey: { kind: "option", name: "apiKey" },
+    },
+    discovery: { strategy: "openai-models", defaultBaseUrl: discoveryBaseUrl },
+    reasoning,
+    actions: defaultActions(secretFields.length > 0),
+  }
+}
 
 /** A provider whose model list we cannot discover (the UI falls back to free-text). */
 const noDiscovery = (
@@ -83,21 +105,25 @@ const noDiscovery = (
   configSchema = emptyConfig,
   configFields: ProviderDescriptor["configFields"] = [],
   reasoning: ReasoningSupport = NO_REASONING,
-): ProviderDescriptor => ({
-  key,
-  label,
-  configFields,
-  secretFields: [API_KEY_REQUIRED],
-  supportsCustomHeaders: false,
-  streaming: "incremental",
-  configSchema,
-  sdkMapping: {
-    baseUrlOption: "baseURL",
-    apiKey: { kind: "option", name: "apiKey" },
-  },
-  discovery: { strategy: "none" },
-  reasoning,
-})
+): ProviderDescriptor => {
+  const secretFields = [API_KEY_REQUIRED]
+  return {
+    key,
+    label,
+    configFields,
+    secretFields,
+    supportsCustomHeaders: false,
+    streaming: "incremental",
+    configSchema,
+    sdkMapping: {
+      baseUrlOption: "baseURL",
+      apiKey: { kind: "option", name: "apiKey" },
+    },
+    discovery: { strategy: "none" },
+    reasoning,
+    actions: defaultActions(secretFields.length > 0),
+  }
+}
 
 const descriptors: Record<SdkProvider, ProviderDescriptor> = {
   openai: openAiCompatible(
@@ -197,6 +223,7 @@ const descriptors: Record<SdkProvider, ProviderDescriptor> = {
     },
     discovery: { strategy: "openai-models" },
     reasoning: NO_REASONING,
+    actions: defaultActions(true),
   },
 
   // ── Ollama Cloud ────────────────────────────────────────────────────────────
@@ -228,6 +255,7 @@ const descriptors: Record<SdkProvider, ProviderDescriptor> = {
       defaultBaseUrl: "https://ollama.com/api",
     },
     reasoning: NO_REASONING,
+    actions: defaultActions(true),
   },
 
   // ── OpenRouter ──────────────────────────────────────────────────────────────
@@ -269,6 +297,7 @@ const descriptors: Record<SdkProvider, ProviderDescriptor> = {
       defaultBaseUrl: "https://openrouter.ai/api/v1",
     },
     reasoning: NO_REASONING,
+    actions: defaultActions(true),
   },
 }
 
@@ -289,6 +318,7 @@ export const toCatalogEntry = (
   configFields: [...d.configFields],
   secretFields: [...d.secretFields],
   supportsCustomHeaders: d.supportsCustomHeaders,
+  actions: [...d.actions],
 })
 
 /** The full presentational catalog for the GUI. */
