@@ -1,9 +1,9 @@
 import {
   attachmentsFromOllamaTag,
   attachmentsFromOpenAiEntry,
-  getDescriptor,
 } from "@spectrum/providers"
-import type { DiscoveredModel, SdkProvider } from "@spectrum/types"
+import type { ProviderDescriptor } from "@spectrum/providers"
+import type { DiscoveredModel } from "@spectrum/types"
 import { type Result, err, ok } from "@spectrum/utils"
 import type { ProxyError } from "./types"
 
@@ -142,8 +142,8 @@ const parseOpenAIModels = (
 
 /** Input to the model lister. */
 export type ModelListerInput = {
-  /** The SDK provider identifier (e.g. "openai", "ollama"). */
-  readonly sdkProvider: SdkProvider
+  /** The SDK provider identifier (e.g. "openai", "ollama", or a `plugin:`-prefixed key). */
+  readonly sdkProvider: string
   /** Non-secret config including optional `serverUrl`. */
   readonly config: Readonly<Record<string, string>>
   /** Resolved secret API key (absent for keyless providers like ollama). */
@@ -168,9 +168,16 @@ export type ModelLister = (
  * SECURITY: the apiKey is used only for outbound headers, never returned.
  */
 export const createModelLister =
-  (deps: { readonly httpGet: HttpGet }): ModelLister =>
+  (deps: {
+    readonly httpGet: HttpGet
+    /** Resolve a provider key to its descriptor. Injected so plugin providers resolve too. */
+    readonly getDescriptor: (key: string) => ProviderDescriptor | undefined
+  }): ModelLister =>
   async ({ sdkProvider, config, apiKey }) => {
-    const discovery = getDescriptor(sdkProvider).discovery
+    const descriptor = deps.getDescriptor(sdkProvider)
+    if (descriptor === undefined)
+      return err({ kind: "unsupported-provider", sdkProvider })
+    const discovery = descriptor.discovery
 
     if (discovery.strategy === "none") {
       return err({ kind: "unsupported-model-discovery", sdkProvider })

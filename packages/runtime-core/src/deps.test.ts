@@ -34,6 +34,7 @@ describe("CreateAppContextDeps", () => {
       "createPathCommandResolver",
       "createBunProcessSpawner",
       "launchHarness",
+      "createProviderRegistry",
       "createProviderFactory",
       "loadSdk",
       "createRealGateway",

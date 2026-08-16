@@ -7,7 +7,6 @@ import {
 } from "@spectrum/agent-events"
 import type { IpcHandlers, ProviderView } from "@spectrum/ipc"
 import {
-  createProviderRegistry,
   heuristicAttachments,
   providerCatalog,
   validateProviderConfig,
@@ -115,7 +114,7 @@ export const createIpcHandlers = (ctx: GuiContext): IpcHandlers => {
     addProvider: async (input) => {
       const config = await loadConfig()
       const valid = validateProviderConfig(
-        createProviderRegistry(),
+        ctx.providerRegistry,
         input.sdkProvider,
         input.config,
       )
@@ -158,7 +157,7 @@ export const createIpcHandlers = (ctx: GuiContext): IpcHandlers => {
       const existing = config.providers.find((p) => p.id === id)
       if (existing === undefined) return fail(`unknown provider: ${String(id)}`)
       const valid = validateProviderConfig(
-        createProviderRegistry(),
+        ctx.providerRegistry,
         input.sdkProvider,
         input.config,
       )
@@ -803,7 +802,7 @@ export const createIpcHandlers = (ctx: GuiContext): IpcHandlers => {
       providerModel,
     }) => {
       const valid = validateProviderConfig(
-        createProviderRegistry(),
+        ctx.providerRegistry,
         sdkProvider,
         config,
       )
@@ -826,7 +825,7 @@ export const createIpcHandlers = (ctx: GuiContext): IpcHandlers => {
 
     listProviderModelsDraft: async ({ sdkProvider, config, secrets }) => {
       const valid = validateProviderConfig(
-        createProviderRegistry(),
+        ctx.providerRegistry,
         sdkProvider,
         config,
       )

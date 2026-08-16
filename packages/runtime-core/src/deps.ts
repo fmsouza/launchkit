@@ -18,6 +18,7 @@ import {
   createPathCommandResolver,
 } from "@spectrum/proc"
 import { createProjectStore } from "@spectrum/projects"
+import { createProviderRegistry } from "@spectrum/providers"
 import {
   createFileRuntimeState,
   createProviderFactory,
@@ -80,6 +81,12 @@ export interface CreateAppContextDeps {
   readonly createPathCommandResolver: typeof createPathCommandResolver
   readonly createBunProcessSpawner: typeof createBunProcessSpawner
   readonly launchHarness: typeof launchHarness
+  /**
+   * Build the ONE process-wide provider registry (builtins now, builtins ⊕ installed plugins in
+   * Plan 2). `createAppContext` calls this exactly once and threads its `.get` lookup into the
+   * factory, the model listers, and the proxy — never re-derives it.
+   */
+  readonly createProviderRegistry: typeof createProviderRegistry
   readonly createProviderFactory: typeof createProviderFactory
   readonly loadSdk: typeof loadSdk
   readonly createRealGateway: typeof createRealGateway
@@ -167,6 +174,7 @@ export const realDeps: CreateAppContextDeps = {
   createPathCommandResolver,
   createBunProcessSpawner,
   launchHarness,
+  createProviderRegistry,
   createProviderFactory,
   loadSdk,
   createRealGateway,

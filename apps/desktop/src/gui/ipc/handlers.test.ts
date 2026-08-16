@@ -6,6 +6,7 @@ import { defaultConfig } from "@spectrum/config"
 import { resolveHarnessLaunch } from "@spectrum/harnesses"
 import { type Logger, createNoopLogger } from "@spectrum/logger"
 import { createFakeCommandResolver } from "@spectrum/proc"
+import { createProviderRegistry } from "@spectrum/providers"
 import type { UploadStore } from "@spectrum/runtime-core"
 import type {
   HarnessId,
@@ -411,6 +412,10 @@ const makeCtx = (
       return over.pickFilesResult ?? []
     },
     uploadStore: over.uploadStore ?? defaultUploadStore(),
+    // Real (builtins-only) registry — the four inline `createProviderRegistry()` calls this
+    // task removed from handlers.ts now read `ctx.providerRegistry`, so the fake context needs
+    // a real one for `validateProviderConfig` to resolve descriptors.
+    providerRegistry: createProviderRegistry(),
   } as unknown as GuiContext
 
   return {

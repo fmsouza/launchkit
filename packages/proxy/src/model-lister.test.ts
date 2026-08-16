@@ -1,9 +1,19 @@
 import { describe, expect, it } from "bun:test"
+import { createProviderRegistry } from "@spectrum/providers"
 import type { SdkProvider } from "@spectrum/types"
 import { type Result, err, ok } from "@spectrum/utils"
 import { createModelLister } from "./model-lister"
 import type { HttpGet } from "./model-lister"
 import type { ProxyError } from "./types"
+
+// Real (builtins-only) registry, shared by every test below that doesn't care about descriptor
+// injection itself — the injected `getDescriptor` is the whole point of this task, so tests that
+// exercise routing/discovery/parsing wire it through a real registry rather than duplicating the
+// builtin catalog. Tests for the injection seam itself call `createModelLister` directly.
+const registry = createProviderRegistry()
+const list = (deps: { readonly httpGet: HttpGet }): ReturnType<
+  typeof createModelLister
+> => createModelLister({ ...deps, getDescriptor: registry.get })
 
 // ── Fake HttpGet ─────────────────────────────────────────────────────────────
 
@@ -54,7 +64,7 @@ describe("createModelLister – ollama (cloud)", () => {
         { name: "mistral:latest", digest: "def" },
       ],
     }
-    const lister = createModelLister({
+    const lister = list({
       httpGet: fakeHttpGet(ok(body)),
     })
 
@@ -72,7 +82,7 @@ describe("createModelLister – ollama (cloud)", () => {
 
   it("uses the default ollama cloud base URL when config has no serverUrl", async () => {
     const { httpGet, calls } = capturingHttpGet(ok({ models: [] }))
-    const lister = createModelLister({ httpGet })
+    const lister = list({ httpGet })
 
     await lister({
       sdkProvider: "ollama" as SdkProvider,
@@ -86,7 +96,7 @@ describe("createModelLister – ollama (cloud)", () => {
 
   it("uses serverUrl from config when provided", async () => {
     const { httpGet, calls } = capturingHttpGet(ok({ models: [] }))
-    const lister = createModelLister({ httpGet })
+    const lister = list({ httpGet })
 
     await lister({
       sdkProvider: "ollama" as SdkProvider,
@@ -100,7 +110,7 @@ describe("createModelLister – ollama (cloud)", () => {
   it("sends Authorization header for ollama cloud", async () => {
     const capturedHeaders: Array<Readonly<Record<string, string>> | undefined> =
       []
-    const lister = createModelLister({
+    const lister = list({
       httpGet: fakeHttpGet(ok({ models: [] }), (h) => capturedHeaders.push(h)),
     })
 
@@ -115,7 +125,7 @@ describe("createModelLister – ollama (cloud)", () => {
   })
 
   it("returns err on http error for ollama", async () => {
-    const lister = createModelLister({
+    const lister = list({
       httpGet: fakeHttpGet(
         err({ kind: "provider-failed", detail: "connection refused" }),
       ),
@@ -131,7 +141,7 @@ describe("createModelLister – ollama (cloud)", () => {
   })
 
   it("returns err when ollama response has no models field", async () => {
-    const lister = createModelLister({
+    const lister = list({
       httpGet: fakeHttpGet(ok({ wrong: "shape" })),
     })
 
@@ -145,7 +155,7 @@ describe("createModelLister – ollama (cloud)", () => {
   })
 
   it("returns err when ollama models items have no name field", async () => {
-    const lister = createModelLister({
+    const lister = list({
       httpGet: fakeHttpGet(ok({ models: [{ digest: "abc" }] })),
     })
 
@@ -166,7 +176,7 @@ describe("createModelLister – openai", () => {
     const body = {
       data: [{ id: "gpt-4o" }, { id: "gpt-4o-mini" }],
     }
-    const lister = createModelLister({
+    const lister = list({
       httpGet: fakeHttpGet(ok(body)),
     })
 
@@ -185,7 +195,7 @@ describe("createModelLister – openai", () => {
   it("sends Bearer token in Authorization header", async () => {
     const capturedHeaders: Array<Readonly<Record<string, string>> | undefined> =
       []
-    const lister = createModelLister({
+    const lister = list({
       httpGet: fakeHttpGet(ok({ data: [] }), (h) => capturedHeaders.push(h)),
     })
 
@@ -200,7 +210,7 @@ describe("createModelLister – openai", () => {
 
   it("uses the default openai base URL when config has no baseUrl", async () => {
     const { httpGet, calls } = capturingHttpGet(ok({ data: [] }))
-    const lister = createModelLister({ httpGet })
+    const lister = list({ httpGet })
 
     await lister({
       sdkProvider: "openai" as SdkProvider,
@@ -213,7 +223,7 @@ describe("createModelLister – openai", () => {
 
   it("uses serverUrl from config for openai-compatible provider", async () => {
     const { httpGet, calls } = capturingHttpGet(ok({ data: [] }))
-    const lister = createModelLister({ httpGet })
+    const lister = list({ httpGet })
 
     await lister({
       sdkProvider: "groq" as SdkProvider,
@@ -225,7 +235,7 @@ describe("createModelLister – openai", () => {
   })
 
   it("returns err on http error for openai", async () => {
-    const lister = createModelLister({
+    const lister = list({
       httpGet: fakeHttpGet(
         err({ kind: "provider-failed", detail: "401 Unauthorized" }),
       ),
@@ -241,7 +251,7 @@ describe("createModelLister – openai", () => {
   })
 
   it("returns err when openai response has no data field", async () => {
-    const lister = createModelLister({
+    const lister = list({
       httpGet: fakeHttpGet(ok({ wrong: "shape" })),
     })
 
@@ -255,7 +265,7 @@ describe("createModelLister – openai", () => {
   })
 
   it("returns err when openai data items have no id field", async () => {
-    const lister = createModelLister({
+    const lister = list({
       httpGet: fakeHttpGet(ok({ data: [{ name: "gpt-4o" }] })),
     })
 
@@ -283,7 +293,7 @@ describe.each([
   "createModelLister – %s (openai-compatible)",
   (sdkProvider) => {
     it(`returns model ids via /v1/models for ${sdkProvider}`, async () => {
-      const lister = createModelLister({
+      const lister = list({
         httpGet: fakeHttpGet(ok({ data: [{ id: "model-a" }] })),
       })
 
@@ -303,7 +313,7 @@ describe.each([
 describe("createModelLister – default base URL resolution", () => {
   it("uses the default groq base URL when config has no baseUrl", async () => {
     const { httpGet, calls } = capturingHttpGet(ok({ data: [] }))
-    const lister = createModelLister({ httpGet })
+    const lister = list({ httpGet })
 
     await lister({
       sdkProvider: "groq" as SdkProvider,
@@ -317,7 +327,7 @@ describe("createModelLister – default base URL resolution", () => {
 
   it("uses the default mistral base URL when config has no baseUrl", async () => {
     const { httpGet, calls } = capturingHttpGet(ok({ data: [] }))
-    const lister = createModelLister({ httpGet })
+    const lister = list({ httpGet })
 
     await lister({
       sdkProvider: "mistral" as SdkProvider,
@@ -331,7 +341,7 @@ describe("createModelLister – default base URL resolution", () => {
 
   it("returns err and does NOT call the fetcher when the resolved base is empty", async () => {
     const { httpGet, calls } = capturingHttpGet(ok({ data: [] }))
-    const lister = createModelLister({ httpGet })
+    const lister = list({ httpGet })
 
     // custom has no defaultBaseUrl, and an explicit empty serverUrl collapses to "".
     // The lister must guard this and error without hitting the network.
@@ -359,7 +369,7 @@ describe.each([
   "azure",
 ] as SdkProvider[])("createModelLister – %s (unsupported)", (sdkProvider) => {
   it(`returns unsupported-model-discovery err for ${sdkProvider}`, async () => {
-    const lister = createModelLister({
+    const lister = list({
       httpGet: fakeHttpGet(ok({})),
     })
 
@@ -385,7 +395,7 @@ it("lists ollama CLOUD models from {base}/tags with the Authorization header", a
     calls.push({ url, headers })
     return { ok: true as const, value: { models: [{ name: "gpt-oss:120b" }] } }
   }
-  const lister = createModelLister({ httpGet })
+  const lister = list({ httpGet })
   const r = await lister({ sdkProvider: "ollama", config: {}, apiKey: "k1" })
   expect(r.ok).toBe(true)
   if (r.ok) expect(r.value).toEqual([{ id: "gpt-oss:120b" }])
@@ -400,7 +410,7 @@ it("lists custom models from {serverUrl}/models with a bearer header when keyed"
     calls.push({ url, headers })
     return { ok: true as const, value: { data: [{ id: "model-a" }] } }
   }
-  const lister = createModelLister({ httpGet })
+  const lister = list({ httpGet })
   const r = await lister({
     sdkProvider: "custom",
     config: { serverUrl: "http://localhost:11434/v1" },
@@ -418,7 +428,7 @@ it("lists openrouter models from its fixed base /models (public)", async () => {
     calls.push({ url })
     return { ok: true as const, value: { data: [{ id: "openai/gpt-4o" }] } }
   }
-  const lister = createModelLister({ httpGet })
+  const lister = list({ httpGet })
   const r = await lister({ sdkProvider: "openrouter", config: {} })
   expect(r.ok).toBe(true)
   if (r.ok) expect(r.value).toEqual([{ id: "openai/gpt-4o" }])
@@ -427,7 +437,7 @@ it("lists openrouter models from its fixed base /models (public)", async () => {
 
 it("returns provider-failed for custom with no server url configured", async () => {
   const httpGet = async () => ({ ok: true as const, value: {} })
-  const lister = createModelLister({ httpGet })
+  const lister = list({ httpGet })
   const r = await lister({ sdkProvider: "custom", config: {} })
   expect(r.ok).toBe(false)
 })
@@ -447,7 +457,7 @@ it("carries openrouter modality metadata into the discovered entries", async () 
       ],
     }),
   )
-  const lister = createModelLister({ httpGet })
+  const lister = list({ httpGet })
   const r = await lister({
     sdkProvider: "openrouter" as SdkProvider,
     config: {},
@@ -471,7 +481,7 @@ it("carries ollama vision families into the discovered entries", async () => {
       ],
     }),
   )
-  const lister = createModelLister({ httpGet })
+  const lister = list({ httpGet })
   const r = await lister({
     sdkProvider: "ollama" as SdkProvider,
     config: {},
@@ -488,7 +498,7 @@ it("carries ollama vision families into the discovered entries", async () => {
 
 it("omits attachments when the provider payload has no modality metadata", async () => {
   const httpGet = fakeHttpGet(ok({ data: [{ id: "gpt-4o" }] }))
-  const lister = createModelLister({ httpGet })
+  const lister = list({ httpGet })
   const r = await lister({
     sdkProvider: "openai" as SdkProvider,
     config: {},
@@ -496,4 +506,16 @@ it("omits attachments when the provider payload has no modality metadata", async
   })
   expect(r.ok).toBe(true)
   if (r.ok) expect(r.value).toEqual([{ id: "gpt-4o" }])
+})
+
+// ── Injected descriptor lookup ─────────────────────────────────────────────────
+
+it("reports unsupported-provider when no descriptor claims the key", async () => {
+  const lister = createModelLister({
+    httpGet: async () => ok({}),
+    getDescriptor: () => undefined,
+  })
+  const result = await lister({ sdkProvider: "plugin:gone", config: {} })
+  expect(result.ok).toBe(false)
+  if (!result.ok) expect(result.error.kind).toBe("unsupported-provider")
 })

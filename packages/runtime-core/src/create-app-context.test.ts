@@ -76,6 +76,15 @@ const makeFakeDeps = (): {
       calls.launchHarness = _a
       return (..._p: unknown[]) => ok({ pid: 1, exited: Promise.resolve(0) })
     }) as never,
+    createProviderRegistry: ((..._a: unknown[]) => {
+      calls.createProviderRegistry = _a
+      return {
+        get: (key: string) =>
+          key === "openai" ? ({ key: "openai" } as never) : undefined,
+        list: () => [],
+        catalog: () => [],
+      }
+    }) as never,
     createProviderFactory: record("createProviderFactory") as never,
     loadSdk: (async () => ({ create: () => ({}) })) as never,
     createRealGateway: record("createRealGateway") as never,
@@ -170,6 +179,44 @@ describe("createAppContext listProviderModels wiring", () => {
     expect(result.ok).toBe(false)
     if (!result.ok) {
       expect((result.error as { kind: string }).kind).toBe("not-found")
+    }
+  })
+
+  it("injects the shared registry's lookup into listProviderModels (getDescriptor, not the static catalog)", async () => {
+    const { deps } = makeFakeDeps()
+
+    // "groq" passes SdkProviderSchema validation but the fake registry (wired above) only
+    // claims "openai" — proving listProviderModels resolves through the SAME injected
+    // registry as the factory, not a re-derived static lookup.
+    ;(deps as { createCachedConfigStore: unknown }).createCachedConfigStore =
+      () => ({
+        load: async () =>
+          ok({
+            version: 2,
+            providers: [
+              {
+                id: "p_groq",
+                sdkProvider: "groq",
+                label: "Groq",
+                models: ["llama3-8b-8192"],
+                config: {},
+                secrets: {},
+              },
+            ],
+            models: [],
+            settings: { proxyPort: 4000, proxyHost: "127.0.0.1" },
+          }),
+        save: async () => ok(undefined),
+      })
+
+    const ctx = createAppContext(deps)
+    const result = await ctx.listProviderModels("p_groq")
+
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect((result.error as { kind: string }).kind).toBe(
+        "unsupported-provider",
+      )
     }
   })
 
@@ -377,6 +424,29 @@ describe("createAppContext wiring", () => {
     expect(typeof factoryArgs.secretStore.delete).toBe("function")
     expect(typeof factoryArgs.secretStore.has).toBe("function")
     expect(typeof factoryArgs.loadSdk).toBe("function")
+  })
+
+  it("builds ONE provider registry via deps.createProviderRegistry and exposes it on the context", () => {
+    const { deps, calls } = makeFakeDeps()
+    const ctx = createAppContext(deps)
+
+    // Built exactly once — the whole point of Task 7 is a single process-wide registry.
+    expect(calls.createProviderRegistry).toBeDefined()
+    expect(typeof ctx.providerRegistry.get).toBe("function")
+    expect(typeof ctx.providerRegistry.list).toBe("function")
+    expect(typeof ctx.providerRegistry.catalog).toBe("function")
+  })
+
+  it("injects the registry's lookup as getDescriptor into the provider factory", () => {
+    const { deps, calls } = makeFakeDeps()
+    createAppContext(deps)
+
+    const factoryArgs = calls.createProviderFactory?.[0] as {
+      getDescriptor: (key: string) => unknown
+    }
+    expect(typeof factoryArgs.getDescriptor).toBe("function")
+    expect(factoryArgs.getDescriptor("openai")).toEqual({ key: "openai" })
+    expect(factoryArgs.getDescriptor("nonexistent")).toBeUndefined()
   })
 
   it("exposes the loopback proxy base url and port resolved from default config", () => {
