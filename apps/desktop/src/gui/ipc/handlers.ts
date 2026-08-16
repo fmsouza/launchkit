@@ -8,10 +8,9 @@ import {
 import type { IpcHandlers, ProviderView } from "@spectrum/ipc"
 import {
   heuristicAttachments,
-  providerCatalog,
   validateProviderConfig,
 } from "@spectrum/providers"
-import { wireModelFor } from "@spectrum/types"
+import { SdkProviderSchema, wireModelFor } from "@spectrum/types"
 import type { ModelId, ModelRoute, Provider, SecretRef } from "@spectrum/types"
 import { isOk } from "@spectrum/utils"
 import type { GuiContext } from "../../composition"
@@ -109,7 +108,7 @@ export const createIpcHandlers = (ctx: GuiContext): IpcHandlers => {
       return config.providers.map(toProviderView)
     },
 
-    getProviderCatalog: async () => [...providerCatalog()],
+    getProviderCatalog: async () => [...ctx.providerRegistry.catalog()],
 
     addProvider: async (input) => {
       const config = await loadConfig()
@@ -807,11 +806,16 @@ export const createIpcHandlers = (ctx: GuiContext): IpcHandlers => {
         config,
       )
       if (!valid.ok) return fail(`invalid provider config: ${valid.error.kind}`)
+      // Connectivity probing only knows the built-in SDK providers today; a plugin key
+      // has no probe path yet (tracked by the extensions-UI follow-up plan).
+      const builtin = SdkProviderSchema.safeParse(sdkProvider)
+      if (!builtin.success)
+        return fail(`provider draft test not supported for: ${sdkProvider}`)
       // A connectivity probe needs a model to ping; fall back to the sdkProvider name
       // when none was chosen yet (mirrors testProvider's provider.models[0] ?? id fallback).
       const model = providerModel.trim() !== "" ? providerModel : sdkProvider
       const result = await ctx.testProviderDraft({
-        sdkProvider,
+        sdkProvider: builtin.data,
         config,
         secrets,
         providerModel: model,
@@ -830,8 +834,15 @@ export const createIpcHandlers = (ctx: GuiContext): IpcHandlers => {
         config,
       )
       if (!valid.ok) return fail(`invalid provider config: ${valid.error.kind}`)
+      // Model discovery only knows the built-in SDK providers today; a plugin key has no
+      // discovery path yet (tracked by the extensions-UI follow-up plan).
+      const builtin = SdkProviderSchema.safeParse(sdkProvider)
+      if (!builtin.success)
+        return fail(
+          `provider model discovery not supported for: ${sdkProvider}`,
+        )
       const result = await ctx.listProviderModelsDraft({
-        sdkProvider,
+        sdkProvider: builtin.data,
         config,
         secrets,
       })

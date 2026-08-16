@@ -3,8 +3,8 @@ import {
   type ModelRoute,
   ModelRouteSchema,
   type Provider,
+  ProviderKeySchema,
   ProviderSchema,
-  SdkProviderSchema,
 } from "@spectrum/types"
 import { type Result, err, isErr, ok } from "@spectrum/utils"
 import type { CliDeps } from "./deps"
@@ -76,7 +76,7 @@ const addProvider = async (
   const sdk = requireFlag(flags, "sdk")
   if (isErr(sdk)) return sdk
 
-  const sdkParsed = SdkProviderSchema.safeParse(sdk.value)
+  const sdkParsed = ProviderKeySchema.safeParse(sdk.value)
   if (!sdkParsed.success) {
     return err({
       kind: "usage",
