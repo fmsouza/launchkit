@@ -78,6 +78,20 @@ describe("add provider", () => {
     expect(result.error.kind).toBe("usage")
   })
 
+  it("accepts a plugin provider key when adding a provider", async () => {
+    const result = await runCli(makeFakeDeps())([
+      "add",
+      "provider",
+      "--id",
+      "p_acme",
+      "--name",
+      "Acme",
+      "--sdk",
+      "plugin:acme",
+    ])
+    expect(result).toEqual({ ok: true, value: undefined })
+  })
+
   it("returns a failed error when the provider id already exists", async () => {
     const seeded = {
       ...defaultConfig(),

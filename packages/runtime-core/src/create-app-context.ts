@@ -43,7 +43,7 @@ import {
   resolveAppEnv,
   resolveChannel,
 } from "@spectrum/platform"
-import { getDescriptor } from "@spectrum/providers"
+import type { ProviderDescriptor, ProviderRegistry } from "@spectrum/providers"
 import {
   createDraftProviderTester,
   createFetchHttpGet,
@@ -112,8 +112,12 @@ const createTestProvider = (
 const createListProviderModels = (
   config: ConfigStore,
   secrets: SecretStore,
+  getDescriptor: (key: string) => ProviderDescriptor | undefined,
 ): AppContext["listProviderModels"] => {
-  const lister = createModelLister({ httpGet: createFetchHttpGet() })
+  const lister = createModelLister({
+    httpGet: createFetchHttpGet(),
+    getDescriptor,
+  })
   return async (providerId) => {
     const loaded = await config.load()
     if (!loaded.ok) return loaded
@@ -166,18 +170,22 @@ const createTestProviderDraft = (
  * SECURITY: apiKey is the inline, caller-supplied value (never from the keychain); it is passed
  * only to the outbound discovery request and is never persisted or logged.
  */
-const createListProviderModelsDraft =
-  (): AppContext["listProviderModelsDraft"] => {
-    const lister = createModelLister({ httpGet: createFetchHttpGet() })
-    return async ({ sdkProvider, config, secrets }) => {
-      const apiKey = secrets.apiKey
-      return lister({
-        sdkProvider,
-        config,
-        ...(apiKey !== undefined ? { apiKey } : {}),
-      })
-    }
+const createListProviderModelsDraft = (
+  getDescriptor: (key: string) => ProviderDescriptor | undefined,
+): AppContext["listProviderModelsDraft"] => {
+  const lister = createModelLister({
+    httpGet: createFetchHttpGet(),
+    getDescriptor,
+  })
+  return async ({ sdkProvider, config, secrets }) => {
+    const apiKey = secrets.apiKey
+    return lister({
+      sdkProvider,
+      config,
+      ...(apiKey !== undefined ? { apiKey } : {}),
+    })
   }
+}
 
 /**
  * Construct the real adapters and inject them into the wired `AppContext`. FLAT and logic-free:
@@ -451,10 +459,18 @@ export const createAppContext = (
   const resolveLaunchEnvOnly = (params: LaunchParams) =>
     resolveLaunchRaw(params)
 
+  // One registry for the process: builtins now, builtins ⊕ installed plugins in Plan 2. Built
+  // exactly once here and threaded into every consumer below (factory, model listers, the proxy's
+  // getDescriptor) — never re-derived.
+  const providerRegistry: ProviderRegistry = deps.createProviderRegistry()
+  const getDescriptor = (key: string): ProviderDescriptor | undefined =>
+    providerRegistry.get(key)
+
   // proxy provider layer: factory (secrets + lazy SDK loader) + real streamText gateway
   const factory = deps.createProviderFactory({
     secretStore: secrets,
     loadSdk: deps.loadSdk,
+    getDescriptor,
   })
   const gateway = deps.createRealGateway({
     getTimeouts: (ctx) => {
@@ -465,7 +481,7 @@ export const createAppContext = (
       }
       return ctx === undefined
         ? windows
-        : resolveTimeouts(getDescriptor(ctx.sdkProvider).streaming, windows)
+        : resolveTimeouts(ctx.descriptor.streaming, windows)
     },
   })
 
@@ -692,6 +708,7 @@ export const createAppContext = (
       factory,
       gateway,
       listModels: () => getConfig().models.map((m) => String(m.id)),
+      getDescriptor,
       logger: log.child("proxy"),
     })
   }
@@ -720,15 +737,20 @@ export const createAppContext = (
     proxy: { isRunning: isProxyRunning, start: startProxyAdapter },
     factory,
     gateway,
+    providerRegistry,
     runtime,
     testProvider: createTestProvider(config, factory, gateway, () =>
       deps.createSystemClock(),
     ),
-    listProviderModels: createListProviderModels(config, secrets),
+    listProviderModels: createListProviderModels(
+      config,
+      secrets,
+      getDescriptor,
+    ),
     testProviderDraft: createTestProviderDraft(factory, gateway, () =>
       deps.createSystemClock(),
     ),
-    listProviderModelsDraft: createListProviderModelsDraft(),
+    listProviderModelsDraft: createListProviderModelsDraft(getDescriptor),
     proxyPort,
     proxyBaseUrl,
     genProxyKey,

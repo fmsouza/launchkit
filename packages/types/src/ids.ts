@@ -20,3 +20,10 @@ export type SecretRef = z.infer<typeof SecretRefSchema>
 
 export const RunnerIdSchema = z.string().min(1).brand<"RunnerId">()
 export type RunnerId = z.infer<typeof RunnerIdSchema>
+
+/** A provider plugin's id: lowercase slug, used to build its `plugin:<id>` provider key. */
+export const PluginIdSchema = z
+  .string()
+  .regex(/^[a-z0-9][a-z0-9-]*$/)
+  .brand<"PluginId">()
+export type PluginId = z.infer<typeof PluginIdSchema>

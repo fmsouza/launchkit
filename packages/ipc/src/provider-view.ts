@@ -1,4 +1,4 @@
-import { ProviderIdSchema, SdkProviderSchema } from "@spectrum/types"
+import { ProviderIdSchema, ProviderKeySchema } from "@spectrum/types"
 import { z } from "zod"
 
 /** Presence flag for one secret field — never a `ref`, never a value. */
@@ -14,7 +14,7 @@ export const ProviderViewSchema = z
   .object({
     id: ProviderIdSchema,
     name: z.string().min(1),
-    sdkProvider: SdkProviderSchema,
+    sdkProvider: ProviderKeySchema,
     config: z.record(z.string(), z.string()),
     secretFields: z.record(z.string(), SecretFieldStatusSchema),
     models: z.array(z.string()),

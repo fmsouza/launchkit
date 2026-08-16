@@ -1,5 +1,5 @@
 import { type Result, ok } from "@spectrum/utils"
-import type { HarnessError } from "./errors"
+import type { ProcError } from "./errors"
 
 /** A spawned child's identity + a promise that resolves with its exit code. */
 export interface SpawnedProcess {
@@ -15,7 +15,7 @@ export interface ProcessSpawner {
     args: readonly string[],
     env: Readonly<Record<string, string>>,
     cwd?: string,
-  ): Result<SpawnedProcess, HarnessError>
+  ): Result<SpawnedProcess, ProcError>
 }
 
 export interface SpawnCall {
@@ -40,7 +40,7 @@ export const createRecordingProcessSpawner = (
   const calls: SpawnCall[] = []
   return {
     calls,
-    spawn: (command, args, env, cwd): Result<SpawnedProcess, HarnessError> => {
+    spawn: (command, args, env, cwd): Result<SpawnedProcess, ProcError> => {
       calls.push({ command, args, env, ...(cwd !== undefined ? { cwd } : {}) })
       return ok({ pid, exited: Promise.resolve(exitCode) })
     },

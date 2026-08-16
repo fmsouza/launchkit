@@ -1,4 +1,6 @@
 import type { ProviderView } from "@spectrum/ipc"
+import type { ProviderAction, ProviderCatalogEntry } from "@spectrum/providers"
+import { SdkProviderSchema } from "@spectrum/types"
 import type { SdkProvider } from "@spectrum/types"
 import {
   Button,
@@ -20,6 +22,7 @@ import { type ReactElement, useState } from "react"
 import { useDraftConnectionTest } from "../hooks/useDraftConnectionTest"
 import { useDraftProviderModels } from "../hooks/useDraftProviderModels"
 import { useNotifications } from "../hooks/useNotifications"
+import type { UseNotifications } from "../hooks/useNotifications"
 import { useProviderCatalog } from "../hooks/useProviderCatalog"
 import { useProviders } from "../hooks/useProviders"
 
@@ -29,14 +32,35 @@ const omitEmpty = (
 ): Record<string, string> =>
   Object.fromEntries(Object.entries(config).filter(([, v]) => v !== ""))
 
-const toRow = (view: ProviderView): ProviderRow => {
+/**
+ * Narrow a catalog key to a builtin SdkProvider. Add/discover/test are builtin-only for
+ * now — a plugin key (or an unloaded catalog) fails validation. Never fails silently:
+ * notifies and returns undefined so every caller has an explicit "stop here" signal.
+ */
+const resolveSdkProvider = (
+  key: string,
+  notify: UseNotifications["notify"],
+): SdkProvider | undefined => {
+  const validated = SdkProviderSchema.safeParse(key)
+  if (validated.success) return validated.data
+  notify({ tone: "error", message: `Provider key not supported: ${key}` })
+  return undefined
+}
+
+/** Project a provider + its catalog entry to the row shape ProviderList renders. */
+const toRow = (
+  view: ProviderView,
+  catalog: readonly ProviderCatalogEntry[] | undefined,
+): ProviderRow => {
   const fields = Object.values(view.secretFields)
   const secretSet = fields.length > 0 && fields.every((s) => s.isSet)
+  const entry = catalog?.find((c) => c.key === view.sdkProvider)
   return {
     id: view.id,
     name: view.name,
     sdkProvider: view.sdkProvider,
     secretSet,
+    ...(entry !== undefined ? { actions: entry.actions } : {}),
   }
 }
 
@@ -78,9 +102,8 @@ export const ProvidersPage = (): ReactElement => {
     const secretFieldNames = selectedEntry?.secretFields.map((s) => s.name) ?? [
       "apiKey",
     ]
-    // Use the typed key from the catalog entry; fall back to a cast if catalog not yet loaded.
-    const sdkProvider: SdkProvider =
-      selectedEntry?.key ?? (newSdk as SdkProvider)
+    const sdkProvider = resolveSdkProvider(selectedEntry?.key ?? newSdk, notify)
+    if (sdkProvider === undefined) return
     const r = await add({
       ...(trimmed !== "" ? { name: trimmed } : {}),
       sdkProvider,
@@ -135,10 +158,12 @@ export const ProvidersPage = (): ReactElement => {
 
   const submitEdit = async (): Promise<void> => {
     if (editFor === undefined) return
+    const sdkProvider = resolveSdkProvider(editFor.sdkProvider, notify)
+    if (sdkProvider === undefined) return
     const r = await update(editFor.id, {
       name: editFor.name,
-      sdkProvider: editFor.sdkProvider,
-      config: editConfig,
+      sdkProvider,
+      config: omitEmpty(editConfig),
       secretFieldNames: Object.keys(editFor.secretFields),
       models: editFor.models,
     })
@@ -151,6 +176,23 @@ export const ProvidersPage = (): ReactElement => {
     editFor !== undefined
       ? catalog.data?.find((c) => c.key === editFor.sdkProvider)
       : undefined
+
+  /** Dispatch on the descriptor-declared action kind — one switch, not two hardcoded modal triggers. */
+  const onAction = (provider: ProviderView, action: ProviderAction): void => {
+    if (action.kind === "edit-config") {
+      setEditFor(provider)
+      setEditConfig({ ...provider.config })
+      return
+    }
+    if (action.kind === "set-secrets") {
+      setSecretFor(provider)
+      setSecretValues({})
+      return
+    }
+    // "flow" arrives in Plan 4; unreachable today — no builtin declares one and no
+    // contribution exists yet. Never swallow it silently if it ever does fire.
+    notify({ tone: "error", message: "This action needs a newer Spectrum" })
+  }
 
   return (
     <SettingsLayout title="Providers">
@@ -166,20 +208,10 @@ export const ProvidersPage = (): ReactElement => {
         <>
           <Button onClick={() => setAddOpen(true)}>Add provider</Button>
           <ProviderList
-            providers={data.map(toRow)}
-            onSetSecret={(id) => {
+            providers={data.map((v) => toRow(v, catalog.data))}
+            onAction={(id, action) => {
               const p = data.find((x) => x.id === id)
-              if (p !== undefined) {
-                setSecretFor(p)
-                setSecretValues({})
-              }
-            }}
-            onEdit={(id) => {
-              const p = data.find((x) => x.id === id)
-              if (p !== undefined) {
-                setEditFor(p)
-                setEditConfig({ ...p.config })
-              }
+              if (p !== undefined) onAction(p, action)
             }}
           />
         </>
@@ -242,8 +274,11 @@ export const ProvidersPage = (): ReactElement => {
               disabled={discovery.loading || conn.testing}
               onClick={() => {
                 void (async () => {
-                  const sdkProvider =
-                    selectedEntry?.key ?? (newSdk as SdkProvider)
+                  const sdkProvider = resolveSdkProvider(
+                    selectedEntry?.key ?? newSdk,
+                    notify,
+                  )
+                  if (sdkProvider === undefined) return
                   const config = omitEmpty(newConfig)
                   // The probe needs a target model: use the first discoverable one
                   // (the handler falls back to the provider name when none exists).

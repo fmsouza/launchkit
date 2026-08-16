@@ -12,9 +12,9 @@
   },
   "dependencies": {
     "@spectrum/logger": "workspace:*",
+    "@spectrum/proc": "workspace:*",
     "@spectrum/types": "workspace:*",
     "@spectrum/utils": "workspace:*",
-    "@spectrum/platform": "workspace:*",
     "zod": "catalog:"
   }
 }

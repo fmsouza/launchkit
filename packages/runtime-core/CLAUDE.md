@@ -4,7 +4,7 @@
 
 **Public surface:** `src/index.ts` re-exports `AppContext`, `CreateAppContextDeps`, `createAppContext`, `realDeps`, `ProviderTestResult`, and runner-extension-point types from `src/app-context.ts` / `src/create-app-context.ts` / `src/deps.ts`.
 
-**Depends on:** every `@spectrum/*` leaf the factory wires (agent-driver, agent-events, config, data-admin, db, driver-*, harnesses, logger, platform, projects, providers, proxy, run-store, secrets, sessions, types, utils). NOT `ipc`/`ui`/`brand`/`cli` (GUI- or CLI-app concerns).
+**Depends on:** every `@spectrum/*` leaf the factory wires (agent-driver, agent-events, config, data-admin, db, driver-*, harnesses, logger, platform, proc, projects, providers, proxy, run-store, secrets, sessions, types, utils). NOT `ipc`/`ui`/`brand`/`cli` (GUI- or CLI-app concerns).
 
 **Effects owned:** ALL real adapter construction (fs/keychain/sqlite/process/server) — but only inside `createAppContext`, behind the `CreateAppContextDeps` seam. `realDeps` is the production wiring.
 

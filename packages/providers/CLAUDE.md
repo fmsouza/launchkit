@@ -2,7 +2,7 @@
 
 **Responsibility:** the provider catalog — one declarative `ProviderDescriptor` per `SdkProvider` (config/secret field specs, per-provider zod config schema, SDK-option mapping, discovery spec) + the presentational `ProviderCatalogEntry` projection + `validateProviderConfig`.
 
-**Public API (barrel `src/index.ts`):** `ProviderDescriptor`/`ConfigFieldSpec(Schema)`/`SecretFieldSpec(Schema)`/`ProviderCatalogEntry(Schema)`/`ApiKeyMapping`/`DiscoverySpec`/`SdkMapping`/`ProviderConfigError`; `getDescriptor`, `listDescriptors`, `toCatalogEntry`, `providerCatalog`; `validateProviderConfig`.
+**Public API (barrel `src/index.ts`):** `ProviderDescriptor`/`ConfigFieldSpec(Schema)`/`SecretFieldSpec(Schema)`/`ProviderCatalogEntry(Schema)`/`ProviderAction(Schema)`/`ApiKeyMapping`/`DiscoverySpec`/`SdkMapping`/`ProviderConfigError`; `getDescriptor`, `listDescriptors`, `toCatalogEntry`, `providerCatalog`, `defaultActions`; `validateProviderConfig`; `createProviderRegistry`/`ProviderRegistry`.
 
 **Depends on:** `@spectrum/types`, `@spectrum/utils`, zod.
 

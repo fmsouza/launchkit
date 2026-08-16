@@ -1,6 +1,12 @@
 import { describe, expect, it } from "bun:test"
 import { SdkProviderSchema } from "@spectrum/types"
-import { getDescriptor, listDescriptors, providerCatalog } from "./catalog"
+import {
+  defaultActions,
+  getDescriptor,
+  listDescriptors,
+  providerCatalog,
+  toCatalogEntry,
+} from "./catalog"
 
 describe("provider catalog", () => {
   it("has exactly one descriptor for every SdkProvider value", () => {
@@ -54,6 +60,7 @@ describe("provider catalog", () => {
     expect(entry).toBeDefined()
     expect(Object.keys(entry ?? {}).sort()).toEqual(
       [
+        "actions",
         "configFields",
         "key",
         "label",
@@ -81,5 +88,54 @@ describe("provider catalog", () => {
     )
     expect(getDescriptor("openai").reasoning.shape).toBe("openai-effort")
     expect(getDescriptor("google").reasoning.shape).toBe("google-thinking")
+  })
+})
+
+describe("descriptor actions", () => {
+  it("offers edit-config and set-secrets when the provider has secret fields", () => {
+    const kinds = getDescriptor("openai").actions.map((a) => a.kind)
+    expect(kinds).toEqual(["edit-config", "set-secrets"])
+  })
+
+  it("omits set-secrets when the provider declares no secret fields", () => {
+    const actions = defaultActions(false)
+    expect(actions).toEqual([
+      { kind: "edit-config", id: "edit", label: "Edit", context: "both" },
+    ])
+  })
+
+  it("declares no flow actions on any builtin descriptor", () => {
+    for (const d of listDescriptors())
+      expect(d.actions.some((a) => a.kind === "flow")).toBe(false)
+  })
+
+  it("projects actions onto the catalog entry so the GUI can render them", () => {
+    const entry = toCatalogEntry(getDescriptor("openai"))
+    expect(entry.actions.map((a) => a.id)).toEqual(["edit", "secrets"])
+  })
+
+  it("marks both default actions as available in create and provider contexts", () => {
+    for (const a of getDescriptor("openai").actions)
+      expect(a.context).toBe("both")
+  })
+})
+
+describe("anthropic descriptor", () => {
+  it("exposes a serverUrl config field so a local endpoint can be targeted", () => {
+    const fields = getDescriptor("anthropic").configFields
+    expect(fields.map((f) => f.name)).toContain("serverUrl")
+  })
+
+  it("accepts a config carrying only a serverUrl", () => {
+    const schema = getDescriptor("anthropic").configSchema
+    expect(
+      schema.safeParse({ serverUrl: "http://127.0.0.1:9100" }).success,
+    ).toBe(true)
+  })
+
+  it("accepts an empty config so cloud Anthropic keeps working", () => {
+    expect(getDescriptor("anthropic").configSchema.safeParse({}).success).toBe(
+      true,
+    )
   })
 })

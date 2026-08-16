@@ -1,7 +1,16 @@
+import type { ProviderAction } from "@spectrum/providers"
+import { defaultActions } from "@spectrum/providers"
 import type { ReactElement } from "react"
 import { Badge } from "../atoms/Badge"
-import { Button } from "../atoms/Button"
 import { EmptyState } from "../molecules/EmptyState"
+import { ProviderActionBar } from "../molecules/ProviderActionBar"
+
+/**
+ * Fallback used when a row doesn't carry catalog-sourced actions (e.g. a call site that
+ * hasn't wired the catalog through yet) — the single source of truth for what a builtin
+ * offers, not a re-typed copy of it.
+ */
+const DEFAULT_ACTIONS: readonly ProviderAction[] = defaultActions(true)
 
 export type ProviderRow = {
   readonly id: string
@@ -9,18 +18,21 @@ export type ProviderRow = {
   readonly sdkProvider: string
   /** Whether the provider's secret(s) are configured. */
   readonly secretSet: boolean
+  /** Catalog-declared setup actions for this provider. Falls back to edit/secret when absent. */
+  readonly actions?: readonly ProviderAction[]
 }
 
 export type ProviderListProps = {
   readonly providers: readonly ProviderRow[]
-  readonly onSetSecret: (providerId: string) => void
-  readonly onEdit: (providerId: string) => void
+  /** Fires with the clicked provider's id and the actual descriptor-declared action, so the
+   * page can dispatch on `action.kind` (including kinds this organism has no opinion about,
+   * e.g. a plugin-contributed "flow"). */
+  readonly onAction: (providerId: string, action: ProviderAction) => void
 }
 
 export const ProviderList = ({
   providers,
-  onSetSecret,
-  onEdit,
+  onAction,
 }: ProviderListProps): ReactElement => {
   if (providers.length === 0) {
     return (
@@ -53,12 +65,11 @@ export const ProviderList = ({
               </Badge>
             </td>
             <td className="lk-cell-actions">
-              <Button variant="secondary" onClick={() => onEdit(p.id)}>
-                Edit
-              </Button>
-              <Button variant="secondary" onClick={() => onSetSecret(p.id)}>
-                Set secret
-              </Button>
+              <ProviderActionBar
+                actions={p.actions ?? DEFAULT_ACTIONS}
+                context="provider"
+                onAction={(action) => onAction(p.id, action)}
+              />
             </td>
           </tr>
         ))}

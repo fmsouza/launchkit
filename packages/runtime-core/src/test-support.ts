@@ -10,14 +10,14 @@ import {
 import { createDataAdmin } from "@spectrum/data-admin"
 import { createSqliteClient, runMigrations } from "@spectrum/db"
 import { createAcpDriver } from "@spectrum/driver-acp"
+import { createRegistry, launchHarness } from "@spectrum/harnesses"
+import { detectPlatform, resolveAppPaths } from "@spectrum/platform"
 import {
   createBunProcessSpawner,
   createPathCommandResolver,
-  createRegistry,
-  launchHarness,
-} from "@spectrum/harnesses"
-import { detectPlatform, resolveAppPaths } from "@spectrum/platform"
+} from "@spectrum/proc"
 import { createProjectStore } from "@spectrum/projects"
+import { createProviderRegistry } from "@spectrum/providers"
 import {
   createFileRuntimeState,
   createProviderFactory,
@@ -167,6 +167,9 @@ export const buildFakeAppContextDeps = (
         calls.launchHarness = _a
         return (..._p: unknown[]) => ok({ pid: 1, exited: Promise.resolve(0) })
       }) as never),
+    createProviderRegistry:
+      overrides.createProviderRegistry ??
+      (record("createProviderRegistry") as never),
     createProviderFactory:
       overrides.createProviderFactory ??
       (record("createProviderFactory") as never),
@@ -219,6 +222,7 @@ export const realAdapterDefaults: Readonly<Record<string, unknown>> = {
   createPathCommandResolver,
   createBunProcessSpawner,
   launchHarness,
+  createProviderRegistry,
   createProviderFactory,
   loadSdk,
   createRealGateway,

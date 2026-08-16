@@ -15,6 +15,7 @@ import type {
 } from "@spectrum/harnesses"
 import type { Logger } from "@spectrum/logger"
 import type { ProjectStore } from "@spectrum/projects"
+import type { ProviderRegistry } from "@spectrum/providers"
 import type {
   LanguageModelGateway,
   ProviderFactory,
@@ -86,6 +87,13 @@ export interface AppContext {
   }
   readonly factory: ProviderFactory
   readonly gateway: LanguageModelGateway
+  /**
+   * The ONE process-wide provider registry (builtins now, builtins ⊕ installed plugins in
+   * Plan 2). `factory`, the model listers, and the proxy's `getDescriptor` all resolve through
+   * this same instance — never re-derived. Surfaced here so `apps/desktop` can reach it too
+   * (config-form validation, catalog listing).
+   */
+  readonly providerRegistry: ProviderRegistry
   /**
    * Persists the GUI proxy's per-run key so the CLI `launch` can reuse it (avoiding a
    * mismatched key the running proxy would reject). Holds only the per-run token — never a secret.

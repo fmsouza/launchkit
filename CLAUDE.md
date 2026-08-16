@@ -27,6 +27,7 @@ Test-first (RED observed) → implemented (GREEN) → refactored → `bun run ty
 - `@spectrum/sessions` — session history (depends on db, types, utils)
 - `@spectrum/projects` — project find-or-create + listing (depends on db, types, utils)
 - `@spectrum/platform` — pure OS detection + idiomatic per-OS path resolution + small platform helpers (depends on nothing)
+- `@spectrum/proc` — process primitives: command resolution (PATH lookup + traversal guard) + process spawning, as injected adapter interfaces with in-memory fakes and Bun-backed real adapters (depends on platform, utils)
 - `@spectrum/pty` — terminal/PTY lifecycle: TerminalManager + PtySpawner SPI + pure terminal protocol (depends on types, utils, logger; Bun-native PTY via `bun:ffi` `openpty` — node-pty removed, it can't deliver PTY bytes under Bun)
 - `@spectrum/providers` — declarative provider catalog (one descriptor per SdkProvider) + per-provider config validation (depends on types, utils; zero IO)
 - `@spectrum/brand` — brand identity source of truth: pure `SpectrumMark` + canonical tokens/fonts/raster assets (depends on react only)

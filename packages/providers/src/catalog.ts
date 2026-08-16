@@ -1,7 +1,10 @@
 import type { SdkProvider } from "@spectrum/types"
 import { z } from "zod"
+import { configSchemaFromFields } from "./config-schema-from-fields"
 import { ALL_TIERS, type ReasoningSupport } from "./reasoning-types"
 import type {
+  ConfigFieldSpec,
+  ProviderAction,
   ProviderCatalogEntry,
   ProviderDescriptor,
   SecretFieldSpec,
@@ -21,12 +24,55 @@ const API_KEY_REQUIRED: SecretFieldSpec = {
 /** Reusable empty/strict config schema for providers whose SDK needs no extra config. */
 const emptyConfig = z.object({}).strict()
 
+/** The two actions every builtin has always offered, as data. */
+export const defaultActions = (
+  hasSecrets: boolean,
+): readonly ProviderAction[] => [
+  { kind: "edit-config", id: "edit", label: "Edit", context: "both" },
+  ...(hasSecrets
+    ? [
+        {
+          kind: "set-secrets" as const,
+          id: "secrets",
+          label: "Set secret",
+          context: "both" as const,
+        },
+      ]
+    : []),
+]
+
+const CUSTOM_CONFIG_FIELDS: readonly ConfigFieldSpec[] = [
+  {
+    name: "serverUrl",
+    label: "Server URL",
+    kind: "url",
+    required: false,
+    placeholder: "http://localhost:11434/v1",
+  },
+  {
+    name: "headers",
+    label: "Custom headers",
+    kind: "headers",
+    required: false,
+  },
+]
+
 const NO_REASONING: ReasoningSupport = { shape: "none", supportedTiers: [] }
 const OPENAI_EFFORT: ReasoningSupport = {
   shape: "openai-effort",
   // OpenAI reasoning models expose minimal|low|medium|high (no xhigh/max).
   supportedTiers: ["off", "minimal", "low", "medium", "high"],
 }
+const ANTHROPIC_CONFIG_FIELDS: readonly ConfigFieldSpec[] = [
+  {
+    name: "serverUrl",
+    label: "Server URL",
+    kind: "url",
+    required: false,
+    placeholder: "https://api.anthropic.com/v1",
+  },
+]
+
 const ANTHROPIC_THINKING: ReasoningSupport = {
   shape: "anthropic-thinking",
   supportedTiers: ALL_TIERS,
@@ -42,44 +88,52 @@ const openAiCompatible = (
   label: string,
   discoveryBaseUrl: string,
   reasoning: ReasoningSupport = NO_REASONING,
-): ProviderDescriptor => ({
-  key,
-  label,
-  configFields: [],
-  secretFields: [API_KEY_REQUIRED],
-  supportsCustomHeaders: false,
-  streaming: "incremental",
-  configSchema: emptyConfig,
-  sdkMapping: {
-    baseUrlOption: "baseURL",
-    apiKey: { kind: "option", name: "apiKey" },
-  },
-  discovery: { strategy: "openai-models", defaultBaseUrl: discoveryBaseUrl },
-  reasoning,
-})
+): ProviderDescriptor => {
+  const secretFields = [API_KEY_REQUIRED]
+  return {
+    key,
+    label,
+    configFields: [],
+    secretFields,
+    supportsCustomHeaders: false,
+    streaming: "incremental",
+    configSchema: emptyConfig,
+    sdkMapping: {
+      baseUrlOption: "baseURL",
+      apiKey: { kind: "option", name: "apiKey" },
+    },
+    discovery: { strategy: "openai-models", defaultBaseUrl: discoveryBaseUrl },
+    reasoning,
+    actions: defaultActions(secretFields.length > 0),
+  }
+}
 
 /** A provider whose model list we cannot discover (the UI falls back to free-text). */
 const noDiscovery = (
   key: SdkProvider,
   label: string,
-  configSchema = emptyConfig,
+  configSchema: z.ZodTypeAny = emptyConfig,
   configFields: ProviderDescriptor["configFields"] = [],
   reasoning: ReasoningSupport = NO_REASONING,
-): ProviderDescriptor => ({
-  key,
-  label,
-  configFields,
-  secretFields: [API_KEY_REQUIRED],
-  supportsCustomHeaders: false,
-  streaming: "incremental",
-  configSchema,
-  sdkMapping: {
-    baseUrlOption: "baseURL",
-    apiKey: { kind: "option", name: "apiKey" },
-  },
-  discovery: { strategy: "none" },
-  reasoning,
-})
+): ProviderDescriptor => {
+  const secretFields = [API_KEY_REQUIRED]
+  return {
+    key,
+    label,
+    configFields,
+    secretFields,
+    supportsCustomHeaders: false,
+    streaming: "incremental",
+    configSchema,
+    sdkMapping: {
+      baseUrlOption: "baseURL",
+      apiKey: { kind: "option", name: "apiKey" },
+    },
+    discovery: { strategy: "none" },
+    reasoning,
+    actions: defaultActions(secretFields.length > 0),
+  }
+}
 
 const descriptors: Record<SdkProvider, ProviderDescriptor> = {
   openai: openAiCompatible(
@@ -115,8 +169,8 @@ const descriptors: Record<SdkProvider, ProviderDescriptor> = {
   anthropic: noDiscovery(
     "anthropic",
     "Anthropic",
-    emptyConfig,
-    [],
+    configSchemaFromFields(ANTHROPIC_CONFIG_FIELDS),
+    ANTHROPIC_CONFIG_FIELDS,
     ANTHROPIC_THINKING,
   ),
   google: noDiscovery("google", "Google", emptyConfig, [], GOOGLE_THINKING),
@@ -161,130 +215,111 @@ const descriptors: Record<SdkProvider, ProviderDescriptor> = {
   ),
 
   // ── Custom: generic OpenAI-compatible endpoint ──────────────────────────────
-  custom: {
-    key: "custom",
-    label: "Custom (OpenAI-compatible)",
-    configFields: [
-      {
-        name: "serverUrl",
-        label: "Server URL",
-        kind: "url",
-        required: false,
-        placeholder: "http://localhost:11434/v1",
+  custom: (() => {
+    const secretFields = [API_KEY_OPTIONAL]
+    return {
+      key: "custom",
+      label: "Custom (OpenAI-compatible)",
+      configFields: CUSTOM_CONFIG_FIELDS,
+      secretFields,
+      supportsCustomHeaders: true,
+      streaming: "incremental",
+      configSchema: configSchemaFromFields(CUSTOM_CONFIG_FIELDS),
+      sdkMapping: {
+        baseUrlOption: "baseURL",
+        apiKey: { kind: "option", name: "apiKey" },
+        // Local OpenAI-compatible servers (Ollama, LM Studio, …) need no key, but
+        // @ai-sdk/openai throws without one — send a harmless placeholder when unset.
+        placeholderApiKey: "not-needed",
+        wire: "openai",
       },
-      {
-        name: "headers",
-        label: "Custom headers",
-        kind: "headers",
-        required: false,
-      },
-    ],
-    secretFields: [API_KEY_OPTIONAL],
-    supportsCustomHeaders: true,
-    streaming: "incremental",
-    configSchema: z
-      .object({
-        serverUrl: z.string().url().optional(),
-        headers: z
-          .string()
-          .optional()
-          .refine(
-            (v) => {
-              if (v === undefined || v === "") return true
-              try {
-                const parsed: unknown = JSON.parse(v)
-                if (typeof parsed !== "object" || parsed === null) return false
-                return Object.values(parsed).every((x) => typeof x === "string")
-              } catch {
-                return false
-              }
-            },
-            { message: "headers must be a JSON object of string values" },
-          ),
-      })
-      .strict(),
-    sdkMapping: {
-      baseUrlOption: "baseURL",
-      apiKey: { kind: "option", name: "apiKey" },
-      // Local OpenAI-compatible servers (Ollama, LM Studio, …) need no key, but
-      // @ai-sdk/openai throws without one — send a harmless placeholder when unset.
-      placeholderApiKey: "not-needed",
-    },
-    discovery: { strategy: "openai-models" },
-    reasoning: NO_REASONING,
-  },
+      discovery: { strategy: "openai-models" },
+      reasoning: NO_REASONING,
+      actions: defaultActions(secretFields.length > 0),
+    }
+  })(),
 
   // ── Ollama Cloud ────────────────────────────────────────────────────────────
-  ollama: {
-    key: "ollama",
-    label: "Ollama Cloud",
-    configFields: [
-      {
-        name: "serverUrl",
-        label: "Server URL",
-        kind: "url",
-        required: false,
-        default: "https://ollama.com/api",
-        placeholder: "https://ollama.com/api",
+  ollama: (() => {
+    const secretFields = [API_KEY_REQUIRED]
+    return {
+      key: "ollama",
+      label: "Ollama Cloud",
+      configFields: [
+        {
+          name: "serverUrl",
+          label: "Server URL",
+          kind: "url",
+          required: false,
+          default: "https://ollama.com/api",
+          placeholder: "https://ollama.com/api",
+        },
+      ],
+      secretFields,
+      supportsCustomHeaders: false,
+      streaming: "buffered",
+      configSchema: z
+        .object({ serverUrl: z.string().url().optional() })
+        .strict(),
+      sdkMapping: {
+        baseUrlOption: "baseURL",
+        defaultBaseUrl: "https://ollama.com/api",
+        apiKey: { kind: "header", name: "Authorization", scheme: "Bearer" },
       },
-    ],
-    secretFields: [API_KEY_REQUIRED],
-    supportsCustomHeaders: false,
-    streaming: "buffered",
-    configSchema: z.object({ serverUrl: z.string().url().optional() }).strict(),
-    sdkMapping: {
-      baseUrlOption: "baseURL",
-      defaultBaseUrl: "https://ollama.com/api",
-      apiKey: { kind: "header", name: "Authorization", scheme: "Bearer" },
-    },
-    discovery: {
-      strategy: "ollama-tags",
-      sendAuthHeader: true,
-      defaultBaseUrl: "https://ollama.com/api",
-    },
-    reasoning: NO_REASONING,
-  },
+      discovery: {
+        strategy: "ollama-tags",
+        sendAuthHeader: true,
+        defaultBaseUrl: "https://ollama.com/api",
+      },
+      reasoning: NO_REASONING,
+      actions: defaultActions(secretFields.length > 0),
+    }
+  })(),
 
   // ── OpenRouter ──────────────────────────────────────────────────────────────
-  openrouter: {
-    key: "openrouter",
-    label: "OpenRouter",
-    configFields: [
-      {
-        name: "httpReferer",
-        label: "App URL (HTTP-Referer)",
-        kind: "text",
-        required: false,
-        mapsToHeader: "HTTP-Referer",
+  openrouter: (() => {
+    const secretFields = [API_KEY_REQUIRED]
+    return {
+      key: "openrouter",
+      label: "OpenRouter",
+      configFields: [
+        {
+          name: "httpReferer",
+          label: "App URL (HTTP-Referer)",
+          kind: "text",
+          required: false,
+          mapsToHeader: "HTTP-Referer",
+        },
+        {
+          name: "appTitle",
+          label: "App title (X-Title)",
+          kind: "text",
+          required: false,
+          mapsToHeader: "X-Title",
+        },
+      ],
+      secretFields,
+      supportsCustomHeaders: false,
+      streaming: "incremental",
+      configSchema: z
+        .object({
+          httpReferer: z.string().optional(),
+          appTitle: z.string().optional(),
+        })
+        .strict(),
+      sdkMapping: {
+        baseUrlOption: "baseURL",
+        defaultBaseUrl: "https://openrouter.ai/api/v1",
+        apiKey: { kind: "option", name: "apiKey" },
       },
-      {
-        name: "appTitle",
-        label: "App title (X-Title)",
-        kind: "text",
-        required: false,
-        mapsToHeader: "X-Title",
+      discovery: {
+        strategy: "openai-models",
+        defaultBaseUrl: "https://openrouter.ai/api/v1",
       },
-    ],
-    secretFields: [API_KEY_REQUIRED],
-    supportsCustomHeaders: false,
-    streaming: "incremental",
-    configSchema: z
-      .object({
-        httpReferer: z.string().optional(),
-        appTitle: z.string().optional(),
-      })
-      .strict(),
-    sdkMapping: {
-      baseUrlOption: "baseURL",
-      defaultBaseUrl: "https://openrouter.ai/api/v1",
-      apiKey: { kind: "option", name: "apiKey" },
-    },
-    discovery: {
-      strategy: "openai-models",
-      defaultBaseUrl: "https://openrouter.ai/api/v1",
-    },
-    reasoning: NO_REASONING,
-  },
+      reasoning: NO_REASONING,
+      actions: defaultActions(secretFields.length > 0),
+    }
+  })(),
 }
 
 /** Look up the descriptor for an SDK provider. Total over the `SdkProvider` union. */
@@ -304,6 +339,7 @@ export const toCatalogEntry = (
   configFields: [...d.configFields],
   secretFields: [...d.secretFields],
   supportsCustomHeaders: d.supportsCustomHeaders,
+  actions: [...d.actions],
 })
 
 /** The full presentational catalog for the GUI. */

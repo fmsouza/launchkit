@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test"
 import type { Config } from "@spectrum/config"
 import type { Logger } from "@spectrum/logger"
+import { createProviderRegistry } from "@spectrum/providers"
 import { createScriptedGateway } from "./gateway"
 import { createHandler } from "./handler"
 import { createRouter } from "./router"
@@ -70,6 +71,7 @@ const deps = (key: string) => ({
     { type: "finish", finishReason: "stop" },
   ]),
   listModels: () => config.models.map((m) => m.id as string),
+  getDescriptor: createProviderRegistry().get,
 })
 
 type MakeDepsOpts = {
@@ -105,6 +107,7 @@ const makeDeps = ({ proxyKey, models }: MakeDepsOpts) => {
       { type: "finish", finishReason: "stop" },
     ]),
     listModels: () => models.map((m) => m.id as string),
+    getDescriptor: createProviderRegistry().get,
   }
 }
 
@@ -184,6 +187,26 @@ describe("createHandler", () => {
       }),
     )
     expect(res.status).toBe(400)
+  })
+  it("returns 400 unsupported-provider when getDescriptor cannot resolve the route's provider key", async () => {
+    const res = await createHandler({
+      ...deps("k"),
+      getDescriptor: () => undefined,
+    }).fetch(
+      post("/v1/messages", {
+        model: "mdl_default",
+        max_tokens: 1,
+        messages: [{ role: "user", content: "hi" }],
+      }),
+    )
+    expect(res.status).toBe(400)
+    const json = (await res.json()) as {
+      error: { kind: string; sdkProvider: string }
+    }
+    expect(json.error).toMatchObject({
+      kind: "unsupported-provider",
+      sdkProvider: "openai",
+    })
   })
   it("returns 502 provider-failed when the gateway errors without an upstream status", async () => {
     const res = await createHandler({

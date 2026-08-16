@@ -1,8 +1,6 @@
 import { describe, expect, it, mock } from "bun:test"
-import {
-  createFakeCommandResolver,
-  resolveHarnessLaunch,
-} from "@spectrum/harnesses"
+import { resolveHarnessLaunch } from "@spectrum/harnesses"
+import { createFakeCommandResolver } from "@spectrum/proc"
 import {
   type HarnessDefinition,
   HarnessIdSchema,

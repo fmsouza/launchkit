@@ -3,11 +3,11 @@ import type { AttachmentKind, AttachmentRef } from "@spectrum/agent-events"
 import type { StoredEvent } from "@spectrum/agent-events"
 import type { Config } from "@spectrum/config"
 import { defaultConfig } from "@spectrum/config"
-import {
-  createFakeCommandResolver,
-  resolveHarnessLaunch,
-} from "@spectrum/harnesses"
+import { resolveHarnessLaunch } from "@spectrum/harnesses"
 import { type Logger, createNoopLogger } from "@spectrum/logger"
+import { createFakeCommandResolver } from "@spectrum/proc"
+import { createProviderRegistry, getDescriptor } from "@spectrum/providers"
+import type { ProviderDescriptor } from "@spectrum/providers"
 import type { UploadStore } from "@spectrum/runtime-core"
 import type {
   HarnessId,
@@ -37,6 +37,13 @@ const provider = (over: Partial<Provider> = {}): Provider =>
     models: ["gpt-4o"],
     ...over,
   }) as Provider
+
+/** A registered plugin descriptor, for tests that exercise a `plugin:*` provider key. */
+const pluginDescriptor = (key: string): ProviderDescriptor => ({
+  ...getDescriptor("custom"),
+  key: key as ProviderDescriptor["key"],
+  label: "Acme",
+})
 
 const baseConfig = (
   providers: readonly Provider[],
@@ -125,6 +132,7 @@ const makeCtx = (
     ensureGuiPathResolved?: () => Promise<void>
     pickFilesResult?: readonly string[]
     uploadStore?: UploadStore
+    providerRegistry?: GuiContext["providerRegistry"]
   } = {},
 ): {
   ctx: GuiContext
@@ -413,6 +421,10 @@ const makeCtx = (
       return over.pickFilesResult ?? []
     },
     uploadStore: over.uploadStore ?? defaultUploadStore(),
+    // Real (builtins-only) registry — the four inline `createProviderRegistry()` calls this
+    // task removed from handlers.ts now read `ctx.providerRegistry`, so the fake context needs
+    // a real one for `validateProviderConfig` to resolve descriptors.
+    providerRegistry: over.providerRegistry ?? createProviderRegistry(),
   } as unknown as GuiContext
 
   return {
@@ -2399,6 +2411,24 @@ describe("createIpcHandlers.testProviderDraft", () => {
       }),
     ).rejects.toThrow()
   })
+
+  it("rejects a plugin provider key — connectivity probing has no plugin path yet", async () => {
+    const { ctx } = makeCtx({
+      providers: [],
+      providerRegistry: createProviderRegistry([
+        pluginDescriptor("plugin:acme"),
+      ]),
+    })
+    const handlers = createIpcHandlers(ctx)
+    await expect(
+      handlers.testProviderDraft({
+        sdkProvider: "plugin:acme",
+        config: {},
+        secrets: {},
+        providerModel: "m",
+      }),
+    ).rejects.toThrow(/provider draft test not supported for: plugin:acme/)
+  })
 })
 
 describe("createIpcHandlers.listProviderModelsDraft", () => {
@@ -2447,6 +2477,23 @@ describe("createIpcHandlers.listProviderModelsDraft", () => {
         secrets: {},
       }),
     ).rejects.toThrow(/HTTP 404 from http:\/\/localhost:11434\/models/)
+  })
+
+  it("rejects a plugin provider key — model discovery has no plugin path yet", async () => {
+    const { ctx } = makeCtx({
+      providers: [],
+      providerRegistry: createProviderRegistry([
+        pluginDescriptor("plugin:acme"),
+      ]),
+    })
+    const handlers = createIpcHandlers(ctx)
+    await expect(
+      handlers.listProviderModelsDraft({
+        sdkProvider: "plugin:acme",
+        config: {},
+        secrets: {},
+      }),
+    ).rejects.toThrow(/provider model discovery not supported for: plugin:acme/)
   })
 })
 

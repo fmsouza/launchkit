@@ -26,21 +26,13 @@ describe("@spectrum/harnesses barrel", () => {
   })
 
   it("exports the real adapters", () => {
-    for (const name of [
-      "createPathCommandResolver",
-      "createBunProcessSpawner",
-      "createDirHarnessFileSource",
-    ]) {
+    for (const name of ["createDirHarnessFileSource"]) {
       expect(harnesses).toHaveProperty(name)
     }
   })
 
   it("exports the in-memory fakes for testing downstream packages", () => {
-    for (const name of [
-      "createInMemoryHarnessFileSource",
-      "createFakeCommandResolver",
-      "createRecordingProcessSpawner",
-    ]) {
+    for (const name of ["createInMemoryHarnessFileSource"]) {
       expect(harnesses).toHaveProperty(name)
     }
   })

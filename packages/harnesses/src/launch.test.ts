@@ -1,20 +1,21 @@
 import { describe, expect, it } from "bun:test"
 import type { Logger } from "@spectrum/logger"
 import {
+  type CommandResolver,
+  type ProcError,
+  type ProcessSpawner,
+  type SpawnedProcess,
+  createFakeCommandResolver,
+  createRecordingProcessSpawner,
+} from "@spectrum/proc"
+import {
   type HarnessDefinition,
   HarnessIdSchema,
   ModelIdSchema,
 } from "@spectrum/types"
 import { type Result, err, isOk } from "@spectrum/utils"
 import { claude as claudeBuiltin } from "./builtin"
-import {
-  type CommandResolver,
-  createFakeCommandResolver,
-} from "./command-resolver"
-import type { HarnessError } from "./errors"
 import { launchHarness, resolveHarnessLaunch } from "./launch"
-import type { ProcessSpawner, SpawnedProcess } from "./process-spawner"
-import { createRecordingProcessSpawner } from "./process-spawner"
 
 /** Records every call so a test can assert which level + fields a failure logged. */
 interface FakeLogger extends Logger {
@@ -470,7 +471,7 @@ describe("launchHarness", () => {
       claude: "/usr/local/bin/claude",
     })
     const failingSpawner: ProcessSpawner = {
-      spawn: (): Result<SpawnedProcess, HarnessError> =>
+      spawn: (): Result<SpawnedProcess, ProcError> =>
         err({ kind: "spawn-failed", detail: "ENOENT" }),
     }
     const logger = createFakeLogger()
@@ -495,7 +496,7 @@ describe("launchHarness", () => {
 
   it("logs an error with { kind, detail } when command resolution fails (read/resolve path)", () => {
     const failingResolver: CommandResolver = {
-      resolve: (): Result<string, HarnessError> =>
+      resolve: (): Result<string, ProcError> =>
         err({ kind: "invalid-command", detail: "command not found: claude" }),
     }
     const spawner = createRecordingProcessSpawner(1)
@@ -526,7 +527,7 @@ describe("launchHarness", () => {
       claude: "/usr/local/bin/claude",
     })
     const failingSpawner: ProcessSpawner = {
-      spawn: (): Result<SpawnedProcess, HarnessError> =>
+      spawn: (): Result<SpawnedProcess, ProcError> =>
         err({ kind: "spawn-failed", detail: "boom" }),
     }
     const logger = createFakeLogger()

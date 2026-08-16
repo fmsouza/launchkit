@@ -2,11 +2,11 @@
 
 **Responsibility:** Registry (builtins + user JSON) + launcher.
 
-**Public API (barrel `src/index.ts`):** `ALLOWED_TOKENS`, `validateEnvTemplate`, `claude`/`codex`/`opencode`/`openclaw`/`gemini`, `builtinHarnesses`, `createInMemoryHarnessFileSource`, `createFakeCommandResolver`, `createRecordingProcessSpawner`, `createRegistry`, `launchHarness`, `createPathCommandResolver`, `createBunProcessSpawner`, `createDirHarnessFileSource`. Type-only: `HarnessError`, `HarnessFileSource`, `CommandResolver`, `ProcessSpawner`, `SpawnCall`, `RecordingProcessSpawner`, `HarnessRegistry`, `LaunchParams`, `LaunchRoute`, `AllowedToken`.
+**Public API (barrel `src/index.ts`):** `ALLOWED_TOKENS`, `validateEnvTemplate`, `claude`/`codex`/`opencode`/`openclaw`/`gemini`, `builtinHarnesses`, `createInMemoryHarnessFileSource`, `createRegistry`, `launchHarness`, `createDirHarnessFileSource`. Type-only: `HarnessError`, `HarnessFileSource`, `HarnessRegistry`, `LaunchParams`, `LaunchRoute`, `AllowedToken`. `CommandResolver`/`ProcessSpawner`/`SpawnedProcess`/`SpawnCall`/`RecordingProcessSpawner`/`createFakeCommandResolver`/`createRecordingProcessSpawner`/`createPathCommandResolver`/`createBunProcessSpawner` moved to `@spectrum/proc` — harnesses re-exports none of them.
 
-**Depends on:** `@spectrum/types`, `@spectrum/utils`, `@spectrum/platform`, `@spectrum/logger`
+**Depends on:** `@spectrum/proc` (command resolution + process spawning primitives), `@spectrum/types`, `@spectrum/utils`, `@spectrum/logger`
 
-**Effects owned:** process spawn + reading harness JSON.
+**Effects owned:** reading harness JSON. Process spawn + command resolution live in `@spectrum/proc` now; `launchHarness` consumes its `CommandResolver`/`ProcessSpawner` interfaces as injected deps and never constructs them itself.
 — exposed to consumers as injected interfaces; never reached around.
 
 `launchHarness` accepts an injected `Logger` (default noop); logs `error` on spawn/launch failure (`{ kind, detail }`; never the rendered proxy env / per-run key).

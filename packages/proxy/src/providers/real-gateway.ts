@@ -24,7 +24,7 @@ export const reasoningOptionsFor = (
   tier: NormalizedRequest["thinkingEffort"],
 ): Record<string, unknown> | undefined => {
   if (tier === undefined) return undefined
-  const support = resolveReasoning(ctx.sdkProvider, ctx.providerModel)
+  const support = resolveReasoning(ctx.descriptor, ctx.providerModel)
   return buildProviderOptions(support, tier)
 }
 
@@ -272,7 +272,7 @@ export const createRealGateway = (opts?: {
       reasoning !== undefined &&
       ctx !== undefined &&
       reasoningDisablesTemperature(
-        resolveReasoning(ctx.sdkProvider, ctx.providerModel),
+        resolveReasoning(ctx.descriptor, ctx.providerModel),
       )
 
     // firstChunkSeen is shared across both run() invocations so the fallback

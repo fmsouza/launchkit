@@ -1,11 +1,17 @@
 import { describe, expect, it, mock } from "bun:test"
+import { createProviderRegistry, getDescriptor } from "@spectrum/providers"
+import type { ProviderDescriptor } from "@spectrum/providers"
 import {
   createInMemoryKeychainBackend,
   createSecretStore,
 } from "@spectrum/secrets"
-import type { Provider } from "@spectrum/types"
+import type { Provider, ProviderKey } from "@spectrum/types"
 import { createSequentialIdGen } from "@spectrum/utils"
 import { createProviderFactory } from "./factory"
+
+// Real (builtins-only) registry shared by every test below — descriptor injection is the point
+// of this task, so tests exercise it through a real registry rather than duplicating the catalog.
+const registry = createProviderRegistry()
 
 const makeProvider = (over: Partial<Provider> = {}): Provider =>
   ({
@@ -30,8 +36,12 @@ describe("createProviderFactory", () => {
       provider: "openai",
       apiKey: cfg.apiKey,
     }))
-    const loadSdk = mock(async (_p: string) => ({ create }))
-    const factory = createProviderFactory({ secretStore: store, loadSdk })
+    const loadSdk = mock(async (_d: ProviderDescriptor) => ({ create }))
+    const factory = createProviderFactory({
+      secretStore: store,
+      loadSdk,
+      getDescriptor: registry.get,
+    })
     const r = await factory.getModel(
       makeProvider({ secrets: { apiKey: ref } }),
       "gpt-4o",
@@ -49,7 +59,11 @@ describe("createProviderFactory", () => {
       backend: createInMemoryKeychainBackend(),
       idGen: createSequentialIdGen(),
     })
-    const factory = createProviderFactory({ secretStore: store, loadSdk })
+    const factory = createProviderFactory({
+      secretStore: store,
+      loadSdk,
+      getDescriptor: registry.get,
+    })
     const p = makeProvider()
     await factory.getModel(p, "m")
     await factory.getModel(p, "m")
@@ -64,6 +78,7 @@ describe("createProviderFactory", () => {
       loadSdk: async () => {
         throw new Error("no module")
       },
+      getDescriptor: registry.get,
     })
     const r = await factory.getModel(
       makeProvider({ sdkProvider: "cohere" }),
@@ -85,7 +100,11 @@ describe("createProviderFactory", () => {
       delete: async () => ({ ok: true as const, value: undefined }),
       has: async () => true,
     }
-    const factory = createProviderFactory({ secretStore, loadSdk })
+    const factory = createProviderFactory({
+      secretStore,
+      loadSdk,
+      getDescriptor: registry.get,
+    })
     const provider: Provider = {
       id: "p_1" as Provider["id"],
       name: "Ollama Cloud",
@@ -106,7 +125,7 @@ describe("createProviderFactory", () => {
 describe("createProviderFactory.getModelFromResolved", () => {
   it("builds a model from inline resolved secret values without touching the SecretStore", async () => {
     const captured: Array<Record<string, unknown>> = []
-    const loadSdk = mock(async (_p: string) => ({
+    const loadSdk = mock(async (_d: ProviderDescriptor) => ({
       create: (cfg: Record<string, unknown>) => {
         captured.push(cfg)
         return (id: string) => ({ id })
@@ -121,7 +140,11 @@ describe("createProviderFactory.getModelFromResolved", () => {
       delete: async () => ({ ok: true as const, value: undefined }),
       has: async () => true,
     }
-    const factory = createProviderFactory({ secretStore, loadSdk })
+    const factory = createProviderFactory({
+      secretStore,
+      loadSdk,
+      getDescriptor: registry.get,
+    })
 
     const r = await factory.getModelFromResolved({
       sdkProvider: "openai",
@@ -133,9 +156,51 @@ describe("createProviderFactory.getModelFromResolved", () => {
     expect(r.ok).toBe(true)
     // The inline apiKey reached the SDK options (openai maps apiKey as an option).
     expect(captured[0]?.apiKey).toBe("sk-inline")
-    // loadSdk was called with the correct sdkProvider.
-    expect(loadSdk).toHaveBeenCalledWith("openai")
+    // loadSdk was called with the descriptor for the resolved sdkProvider.
+    expect(loadSdk).toHaveBeenCalledWith(getDescriptor("openai"))
     // The returned model handle carries the requested model id.
     expect(r.ok && (r.value as { id: string }).id).toBe("gpt-4o")
+  })
+  it("rejects a plugin-contributed provider with unsupported-provider error", async () => {
+    const store = createSecretStore({
+      backend: createInMemoryKeychainBackend(),
+      idGen: createSequentialIdGen(),
+    })
+    const loadSdk = mock(async () => ({ create: () => ({}) }))
+    const factory = createProviderFactory({
+      secretStore: store,
+      loadSdk,
+      getDescriptor: registry.get,
+    })
+    const pluginProvider = makeProvider({
+      sdkProvider: "plugin:my-provider" as ProviderKey,
+    })
+    const r = await factory.getModel(pluginProvider, "some-model")
+    expect(r.ok).toBe(false)
+    if (!r.ok && "sdkProvider" in r.error) {
+      expect(r.error.kind).toBe("unsupported-provider")
+      expect(r.error.sdkProvider).toBe("plugin:my-provider")
+    }
+  })
+  it("reports unsupported-provider when the injected getDescriptor claims no descriptor, without ever calling loadSdk", async () => {
+    const store = createSecretStore({
+      backend: createInMemoryKeychainBackend(),
+      idGen: createSequentialIdGen(),
+    })
+    const loadSdk = mock(async () => ({ create: () => ({}) }))
+    const factory = createProviderFactory({
+      secretStore: store,
+      loadSdk,
+      getDescriptor: () => undefined,
+    })
+    const r = await factory.getModelFromResolved({
+      sdkProvider: "plugin:gone",
+      config: {},
+      secrets: {},
+      providerModel: "m",
+    })
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.error.kind).toBe("unsupported-provider")
+    expect(loadSdk).not.toHaveBeenCalled()
   })
 })

@@ -31,6 +31,10 @@ describe("ProviderCatalogEntrySchema", () => {
       configFields: [],
       secretFields: [{ name: "apiKey", label: "API key", required: true }],
       supportsCustomHeaders: false,
+      actions: [
+        { kind: "edit-config", id: "edit", label: "Edit provider" },
+        { kind: "set-secrets", id: "secrets", label: "Set secret" },
+      ],
     })
     expect(r.success).toBe(true)
   })

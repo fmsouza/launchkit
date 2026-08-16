@@ -573,6 +573,7 @@ describe("getProviderCatalog method", () => {
         configFields: [],
         secretFields: [],
         supportsCustomHeaders: true,
+        actions: [],
       },
     ])
     expect(r.success).toBe(true)

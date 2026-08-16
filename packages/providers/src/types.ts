@@ -1,5 +1,5 @@
-import type { SdkProvider } from "@spectrum/types"
-import { SdkProviderSchema } from "@spectrum/types"
+import type { ProviderKey } from "@spectrum/types"
+import { ProviderKeySchema } from "@spectrum/types"
 import { type ZodTypeAny, z } from "zod"
 import type { ReasoningSupport } from "./reasoning-types"
 
@@ -28,17 +28,42 @@ export const SecretFieldSpecSchema = z
   .strict()
 export type SecretFieldSpec = z.infer<typeof SecretFieldSpecSchema>
 
+const actionBase = {
+  id: z.string().min(1),
+  label: z.string().min(1),
+  /** Where the action is offered: creating a provider, managing an existing one, or both. */
+  context: z.enum(["create", "provider", "both"]).default("provider"),
+}
+
+export const ProviderActionSchema = z.discriminatedUnion("kind", [
+  // Renders ProviderForm over configFields — what "Edit provider" does today.
+  z
+    .object({ kind: z.literal("edit-config"), ...actionBase })
+    .strict(),
+  // Renders SecretFieldsForm over secretFields — what "Set secret" does today.
+  z
+    .object({ kind: z.literal("set-secrets"), ...actionBase })
+    .strict(),
+  // Runs a plugin-driven step flow; `id` is also the flow id. Contributions only —
+  // a builtin has no plugin process to serve steps.
+  z
+    .object({ kind: z.literal("flow"), ...actionBase })
+    .strict(),
+])
+export type ProviderAction = z.infer<typeof ProviderActionSchema>
+
 /**
  * The presentational projection of a descriptor sent over IPC to the GUI:
  * field specs only — no zod config schema, no SDK mapping, no discovery spec.
  */
 export const ProviderCatalogEntrySchema = z
   .object({
-    key: SdkProviderSchema,
+    key: ProviderKeySchema,
     label: z.string().min(1),
     configFields: z.array(ConfigFieldSpecSchema),
     secretFields: z.array(SecretFieldSpecSchema),
     supportsCustomHeaders: z.boolean(),
+    actions: z.array(ProviderActionSchema),
   })
   .strict()
 export type ProviderCatalogEntry = z.infer<typeof ProviderCatalogEntrySchema>
@@ -79,11 +104,18 @@ export type SdkMapping = {
   readonly placeholderApiKey?: string
   /** Static headers always sent (rare; most attribution headers come from config fields). */
   readonly defaultHeaders?: Readonly<Record<string, string>>
+  /**
+   * Which AI SDK factory serves this provider, for descriptors whose key is not a
+   * builtin. Builtins select their factory from `descriptor.key`; a plugin descriptor
+   * has no builtin key, so it names the wire format its server speaks and `loadSdk`
+   * maps that to `createOpenAI` / `createAnthropic`.
+   */
+  readonly wire?: "openai" | "anthropic"
 }
 
 /** The full, runtime descriptor for one provider. Internal to backend packages. */
 export type ProviderDescriptor = {
-  readonly key: SdkProvider
+  readonly key: ProviderKey
   readonly label: string
   readonly configFields: readonly ConfigFieldSpec[]
   readonly secretFields: readonly SecretFieldSpec[]
@@ -100,6 +132,8 @@ export type ProviderDescriptor = {
   readonly discovery: DiscoverySpec
   /** Default reasoning capability for the provider (refined per-model by resolveReasoning). */
   readonly reasoning: ReasoningSupport
+  /** The setup actions this provider offers (edit config, set secrets, plugin-driven flows). */
+  readonly actions: readonly ProviderAction[]
 }
 
 /** Error returned by `validateProviderConfig`. A structural subset of proxy's `ProxyError`. */

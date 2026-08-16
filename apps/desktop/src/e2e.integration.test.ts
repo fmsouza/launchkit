@@ -13,6 +13,7 @@ import {
   createInMemoryHarnessFileSource,
   createRegistry,
 } from "@spectrum/harnesses"
+import { createProviderRegistry } from "@spectrum/providers"
 import {
   type LanguageModelGateway,
   createRouter,
@@ -85,6 +86,7 @@ describe("Spectrum end-to-end", () => {
         { type: "finish", finishReason: "stop" },
       ]),
       listModels: () => loaded.value.models.map((m) => String(m.id)),
+      getDescriptor: createProviderRegistry().get,
     })
     stopProxy = running.stop
 
@@ -132,6 +134,7 @@ describe("Spectrum end-to-end", () => {
       },
       gateway: slow,
       listModels: () => cfg.models.map((m) => String(m.id)),
+      getDescriptor: createProviderRegistry().get,
     })
     stopProxy = running.stop
     const res = await fetch(`http://127.0.0.1:${running.port}/v1/messages`, {
@@ -177,6 +180,7 @@ describe("Spectrum end-to-end", () => {
         { type: "finish", finishReason: "stop" },
       ]),
       listModels: () => getConfig().models.map((m) => String(m.id)),
+      getDescriptor: createProviderRegistry().get,
     })
     stopProxy = running.stop
     const base = `http://127.0.0.1:${running.port}`
