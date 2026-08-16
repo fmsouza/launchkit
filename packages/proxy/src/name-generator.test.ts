@@ -51,6 +51,7 @@ describe("createNameGenerator", () => {
         providers: [provider],
         models: [route],
         settings: {} as Config["settings"],
+        providerPlugins: [],
       }),
       // biome-ignore lint/suspicious/noExplicitAny: ProviderFactory shape is heavy; the test only needs getModel.
       factory: okFactory("HANDLE") as any,
@@ -80,6 +81,7 @@ describe("createNameGenerator", () => {
         providers: [provider],
         models: [route],
         settings: {} as Config["settings"],
+        providerPlugins: [],
       }),
       // biome-ignore lint/suspicious/noExplicitAny: ProviderFactory shape is heavy; the test only needs getModel.
       factory: okFactory("HANDLE") as any,
@@ -113,6 +115,7 @@ describe("createNameGenerator", () => {
         providers: [provider],
         models: [],
         settings: {} as Config["settings"],
+        providerPlugins: [],
       }),
       // biome-ignore lint/suspicious/noExplicitAny: ProviderFactory shape is heavy; the test only needs getModel.
       factory: okFactory("HANDLE") as any,
@@ -130,6 +133,7 @@ describe("createNameGenerator", () => {
         providers: [],
         models: [route],
         settings: {} as Config["settings"],
+        providerPlugins: [],
       }),
       // biome-ignore lint/suspicious/noExplicitAny: ProviderFactory shape is heavy; the test only needs getModel.
       factory: okFactory("HANDLE") as any,
@@ -147,6 +151,7 @@ describe("createNameGenerator", () => {
         providers: [provider],
         models: [route],
         settings: {} as Config["settings"],
+        providerPlugins: [],
       }),
       factory: {
         getModel: async () =>
@@ -171,6 +176,7 @@ describe("createNameGenerator", () => {
         providers: [provider],
         models: [route],
         settings: {} as Config["settings"],
+        providerPlugins: [],
       }),
       // biome-ignore lint/suspicious/noExplicitAny: ProviderFactory shape is heavy; the test only needs getModel.
       factory: okFactory("HANDLE") as any,
@@ -192,6 +198,7 @@ describe("createNameGenerator", () => {
         providers: [provider],
         models: [route],
         settings: {} as Config["settings"],
+        providerPlugins: [],
       }),
       // biome-ignore lint/suspicious/noExplicitAny: ProviderFactory shape is heavy; the test only needs getModel.
       factory: okFactory("HANDLE") as any,
@@ -209,6 +216,7 @@ describe("createNameGenerator", () => {
         providers: [provider],
         models: [route],
         settings: {} as Config["settings"],
+        providerPlugins: [],
       }),
       // biome-ignore lint/suspicious/noExplicitAny: ProviderFactory shape is heavy; the test only needs getModel.
       factory: okFactory("HANDLE") as any,
@@ -229,6 +237,7 @@ describe("createNameGenerator", () => {
         providers: [provider],
         models: [route],
         settings: {} as Config["settings"],
+        providerPlugins: [],
       }),
       // biome-ignore lint/suspicious/noExplicitAny: ProviderFactory shape is heavy; the test only needs getModel.
       factory: okFactory("HANDLE") as any,

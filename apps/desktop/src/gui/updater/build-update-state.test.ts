@@ -16,6 +16,7 @@ const makeFakeConfig = (
       version: 1,
       providers: [],
       models: [],
+      providerPlugins: [],
       settings: {
         proxyHost: "127.0.0.1",
         proxyPort: 0,
