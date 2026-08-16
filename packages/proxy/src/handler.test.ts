@@ -188,6 +188,26 @@ describe("createHandler", () => {
     )
     expect(res.status).toBe(400)
   })
+  it("returns 400 unsupported-provider when getDescriptor cannot resolve the route's provider key", async () => {
+    const res = await createHandler({
+      ...deps("k"),
+      getDescriptor: () => undefined,
+    }).fetch(
+      post("/v1/messages", {
+        model: "mdl_default",
+        max_tokens: 1,
+        messages: [{ role: "user", content: "hi" }],
+      }),
+    )
+    expect(res.status).toBe(400)
+    const json = (await res.json()) as {
+      error: { kind: string; sdkProvider: string }
+    }
+    expect(json.error).toMatchObject({
+      kind: "unsupported-provider",
+      sdkProvider: "openai",
+    })
+  })
   it("returns 502 provider-failed when the gateway errors without an upstream status", async () => {
     const res = await createHandler({
       ...deps("k"),
