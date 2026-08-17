@@ -141,6 +141,19 @@ const ABANDON_MESSAGE: Record<FlowAbandonReason, string> = {
 const TIMEOUT_DETAIL = `flow exceeded its ${FLOW_LIMITS.totalTimeoutMs} ms total timeout`
 
 /**
+ * The user-facing copy a timed-out session's next call delivers, mirroring `ABANDON_MESSAGE`.
+ *
+ * The deadline is the ONLY thing that knows a flow was killed for running too long: it fires
+ * with no call outstanding as often as not, and the caller's next `advance` would otherwise
+ * find no session and get a bare `not-found` — the same answer an invented session id gets,
+ * rendered by the GUI as "this extension does not offer that setup flow". Recording a message
+ * instead is what turns "the cap fired" into something the user is actually told.
+ */
+const TIMEOUT_MESSAGE = `This setup was stopped because it ran longer than ${
+  FLOW_LIMITS.totalTimeoutMs / 60_000
+} minutes. Any credentials it had already exchanged were not saved — you can start it again.`
+
+/**
  * The `detail` carried by the `read-failed` that refuses a SECOND concurrent `advance`.
  *
  * Exported because that refusal is deliberately NOT terminal while every other `read-failed`
@@ -217,7 +230,14 @@ export const createFlowRunner = (deps: FlowRunnerDeps): FlowRunner => {
   /** Keys killed from outside while still in `starting`, read by the in-flight `start`. */
   const interrupted = new Map<string, Interrupt>()
   const completions = new Map<FlowSessionId, FlowCompletion>()
-  /** Session id → the user-facing message its next `advance` must deliver, then forget. */
+  /**
+   * Session id → the user-facing message its next `advance` must deliver, then forget.
+   *
+   * Written by BOTH ways a flow is killed without its caller asking: `abandon` (the sweep and
+   * `ExtensionAdmin.remove`) and the deadline. Neither leaves anything behind for the caller
+   * to read otherwise — a session forgotten by `end` is indistinguishable from one that never
+   * existed — so this is the only channel that can tell them apart.
+   */
   const abandoned = new Map<FlowSessionId, string>()
   const deadlines = new Map<string, FlowTimerHandle>()
 
@@ -254,6 +274,9 @@ export const createFlowRunner = (deps: FlowRunnerDeps): FlowRunner => {
     for (const [sessionId, session] of [...sessions])
       if (session.instanceKey === instanceKey) {
         completions.delete(sessionId)
+        // Recorded BEFORE `end` forgets the session, so the caller's next call — or the one
+        // suspended inside `advance` right now — learns why instead of getting `not-found`.
+        abandoned.set(sessionId, TIMEOUT_MESSAGE)
         await end(sessionId, session, "timeout")
         return
       }
@@ -447,23 +470,26 @@ export const createFlowRunner = (deps: FlowRunnerDeps): FlowRunner => {
     return ok(undefined)
   }
 
+  /**
+   * The answer for a session this runner no longer holds: the recorded reason if it was
+   * killed from outside (the sweep, an uninstall, the deadline), and `not-found` otherwise —
+   * a session the caller invented, one it already saw end, or one it cancelled itself.
+   *
+   * Drained on delivery: the flow is over, so a replayed call gets `not-found` like any other
+   * terminal path rather than an error step that never stops arriving.
+   */
+  const gone = (sessionId: FlowSessionId): Result<RunnerStep, PluginError> => {
+    const message = abandoned.get(sessionId)
+    if (message === undefined) return err({ kind: "not-found", id: sessionId })
+    abandoned.delete(sessionId)
+    return ok({ sessionId, step: { kind: "error", message } })
+  }
+
   const advance = async (
     input: FlowAdvanceInput,
   ): Promise<Result<RunnerStep, PluginError>> => {
-    const message = abandoned.get(input.sessionId)
-    if (message !== undefined) {
-      // Drained on delivery: the flow is over, so a replayed call gets `not-found` like any
-      // other terminal path rather than an error step that never stops arriving.
-      abandoned.delete(input.sessionId)
-      return ok({
-        sessionId: input.sessionId,
-        step: { kind: "error", message },
-      })
-    }
-
     const session = sessions.get(input.sessionId)
-    if (session === undefined)
-      return err({ kind: "not-found", id: input.sessionId })
+    if (session === undefined) return gone(input.sessionId)
 
     // Not terminal: a double-click or a poll racing a submit is a caller mistake, not a
     // reason to kill the flow. Refusing here is also what keeps the completion map's
@@ -491,7 +517,7 @@ export const createFlowRunner = (deps: FlowRunnerDeps): FlowRunner => {
     session.inFlight = true
     try {
       const verified = await verifyAddress(session)
-      if (orphaned()) return err({ kind: "not-found", id: input.sessionId })
+      if (orphaned()) return gone(input.sessionId)
       if (!verified.ok) {
         await end(input.sessionId, session, "failed")
         return verified
@@ -506,7 +532,7 @@ export const createFlowRunner = (deps: FlowRunnerDeps): FlowRunner => {
         // Whatever is left of the flow's budget, so one unanswered call cannot outlive it.
         Math.max(1, FLOW_LIMITS.totalTimeoutMs - elapsed),
       )
-      if (orphaned()) return err({ kind: "not-found", id: input.sessionId })
+      if (orphaned()) return gone(input.sessionId)
 
       if (!called.ok) {
         await end(input.sessionId, session, "failed")

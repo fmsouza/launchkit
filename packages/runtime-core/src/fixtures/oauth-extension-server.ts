@@ -27,10 +27,7 @@
  * spelled out literally, exactly as a third-party plugin author would hardcode them — a drift
  * in `FLOW_PATH_PREFIX` must show up here as a 404, not be silently absorbed.
  */
-// Marks this file a MODULE. A fixture with no import or export is a global SCRIPT to
-// TypeScript, and its top-level `const`s then collide with the identically-named ones in
-// `echo-openai-server.ts` — `tsc` fails the whole package with "cannot redeclare". Any third
-// fixture added next to these needs the same line.
+// Marks this file a MODULE — see `echo-openai-server.ts` for why every fixture here needs it.
 export {}
 
 const portIndex = Bun.argv.indexOf("--port")
@@ -103,6 +100,13 @@ const sessions = new Map<string, FlowSession>()
 /** States whose consent redirect has been received — the browser half of the handshake. */
 const consented = new Set<string>()
 let seq = 0
+/**
+ * How many `next` calls for the `hang` flow this process has ACCEPTED and is now sitting on
+ * unanswered. Reported at `/hang-calls` so a test can fire the runner's deadline at the one
+ * moment that proves the path it means to exercise — a call genuinely in flight — instead of
+ * racing a wall clock against the opening exchange.
+ */
+let hangCallsInFlight = 0
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value)
@@ -171,7 +175,10 @@ const handleNext = async (flowId: string, body: unknown): Promise<Response> => {
     return refuse(400, "session belongs to another flow")
 
   // Never answers. The runner's armed deadline is the only thing that can end this flow.
-  if (flowId === "hang") return await new Promise<Response>(() => {})
+  if (flowId === "hang") {
+    hangCallsInFlight += 1
+    return await new Promise<Response>(() => {})
+  }
 
   if (flowId === "endless")
     return flowJson({ sessionId, step: awaitStep("Never finishing") })
@@ -223,6 +230,9 @@ Bun.serve({
     // Lets the test learn which OS process this child is, so "the flow stopped its instance"
     // can be checked against the process table instead of against Spectrum's own bookkeeping.
     if (path === "/pid") return withToken(Response.json({ pid: process.pid }))
+
+    if (path === "/hang-calls")
+      return withToken(Response.json({ inFlight: hangCallsInFlight }))
 
     if (path === "/fake-idp") {
       // Stands in for the user completing consent in a browser.

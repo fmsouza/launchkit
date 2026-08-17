@@ -112,6 +112,14 @@ and stopping it on demand.
   leave the child running forever. An injected `setTimer` arms the budget at `start` and ends
   the flow when it fires; every terminal path clears it. Each call is also given what remains
   of that budget as its `FlowHttp` `timeoutMs`, so one unanswered request cannot outlive it.
+  Expiry RECORDS a user-facing message for the session, exactly as `abandon` does, because
+  `end` then forgets the session and a forgotten session is indistinguishable from one that
+  never existed: without it the only answer left is `not-found`, and the flow would be killed
+  by the cap without the caller ever being told that is what happened.
+- The recorded message is delivered to whichever call gets there first — the caller's next
+  `advance`, or the one suspended INSIDE `advance` when the flow was killed. The suspended
+  call is the one whose caller is actually listening; a UI that stops polling on a failure
+  never makes the "next" call, so holding the reason back for it loses the reason.
 - **A flow does not survive its child.** A crashed instance is restarted on a NEW port with a
   NEW host token, so the address captured at `start` is not a fact that stays true. Every step
   re-obtains it and ends the flow if the base URL, host token, or pid moved: the freed port is

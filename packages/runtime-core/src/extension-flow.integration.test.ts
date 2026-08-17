@@ -169,14 +169,18 @@ type Harness = {
   readonly ctx: AppContext
   /** Where the linked manifest lives, so a case can rebuild the same config it was given. */
   readonly extensionDir: string
+  /**
+   * Fire the runner's armed deadline NOW. The real 10-minute timer is armed as production
+   * arms it and is cleared by the ordinary disarm path; this just pulls its callback forward,
+   * so a case can time the expiry against an observed fact rather than a wall clock.
+   */
+  readonly fireDeadline: () => void
 }
 
 /** Every harness built by the current test, torn down unconditionally in `afterEach`. */
 const live: Array<{ readonly ctx: AppContext; readonly home: string }> = []
 
-const buildHarness = async (
-  options: { readonly flowDeadlineMs?: number } = {},
-): Promise<Harness> => {
+const buildHarness = async (): Promise<Harness> => {
   const home = await mkdtemp(join(tmpdir(), "spectrum-flow-e2e-"))
   const extensionDir = join(home, "extension")
   await mkdir(extensionDir, { recursive: true })
@@ -187,6 +191,7 @@ const buildHarness = async (
   )
 
   let current = configWith({ extensionDir, enabled: true })
+  let armed: (() => void) | undefined
 
   const deps = buildFakeAppContextDeps({
     homeDir: () => home,
@@ -195,6 +200,11 @@ const buildHarness = async (
     ensureDir: (dir: string) => {
       mkdirSync(dir, { recursive: true })
     },
+    // The ONLY cast in this list, and the only stub whose shape genuinely diverges: the real
+    // `createCachedConfigStore` takes a store to wrap, this ignores it for a cell. Every
+    // production constructor below is assigned UNCAST — `as never` is assignable to anything,
+    // so a cast here would accept a wrong function silently and let future signature drift
+    // through unnoticed, in exactly the seam this file exists to prove.
     createCachedConfigStore: (() => ({
       load: async () => ({ ok: true, value: current }) as const,
       save: async (next: Config) => {
@@ -203,36 +213,35 @@ const buildHarness = async (
       },
     })) as never,
     // The keychain BACKEND is in memory; the `SecretStore` over it is production code.
-    createPlatformKeychainBackend: (() =>
-      createInMemoryKeychainBackend()) as never,
-    createSecretStore: createSecretStore as never,
-    createCryptoIdGen: createCryptoIdGen as never,
-    createSystemClock: createSystemClock as never,
-    createDirExtensionFileSource: createDirExtensionFileSource as never,
-    createExtensionRegistry: createExtensionRegistry as never,
-    createProviderRegistry: createProviderRegistry as never,
-    createPathCommandResolver: createPathCommandResolver as never,
-    createBunProcessSpawner: createBunProcessSpawner as never,
-    createProviderHost: createProviderHost as never,
-    createLoopbackPortAllocator: createLoopbackPortAllocator as never,
-    createFetchHealthProbe: createFetchHealthProbe as never,
-    createCryptoTokenGen: createCryptoTokenGen as never,
-    createFetchFlowHttp: createFetchFlowHttp as never,
-    createFlowClient: createFlowClient as never,
-    // The REAL runner. Only its injected deadline timer is compressed, and only when a case
-    // asks for it: the budget the runner enforces is 10 minutes, which no test can wait out.
-    createFlowRunner: ((runnerDeps: FlowRunnerDeps) =>
-      createFlowRunner(
-        options.flowDeadlineMs === undefined
-          ? runnerDeps
-          : {
-              ...runnerDeps,
-              setTimer: (_ms: number, onFire: () => void) =>
-                setTimeout(onFire, options.flowDeadlineMs),
-            },
-      )) as never,
-    createProviderFactory: createProviderFactory as never,
-    createRealGateway: createRealGateway as never,
+    createPlatformKeychainBackend: () => createInMemoryKeychainBackend(),
+    createSecretStore,
+    createCryptoIdGen,
+    createSystemClock,
+    createDirExtensionFileSource,
+    createExtensionRegistry,
+    createProviderRegistry,
+    createPathCommandResolver,
+    createBunProcessSpawner,
+    createProviderHost,
+    createLoopbackPortAllocator,
+    createFetchHealthProbe,
+    createCryptoTokenGen,
+    createFetchFlowHttp,
+    createFlowClient,
+    // The REAL runner, with the composition root's REAL timer — armed at the real
+    // `FLOW_LIMITS.totalTimeoutMs` and cleared by the ordinary disarm path. The callback is
+    // merely also handed to the test, so a case can pull a 10-minute wait forward to the
+    // instant it has proof the flow is in the state it means to expire.
+    createFlowRunner: (runnerDeps: FlowRunnerDeps) =>
+      createFlowRunner({
+        ...runnerDeps,
+        setTimer: (ms: number, onFire: () => void) => {
+          armed = onFire
+          return runnerDeps.setTimer(ms, onFire)
+        },
+      }),
+    createProviderFactory,
+    createRealGateway,
     loadSdk,
   })
 
@@ -241,17 +250,34 @@ const buildHarness = async (
   // The constructor kicks off its own refresh; awaiting a second one guarantees the linked
   // manifest has been read before the first flow starts.
   await ctx.refreshExtensions()
-  return { ctx, extensionDir }
+  return {
+    ctx,
+    extensionDir,
+    fireDeadline: () => {
+      if (armed === undefined) throw new Error("no flow deadline is armed")
+      armed()
+    },
+  }
 }
 
-// UNCONDITIONAL: a failing assertion must never leave a spawned plugin process behind.
+// UNCONDITIONAL: a failing assertion must never leave a spawned plugin process behind. Each
+// entry's `rm` sits in its own `finally` and the loop never short-circuits: a `stopAll` that
+// rejected would otherwise strand that context's temp dir AND skip every context after it,
+// which is precisely the case this teardown exists for.
 afterEach(async () => {
   const built = [...live]
   live.length = 0
+  const failures: unknown[] = []
   for (const { ctx, home } of built) {
-    await ctx.providerHost.stopAll()
-    await rm(home, { recursive: true, force: true })
+    try {
+      await ctx.providerHost.stopAll()
+    } catch (cause) {
+      failures.push(cause)
+    } finally {
+      await rm(home, { recursive: true, force: true })
+    }
   }
+  if (failures.length > 0) throw failures[0]
 })
 
 const isAlive = (pid: number): boolean => {
@@ -301,6 +327,26 @@ const modelIdsOf = async (port: number): Promise<readonly string[]> => {
 const hostTokenOf = async (port: number): Promise<string> => {
   const response = await fetch(`http://127.0.0.1:${port}/models`)
   return response.headers.get("x-spectrum-host-token") ?? ""
+}
+
+/** How many `next` calls the child has accepted for the `hang` flow and never answered. */
+const hangCallsOf = async (port: number): Promise<number> => {
+  const response = await fetch(`http://127.0.0.1:${port}/hang-calls`)
+  const body = (await response.json()) as { readonly inFlight: number }
+  return body.inFlight
+}
+
+/** Poll `condition` until it holds, so a case waits on a FACT rather than on a duration. */
+const waitUntil = async (
+  condition: () => Promise<boolean>,
+  what: string,
+): Promise<void> => {
+  const deadline = Date.now() + 10_000
+  while (Date.now() < deadline) {
+    if (await condition()) return
+    await new Promise((resolve) => setTimeout(resolve, 10))
+  }
+  throw new Error(`timed out waiting for ${what}`)
 }
 
 const startInput = (flowId = "signin") =>
@@ -391,6 +437,10 @@ describe("extension setup flow, end to end", () => {
     if (waiting.step.kind !== "await") return
     // The plugin asked for 10 ms. A UI that trusted it would poll at the plugin's rate.
     expect(waiting.step.pollMs).toBe(500)
+
+    // `stopAll` kills the child but never disarms the runner's timer, so a flow left open
+    // here would strand a real 10-minute `setTimeout` for the rest of the run.
+    await ctx.flowRunner.cancel(opened.sessionId)
   }, 60_000)
 
   it("contributes the flow action the providers page offers", async () => {
@@ -487,6 +537,11 @@ describe("extension setup flow, end to end", () => {
     )
     if (managing.step.kind !== "open-external") throw new Error("no redirect")
     expect(await modelIdsOf(portOf(managing.step.url))).toEqual(["oauth-1"])
+
+    // Both flows are still open; cancelling disarms their deadlines as well as killing their
+    // children, which `stopAll` alone would not do.
+    await ctx.flowRunner.cancel(creating.sessionId)
+    await ctx.flowRunner.cancel(managing.sessionId)
   }, 60_000)
 
   it("kills the flow's child when the user cancels mid-flow", async () => {
@@ -514,30 +569,37 @@ describe("extension setup flow, end to end", () => {
   }, 60_000)
 
   it("kills the flow's child when the total-timeout deadline fires on a flow that never answers", async () => {
-    // The runner's real budget is 10 minutes; only the injected timer is compressed. The
-    // deadline is armed the moment the child is ready, so this has to outlast the opening
-    // exchange (a few loopback round trips) by a wide margin on a loaded machine.
-    const { ctx } = await buildHarness({ flowDeadlineMs: 1500 })
+    const { ctx, fireDeadline } = await buildHarness()
 
     const opened = unwrap(await ctx.flowRunner.start(startInput("hang")))
     if (opened.step.kind !== "open-external") throw new Error("no redirect")
     const flowKey = [...ctx.flowRunner.activeInstanceKeys()][0] ?? ""
     expect(ctx.providerHost.status(flowKey)).toBe("running")
-    const pid = await pidOf(portOf(opened.step.url))
+    const port = portOf(opened.step.url)
+    const pid = await pidOf(port)
 
     // The plugin accepts this call and never answers it. Nothing but the armed deadline can
     // end the flow — the elapsed-budget check is only read when a call RETURNS.
-    const hung = await ctx.flowRunner.advance({
+    const hung = ctx.flowRunner.advance({
       sessionId: opened.sessionId,
       result: { kind: "ack" },
     })
-    expect(hung.ok).toBe(false)
-    // The deadline ends the session while this call is suspended, so the call that WAS in
-    // flight comes back `not-found` rather than naming the timeout. Pinned as the observed
-    // behaviour, not endorsed: `flow-errors.ts` renders `not-found` as "this extension does
-    // not offer that setup flow, or the flow has already ended (<id>)" — misleading copy for
-    // a timeout, and the `<id>` it prints here is the Spectrum-side session handle.
-    if (!hung.ok) expect(hung.error.kind).toBe("not-found")
+    // Fired against an OBSERVED fact, never a duration: the child confirms it is sitting on
+    // an unanswered call, so this case cannot quietly degrade into the much weaker "the
+    // deadline beat the opening exchange" one and still pass every assertion below.
+    await waitUntil(
+      async () => (await hangCallsOf(port)) >= 1,
+      "the plugin to receive the hanging step call",
+    )
+    fireDeadline()
+
+    // Named, not `not-found`: the deadline is the only thing that knows this flow was killed
+    // for running too long, and the caller awaiting this call is the one who has to be told.
+    const stepped = unwrap(await hung)
+    expect(stepped.step.kind).toBe("error")
+    if (stepped.step.kind !== "error") return
+    expect(stepped.step.message).toContain("longer than 10 minutes")
+
     expect(ctx.providerHost.status(flowKey)).toBe("stopped")
     expect([...ctx.flowRunner.activeInstanceKeys()]).toEqual([])
     expect(await awaitProcessGone(pid)).toBe(true)
@@ -659,6 +721,9 @@ describe("extension setup flow, end to end", () => {
     if (opened.step.kind !== "open-external") throw new Error("no redirect")
     const flowKey = [...ctx.flowRunner.activeInstanceKeys()][0] ?? ""
     const pid = await pidOf(portOf(opened.step.url))
+    // The transition is the property here too: `status("")` — a mistyped or empty key —
+    // answers "stopped", so the post-condition alone would not prove the child survived.
+    expect(ctx.providerHost.status(flowKey)).toBe("running")
 
     // The composition root's OWN sweep, driven by a save the user could make in another
     // window mid-flow. A flow key belongs to no provider record, so an unswept union here
@@ -748,8 +813,15 @@ describe("the oauth fixture's own refusals", () => {
       readonly token: string
     }) => Promise<void>,
   ): Promise<void> => {
-    const token = "fixture-token"
-    const port = 40_000 + Math.floor(Math.random() * 20_000)
+    const token = `fixture-${crypto.randomUUID()}`
+    // The SAME allocator production uses (bind `:0`, read the port, release), not a random
+    // number: a guessed port that is already taken kills the child under `stdio: ignore` and
+    // fails 10 s later as "never became ready" — and if the squatter happens to answer 200 on
+    // `/models`, readiness would succeed against the WRONG process. Which is exactly why
+    // readiness checks the echoed token, so the wait below checks it too.
+    const allocated = await createLoopbackPortAllocator().allocate()
+    if (!allocated.ok) throw new Error("could not allocate a loopback port")
+    const port = allocated.value
     const child = Bun.spawn(
       [process.execPath, FIXTURE, "--port", String(port)],
       {
@@ -759,17 +831,18 @@ describe("the oauth fixture's own refusals", () => {
       },
     )
     try {
-      const deadline = Date.now() + 10_000
-      for (;;) {
+      await waitUntil(async () => {
         try {
           const probe = await fetch(`http://127.0.0.1:${port}/models`)
-          if (probe.ok) break
+          // The token proves the answer came from OUR child and not from whatever else may
+          // have taken the port between the allocator's release and this child's bind.
+          return (
+            probe.ok && probe.headers.get("x-spectrum-host-token") === token
+          )
         } catch {
-          // not bound yet
+          return false // not bound yet
         }
-        if (Date.now() > deadline) throw new Error("fixture never became ready")
-        await new Promise((resolve) => setTimeout(resolve, 25))
-      }
+      }, "the fixture to bind and echo its token")
       await body({ port, token })
     } finally {
       child.kill()

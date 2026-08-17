@@ -758,6 +758,44 @@ describe("createIpcHandlers.advanceProviderFlow", () => {
     expect(next.step).toMatchObject({ kind: "error" })
   })
 
+  it("reads a not-found on a step as the setup session having ended, not the flow being unoffered", async () => {
+    // The SAME error kind means two different things depending on which call produced it:
+    // on `start` the contribution offers no such flow, on a step the session is simply over.
+    // Telling a user mid-setup that "this extension does not offer that setup flow" sends
+    // them looking for a broken extension when their session merely ended.
+    const h = harness({
+      steps: [formStep],
+      advanceFails: { kind: "not-found", id: "fs_session" },
+    })
+    const started = await h.handlers.startProviderFlow(startParams)
+    const next = await h.handlers.advanceProviderFlow({
+      sessionId: sessionOf(started),
+      result: { kind: "poll" },
+    })
+    expect(next.step).toMatchObject({
+      kind: "error",
+      message: expect.stringContaining("setup session has ended"),
+    })
+  })
+
+  it("never renders a session handle into the message of a step that failed", async () => {
+    // `not-found` used to interpolate `error.id`, which on this path is the Spectrum-side
+    // flow session handle — meaningless to a user and not something product copy should carry.
+    const h = harness({
+      steps: [formStep],
+      advanceFails: { kind: "not-found", id: "fs_the_session_handle" },
+    })
+    const started = await h.handlers.startProviderFlow(startParams)
+    const next = await h.handlers.advanceProviderFlow({
+      sessionId: sessionOf(started),
+      result: { kind: "poll" },
+    })
+    const step = next.step
+    expect(step?.kind).toBe("error")
+    if (step?.kind !== "error") return
+    expect(step.message).not.toContain("fs_the_session_handle")
+  })
+
   it("never logs a flow field value", async () => {
     const h = harness({ steps: [formStep, doneStepWithSecret] })
     const started = await h.handlers.startProviderFlow(startParams)

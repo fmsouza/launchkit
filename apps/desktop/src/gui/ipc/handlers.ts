@@ -38,6 +38,7 @@ import { isOk } from "@spectrum/utils"
 import type { GuiContext } from "../../composition"
 import { buildUpdateState as buildUpdateStateShared } from "../updater/build-update-state"
 import type { Channel } from "../updater/updater-adapter"
+import type { FlowCallKind } from "./flow-errors"
 import { flowErrorMessage } from "./flow-errors"
 import { ingestUploads } from "./ingest-uploads"
 import { resolveTerminalCwd } from "./terminal-cwd"
@@ -494,10 +495,17 @@ export const createIpcHandlers = (ctx: GuiContext): IpcHandlers => {
     return { step: sanitizeFlowStep(step), ...toast }
   }
 
-  /** Log the failure (kind only — a detail can echo extension-controlled text) and map it. */
-  const flowFailure = (error: PluginError): FlowStepViewData => {
+  /**
+   * Log the failure (kind only — a detail can echo extension-controlled text) and map it.
+   * `during` is passed because `not-found` means two different things on the two paths (see
+   * `flow-errors.ts`), and only the call site knows which one it is on.
+   */
+  const flowFailure = (
+    error: PluginError,
+    during: FlowCallKind,
+  ): FlowStepViewData => {
     flowLog.warn("flow step failed", { kind: error.kind })
-    return flowErrorStep(flowErrorMessage(error))
+    return flowErrorStep(flowErrorMessage(error, during))
   }
 
   return {
@@ -1326,7 +1334,7 @@ export const createIpcHandlers = (ctx: GuiContext): IpcHandlers => {
       const contributionId = pluginIdOf(providerKey)
       if (contributionId === undefined)
         return {
-          step: flowFailure({ kind: "not-found", id: providerKey }),
+          step: flowFailure({ kind: "not-found", id: providerKey }, "start"),
         }
 
       // `context: "provider"` re-authenticates an existing record, so the plugin's child is
@@ -1368,7 +1376,7 @@ export const createIpcHandlers = (ctx: GuiContext): IpcHandlers => {
         config,
         ...(secrets === undefined ? {} : { secrets }),
       })
-      if (!isOk(started)) return { step: flowFailure(started.error) }
+      if (!isOk(started)) return { step: flowFailure(started.error, "start") }
 
       const origin: FlowOrigin = {
         providerKey,
@@ -1388,7 +1396,7 @@ export const createIpcHandlers = (ctx: GuiContext): IpcHandlers => {
       if (origin === undefined)
         return {
           sessionId,
-          step: flowFailure({ kind: "not-found", id: sessionId }),
+          step: flowFailure({ kind: "not-found", id: sessionId }, "step"),
         }
 
       const stepped = await ctx.flowRunner.advance({ sessionId, result })
@@ -1406,7 +1414,7 @@ export const createIpcHandlers = (ctx: GuiContext): IpcHandlers => {
           return { sessionId }
         }
         flowOrigins.delete(sessionId)
-        return { sessionId, step: flowFailure(stepped.error) }
+        return { sessionId, step: flowFailure(stepped.error, "step") }
       }
 
       return { sessionId, ...(await deliverFlowStep(stepped.value, origin)) }

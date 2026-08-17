@@ -250,13 +250,17 @@ const everyPluginError: readonly PluginError[] = [
 
 describe("flowErrorMessage", () => {
   for (const error of everyPluginError) {
-    it(`produces user-facing copy for a ${error.kind} failure`, () => {
-      const message = flowErrorMessage(error)
-      expect(typeof message).toBe("string")
-      expect(message.length).toBeGreaterThan(0)
-      // The extension's own `detail` is never rendered to the user.
-      expect(message).not.toContain(DETAIL)
-    })
+    // Both call kinds, because `not-found` answers differently on each and neither answer may
+    // leak the extension's `detail` or be empty.
+    for (const during of ["start", "step"] as const) {
+      it(`produces user-facing copy for a ${error.kind} failure during a ${during}`, () => {
+        const message = flowErrorMessage(error, during)
+        expect(typeof message).toBe("string")
+        expect(message.length).toBeGreaterThan(0)
+        // The extension's own `detail` is never rendered to the user.
+        expect(message).not.toContain(DETAIL)
+      })
+    }
   }
 })
 

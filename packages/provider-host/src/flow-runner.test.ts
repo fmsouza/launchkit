@@ -855,7 +855,10 @@ describe("createFlowRunner concurrency", () => {
     expect(calls.length).toBe(1)
   })
 
-  it("delivers no step for a session abandoned while its step was in flight", async () => {
+  it("delivers the named cause to the very call a session was abandoned under", async () => {
+    // The plugin's step is discarded — its child is being killed — but the CALLER is right
+    // here, awaiting this call. Holding the named cause back for a "next call" that a UI
+    // which stops polling on failure will never make is how the reason gets lost.
     const gate = deferred()
     const { runner, started: instances } = harness({
       steps: [formStep, formStep],
@@ -871,16 +874,18 @@ describe("createFlowRunner concurrency", () => {
     gate.release()
     const raced = await inFlight
 
-    expect(raced.ok).toBe(false)
-    if (!raced.ok) expect(raced.error.kind).toBe("not-found")
-    // The named cause is still waiting for the next call. Asserted unconditionally: a
-    // combined `if (after.ok && kind === "error")` would pass vacuously on any other kind.
+    // Asserted unconditionally: a combined `if (raced.ok && kind === "error")` would pass
+    // vacuously on any other kind.
+    expect(raced.ok).toBe(true)
+    if (!raced.ok) return
+    expect(raced.value.step.kind).toBe("error")
+    if (raced.value.step.kind === "error")
+      expect(raced.value.step.message).toContain("no longer available")
+
+    // Drained by that delivery, so a replayed call gets the ordinary terminal answer.
     const after = await runner.advance({ sessionId, result: { kind: "ack" } })
-    expect(after.ok).toBe(true)
-    if (!after.ok) return
-    expect(after.value.step.kind).toBe("error")
-    if (after.value.step.kind === "error")
-      expect(after.value.step.message).toContain("no longer available")
+    expect(after.ok).toBe(false)
+    if (!after.ok) expect(after.error.kind).toBe("not-found")
   })
 })
 
@@ -899,15 +904,86 @@ describe("createFlowRunner deadline", () => {
     expect(stopped.length).toBe(1)
   })
 
-  it("forgets the session when the deadline fires", async () => {
+  it("names the timeout when the caller advances after the deadline fired", async () => {
+    // `not-found` here would be indistinguishable from a session id the caller invented, and
+    // the GUI's copy for it blames the extension for not offering the flow. The deadline is
+    // the only thing that knows a flow was killed for running too long, so it has to say so.
     const { runner, fireTimers } = harness({ steps: [formStep, formStep] })
     const first = await runner.start(startInput)
     const sessionId = first.ok ? first.value.sessionId : ""
     fireTimers()
     await flush()
     const after = await runner.advance({ sessionId, result: { kind: "ack" } })
-    expect(after.ok).toBe(false)
-    if (!after.ok) expect(after.error.kind).toBe("not-found")
+    expect(after.ok).toBe(true)
+    if (!after.ok) return
+    expect(after.value.step.kind).toBe("error")
+    if (after.value.step.kind !== "error") return
+    expect(after.value.step.message).toContain("longer than 10 minutes")
+  })
+
+  it("names the timeout when the deadline fires while a step call is in flight", async () => {
+    const gate = deferred()
+    const { runner, fireTimers } = harness({
+      steps: [formStep, formStep],
+      callGate: gate.promise,
+      gateFrom: 2,
+    })
+    const first = await runner.start(startInput)
+    const sessionId = first.ok ? first.value.sessionId : ""
+    const pending = runner.advance({ sessionId, result: { kind: "ack" } })
+    await flush()
+    fireTimers()
+    await flush()
+    gate.release()
+    const after = await pending
+    expect(after.ok).toBe(true)
+    if (!after.ok) return
+    expect(after.value.step.kind).toBe("error")
+    if (after.value.step.kind !== "error") return
+    expect(after.value.step.message).toContain("longer than 10 minutes")
+  })
+
+  it("names the timeout when the deadline fires while the address re-check is in flight", async () => {
+    const gate = deferred()
+    const { runner, fireTimers } = harness({
+      steps: [formStep, formStep],
+      ensureGate: gate.promise,
+      ensureGateFrom: 2,
+    })
+    const first = await runner.start(startInput)
+    const sessionId = first.ok ? first.value.sessionId : ""
+    const pending = runner.advance({ sessionId, result: { kind: "ack" } })
+    await flush()
+    fireTimers()
+    await flush()
+    gate.release()
+    const after = await pending
+    expect(after.ok).toBe(true)
+    if (!after.ok) return
+    expect(after.value.step.kind).toBe("error")
+  })
+
+  it("drains the timeout message so a replayed call gets not-found", async () => {
+    // Exactly like the abandon path: the flow is over, so a second call must not keep
+    // receiving an error step that never stops arriving.
+    const { runner, fireTimers } = harness({ steps: [formStep, formStep] })
+    const first = await runner.start(startInput)
+    const sessionId = first.ok ? first.value.sessionId : ""
+    fireTimers()
+    await flush()
+    await runner.advance({ sessionId, result: { kind: "ack" } })
+    const again = await runner.advance({ sessionId, result: { kind: "ack" } })
+    expect(again.ok).toBe(false)
+    if (!again.ok) expect(again.error.kind).toBe("not-found")
+  })
+
+  it("forgets a timed-out session's completion rather than leaving it takeable", async () => {
+    const { runner, fireTimers } = harness({ steps: [formStep] })
+    const first = await runner.start(startInput)
+    const sessionId = first.ok ? first.value.sessionId : ""
+    fireTimers()
+    await flush()
+    expect(runner.takeCompletion(sessionId)).toBeUndefined()
   })
 
   it("drops the flow key from the active set when the deadline fires", async () => {

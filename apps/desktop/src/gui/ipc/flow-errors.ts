@@ -5,6 +5,15 @@ const naming = (id: string | undefined, message: string): string =>
   id === undefined ? message : `${message} (extension "${id}")`
 
 /**
+ * Which call produced the error. `not-found` is the one kind whose MEANING depends on this:
+ * opening a flow, it means the contribution offers no such flow; stepping one, it means the
+ * session is over (cancelled, swept, or already finished). Nothing in the error itself can
+ * tell them apart — the `id` it carries is a contribution id on one path and the Spectrum
+ * flow session handle on the other — so the caller, which knows, says so.
+ */
+export type FlowCallKind = "start" | "step"
+
+/**
  * The user-facing copy for a `PluginError` surfaced as a flow `error` step. Exhaustive over
  * the closed union.
  *
@@ -12,8 +21,14 @@ const naming = (id: string | undefined, message: string): string =>
  * built from a zod failure over a response an extension controls, and this string is rendered
  * verbatim in the setup modal. The kind is logged main-side instead (never the detail — the
  * same rule `@spectrum/secrets` applies to backend errors that can echo CLI output).
+ *
+ * `not-found` also omits the error's `id`: on the step path that id is the flow session
+ * handle, which is meaningless to a user and has no place in product copy.
  */
-export const flowErrorMessage = (error: PluginError): string => {
+export const flowErrorMessage = (
+  error: PluginError,
+  during: FlowCallKind,
+): string => {
   switch (error.kind) {
     case "invalid-manifest":
       // The flow client reports an unparseable step this way: the extension sent something
@@ -28,8 +43,9 @@ export const flowErrorMessage = (error: PluginError): string => {
         "Setup cannot continue: this step needs a newer Spectrum",
       )
     case "not-found":
-      // Either the contribution is gone/disabled, or the session ended before this call.
-      return `Setup cannot continue: this extension does not offer that setup flow, or the flow has already ended (${error.id}).`
+      return during === "start"
+        ? "Setup cannot continue: this extension does not offer that setup flow."
+        : "This setup session has ended. Please start setup again."
     case "read-failed":
       return "Setup was stopped: the extension stopped responding."
     case "write-failed":
