@@ -35,6 +35,7 @@ describe("runCliMain", () => {
         code = c
       },
       errOut: () => {},
+      shutdown: async () => {},
     })
     expect(code).toBe(0)
   })
@@ -48,6 +49,7 @@ describe("runCliMain", () => {
       },
       exit: () => {},
       errOut: () => {},
+      shutdown: async () => {},
     })
     expect(seen).toEqual(["list", "harnesses"])
   })
@@ -63,8 +65,54 @@ describe("runCliMain", () => {
       errOut: (line) => {
         written = line
       },
+      shutdown: async () => {},
     })
     expect(code).toBe(1)
     expect(written).toBe('spectrum: unknown command "bogus"')
+  })
+
+  // `process.exit` is immediate: anything not awaited before it is lost. A supervised plugin
+  // child process that outlives the CLI is an orphan, so shutdown must complete FIRST.
+  it("stops supervised child processes before exiting when the command succeeds", async () => {
+    const order: string[] = []
+    await runCliMain(["list"], {
+      run: async () => ok(undefined),
+      exit: () => order.push("exit"),
+      errOut: () => {},
+      shutdown: async () => {
+        order.push("shutdown")
+      },
+    })
+    expect(order).toEqual(["shutdown", "exit"])
+  })
+
+  it("stops supervised child processes before exiting when the command fails", async () => {
+    const order: string[] = []
+    await runCliMain(["bogus"], {
+      run: async () => err({ kind: "unknown-command", command: "bogus" }),
+      exit: () => order.push("exit"),
+      errOut: () => order.push("errOut"),
+      shutdown: async () => {
+        order.push("shutdown")
+      },
+    })
+    expect(order).toEqual(["errOut", "shutdown", "exit"])
+  })
+
+  it("still exits with a diagnostic line when shutdown itself fails", async () => {
+    let code = -1
+    const lines: string[] = []
+    await runCliMain(["list"], {
+      run: async () => ok(undefined),
+      exit: (c) => {
+        code = c
+      },
+      errOut: (line) => lines.push(line),
+      shutdown: async () => {
+        throw new Error("kill refused")
+      },
+    })
+    expect(code).toBe(0)
+    expect(lines).toEqual(["spectrum: shutdown failed: kill refused"])
   })
 })

@@ -9,6 +9,9 @@ import { cliDepsFrom } from "./cli-deps"
 const ctx = createAppContext()
 await runCliMain(process.argv.slice(2), {
   run: (argv) => runCli(cliDepsFrom(ctx))(argv),
+  // `runCliMain` awaits `shutdown` before calling this — `process.exit` never returns, so a
+  // supervised plugin process not stopped by then is orphaned.
   exit: (code) => process.exit(code),
   errOut: (line) => process.stderr.write(`${line}\n`),
+  shutdown: () => ctx.shutdown(),
 })

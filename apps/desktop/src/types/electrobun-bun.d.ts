@@ -165,3 +165,22 @@ export const Utils: {
   /** Graceful native shutdown (stops the event loop and force-exits). */
   quit(): void
 }
+
+/**
+ * The application event emitter. Reachable ONLY through the default export — Electrobun's
+ * `dist/api/bun/index.ts` puts `events` on the default object and does not re-export it by name.
+ *
+ * `before-quit` is emitted SYNCHRONOUSLY from `Utils.quit()`, and Electrobun aborts the quit when
+ * a listener sets `response = { allow: false }`. That veto is the only asynchronous affordance in
+ * the quit sequence — see `quit.ts`.
+ */
+declare const Electrobun: {
+  readonly events: {
+    on(
+      name: "before-quit",
+      handler: (event: { response: { allow: boolean } }) => void,
+    ): void
+  }
+}
+
+export default Electrobun
