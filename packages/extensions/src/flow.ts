@@ -96,7 +96,7 @@ export const FlowStepSchema = z.discriminatedUnion("kind", [
       kind: z.literal("await"),
       title: z.string().min(1),
       description: z.string().optional(),
-      // Spec §10.4 declares `pollMs` required, but a default of 1000 accepts every message
+      // Spec §10.2 declares `pollMs` required, but a default of 1000 accepts every message
       // a conforming plugin can send (whether or not it sets `pollMs`) plus omission, so it
       // is strictly more permissive than the spec text and never rejects a conforming plugin.
       pollMs: z.number().default(1000),
