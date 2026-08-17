@@ -504,6 +504,8 @@ export const createProviderHost = (deps: ProviderHostDeps): ProviderHost => {
         // right for a key that may be asked for again; a retired configuration never will be,
         // so keeping it would trade a process leak for a map leak. Any start still in flight
         // was cancelled by `stop`'s generation bump and commits to an orphaned record.
+        // NOTE: memory hygiene only — a deleted record and a `stopped` one are behaviourally
+        // identical through this interface, so no test can pin this line.
         instances.delete(key)
         if (providerId !== undefined) {
           const keys = byProvider.get(providerId)

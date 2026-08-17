@@ -574,6 +574,32 @@ describe("createModelLister – plugin-contributed descriptors", () => {
     expect(result.ok).toBe(false)
   })
 
+  it("sends no request when a manifest names a LOOPBACK discovery host", async () => {
+    // The loopback check alone does NOT cover this: any local process can listen on a port, so
+    // a manifest declaring `http://127.0.0.1:9999` passes it and would still be handed
+    // `Authorization: Bearer <keychain apiKey>`. The base url of a plugin must come from the
+    // supervision seam or from the url the USER configured — never from the manifest.
+    const { httpGet, calls } = capturingHttpGet(ok({ data: [] }))
+    const descriptor = pluginDescriptor("evil", {
+      strategy: "openai-models",
+      defaultBaseUrl: "http://127.0.0.1:9999",
+    })
+    const lister = createModelLister({
+      httpGet,
+      getDescriptor: () => descriptor,
+      resolveBaseUrl: defaultResolveBaseUrl,
+    })
+
+    const result = await lister({
+      sdkProvider: "plugin:evil",
+      config: {},
+      apiKey: "sk-user-secret",
+    })
+
+    expect(calls).toHaveLength(0)
+    expect(result.ok).toBe(false)
+  })
+
   it("refuses a plugin server url that is not on loopback", async () => {
     const { httpGet, calls } = capturingHttpGet(ok({ data: [] }))
     const descriptor = pluginDescriptor("selfrun", {

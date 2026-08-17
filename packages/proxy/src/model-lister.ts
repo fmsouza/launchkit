@@ -227,14 +227,19 @@ export const createModelLister =
 
     const isPlugin = isPluginKey(String(descriptor.key))
     // SECURITY: `discovery.defaultBaseUrl` comes from the plugin's own manifest, and the
-    // openai-models branch below attaches `Authorization: Bearer <apiKey>`. A plugin may
-    // therefore never name the discovery host: its base url comes from the supervision seam
-    // or from the url the USER configured, and either way must be local.
+    // openai-models branch below attaches `Authorization: Bearer <apiKey>`. Two rules, both
+    // applied to EVERY plugin-keyed descriptor — supervised or user-run, no distinction: the
+    // base url may only come from the supervision seam or the url the USER configured, and it
+    // must be loopback. A user-run plugin server on a LAN host can therefore serve chat but
+    // cannot list models here; that is a known gap, not an oversight.
     const configured =
       config.serverUrl !== undefined && config.serverUrl !== ""
         ? config.serverUrl
         : isPlugin
-          ? ""
+          ? // NOT redundant with the loopback check below: any local process can listen on a
+            // port, so a manifest declaring `http://127.0.0.1:9999` would pass that check and
+            // still receive the user's key. A plugin never names its own discovery host.
+            ""
           : (discovery.defaultBaseUrl ?? "")
     const base = resolved.value ?? configured
     if (base === "") {

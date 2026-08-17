@@ -510,6 +510,14 @@ export const createAppContext = (
   let supervisedIds: ReadonlySet<string> = new Set<string>()
   /** Manifest ids the user has enabled. The provider host consults this before spawning anything. */
   let enabledExtensionIds: ReadonlySet<string> = new Set<string>()
+  /**
+   * Contribution id → the manifest id that declares it, for EVERY installed supervised
+   * contribution, enabled or not. The retention sweep needs this: a `config.save` that toggles
+   * `providerPlugins[].enabled` does not recompute `supervisedIds`, so the sweep re-evaluates
+   * `enabled` against the config it is handed and needs to know which extension owns a
+   * contribution to do it.
+   */
+  let supervisedOwners: ReadonlyMap<string, string> = new Map<string, string>()
 
   const providerRegistry: ProviderRegistry = {
     get: (key) => providerRegistryCell.get(key),
@@ -538,6 +546,7 @@ export const createAppContext = (
     if (haveGoodExtensionState) return
     supervisedIds = new Set<string>()
     enabledExtensionIds = new Set<string>()
+    supervisedOwners = new Map<string, string>()
     providerRegistryCell = deps.createProviderRegistry()
   }
 
@@ -546,10 +555,12 @@ export const createAppContext = (
    * logged (`{ kind }` only) and swallowed: a broken plugin manifest must never stop the app
    * from starting.
    *
-   * Everything is computed into locals and the three cells are swapped in ONE synchronous block
-   * at the end. A torn intermediate state — a new supervised set against the previous provider
-   * registry — would make a supervised contribution look unsupervised for the width of an await,
-   * and an unsupervised plugin resolves to no base url at all.
+   * Everything is computed into locals and all FIVE cells (`extensionRegistryCell`,
+   * `enabledExtensionIds`, `supervisedIds`, `supervisedOwners`, `providerRegistryCell`) are
+   * swapped in ONE synchronous block at the end. A torn intermediate state — a new supervised
+   * set against the previous provider registry — would make a supervised contribution look
+   * unsupervised for the width of an await, and an unsupervised plugin resolves to no base url
+   * at all.
    */
   const runRefresh = async (): Promise<void> => {
     try {
@@ -593,6 +604,15 @@ export const createAppContext = (
               .map((p) => String(p.id)),
           ),
       )
+      // Ownership is recorded for every INSTALLED supervised contribution, enabled or not —
+      // the sweep applies `enabled` itself, against the config it is given.
+      const nextOwners = new Map<string, string>(
+        listed.value.flatMap((e) =>
+          e.manifest.contributes.providers
+            .filter((p) => p.transport.launch !== undefined)
+            .map((p) => [String(p.id), String(e.manifest.id)] as const),
+        ),
+      )
 
       const descriptors = await nextRegistry.providerDescriptors(enabledIds)
       if (!descriptors.ok) {
@@ -608,6 +628,7 @@ export const createAppContext = (
       extensionRegistryCell = nextRegistry
       enabledExtensionIds = nextEnabled
       supervisedIds = nextSupervised
+      supervisedOwners = nextOwners
       providerRegistryCell = nextProviders
       haveGoodExtensionState = true
 
@@ -668,11 +689,19 @@ export const createAppContext = (
   const retainConfiguredInstances = async (
     cfg: import("@spectrum/config").Config,
   ): Promise<void> => {
+    // `enabled` is read from the config being swept, NOT from `supervisedIds`: disabling a
+    // plugin in the GUI is a `config.save`, which does not recompute the supervised set. Reading
+    // the stale set would retain the key and leave the disabled extension's child running.
+    const enabled = new Set(
+      cfg.providerPlugins.filter((p) => p.enabled).map((p) => String(p.id)),
+    )
     const keys = new Set(
       cfg.providers
         .filter((p) => {
           const id = pluginIdOf(p.sdkProvider)
-          return id !== undefined && supervisedIds.has(id)
+          if (id === undefined) return false
+          const owner = supervisedOwners.get(id)
+          return owner !== undefined && enabled.has(owner)
         })
         .map((p) =>
           providerInstanceKey({

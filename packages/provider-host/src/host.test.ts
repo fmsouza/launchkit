@@ -486,11 +486,16 @@ describe("createProviderHost", () => {
     expect(h.status("k-new")).toBe("running")
   })
 
-  it("forgets a retired instance so its key does not accumulate", async () => {
+  it("starts a retired key again when its configuration comes back", async () => {
+    // Scoped to what the public API can actually witness. `retainOnly` ALSO deletes the record
+    // (memory hygiene — a retired configuration is never asked for again), but a deleted record
+    // and a `stopped` one are indistinguishable through `status`/`ensureRunning`, so no
+    // assertion here can pin the deletion. Naming this "forgets…" would have claimed coverage
+    // the test does not have.
     const { host: h, spawner } = host()
     await h.ensureRunning(run("acme", "k-old"))
     await h.retainOnly(new Set<string>())
-    // Retired, then reconfigured back: a fresh instance, not a resurrected stopped one.
+    expect(h.status("k-old")).toBe("stopped")
     await h.ensureRunning(run("acme", "k-old"))
     expect(h.status("k-old")).toBe("running")
     expect(spawner.calls).toHaveLength(2)

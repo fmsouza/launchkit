@@ -1671,9 +1671,12 @@ describe("createAppContext supervised instance retention", () => {
     dir: `/plugins/${id}`,
   })
 
-  const configWith = (providerConfig: Record<string, string>): unknown => ({
+  const configWith = (
+    providerConfig: Record<string, string>,
+    enabled = true,
+  ): unknown => ({
     ...defaultConfig(),
-    providerPlugins: [{ id: "acme", source: { kind: "local" }, enabled: true }],
+    providerPlugins: [{ id: "acme", source: { kind: "local" }, enabled }],
     providers: [
       {
         id: "p_acme",
@@ -1753,6 +1756,26 @@ describe("createAppContext supervised instance retention", () => {
     // The retired key is absent from the retention set, so its child is stopped rather than
     // left running with the old secrets.
     expect(retained.at(-1)).toEqual([after])
+  })
+
+  it("retires a supervised child when its extension is disabled by a config save", async () => {
+    // Disabling a plugin in the GUI is a `config.save`, not a refresh, so the sweep cannot read
+    // the supervised set alone — that set is only recomputed by `refreshExtensions`. Without
+    // consulting the enabled ids of the config BEING SAVED, the key stays retained and the
+    // child keeps running with its secrets: exactly the leak this sweep exists to close.
+    const { deps } = makeFakeDeps()
+    const { retained } = wire(deps, { region: "eu" })
+
+    const ctx = createAppContext(deps)
+    await ctx.refreshExtensions()
+    expect(retained.at(-1)).toEqual([keyFor({ region: "eu" })])
+
+    const saved = await ctx.config.save(
+      configWith({ region: "eu" }, false) as never,
+    )
+    expect(saved.ok).toBe(true)
+
+    expect(retained.at(-1)).toEqual([])
   })
 
   it("retires a supervised child whose extension a refresh dropped", async () => {
