@@ -98,11 +98,13 @@ const harness = (opts: {
       copier.drop(`/data/providers/${id}`)
       return ok(undefined)
     },
-    // The real `createDirExtensionFileSource` resolves a non-linked extension's directory
-    // as `root/id` — mirror that here (rather than the base in-memory fake's opaque
-    // `/in-memory/<id>`) so `update` can use `fileSource.extensionDir(id)` as its one
-    // definition of the layout instead of re-deriving `pluginRoot/id` itself.
-    extensionDir: (id: string) => `/data/providers/${id}`,
+    // Deliberately NOT `/data/providers/${id}` (== `join(pluginRoot, id)`) — a
+    // byte-identical override would make `update` calling `fileSource.extensionDir(id)`
+    // indistinguishable from re-deriving `pluginRoot/id` itself, so sabotaging that wiring
+    // would break zero tests. `/fs/<id>` is a distinct layout the two definitions could
+    // only agree on by actually going through this override, and the `update` tests below
+    // assert the git calls land on THIS path.
+    extensionDir: (id: string) => `/fs/${id}`,
   }
   const manifests = opts.manifests ?? {}
   const installer = createExtensionInstaller({
@@ -255,6 +257,40 @@ describe("install — git", () => {
     expect(removed).toEqual(["beta"])
   })
 
+  /** `GitClient` is an injected adapter, not in-package logic — its `Result<string, ...>`
+   * contract is trusted, not enforced by the type system at the call site. A misbehaving
+   * adapter whose `revParse` reports success with no commit must not silently produce a
+   * `PluginInstall` with an undefined commit; the installer's own guard has to catch it. */
+  it("fails with write-failed when the git client reports success with no commit", async () => {
+    const copier = createInMemoryDirCopier(["/data/providers/acme"])
+    const misbehavingGit = {
+      calls: [] as { op: string; args: readonly string[] }[],
+      clone: async (_url: string, dest: string) => {
+        copier.add(dest)
+        return ok(undefined)
+      },
+      fetchCheckout: async () => ok(undefined),
+      revParse: async () => ok(undefined as unknown as string),
+    }
+    const fileSource = createInMemoryExtensionFileSource([])
+    const installer = createExtensionInstaller({
+      git: misbehavingGit,
+      copier,
+      fileSource,
+      readManifest: async (dir: string) =>
+        dir === "/data/providers/acme"
+          ? ok(validManifest("acme"))
+          : err({ kind: "not-found", id: dir }),
+      pluginRoot: "/data/providers",
+      existingInstalls: () => [],
+    })
+    const r = await installer.install({
+      source: "https://example.com/acme.git",
+    })
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.error.kind).toBe("write-failed")
+  })
+
   it("fails with git-failed and writes nothing when the clone fails", async () => {
     const { installer, copier } = harness({
       gitFailure: { kind: "git-failed", detail: "exit 128" },
@@ -299,6 +335,37 @@ describe("install — path", () => {
     if (r.ok && r.value.install.source.kind === "path")
       expect(r.value.install.source.linked).toBe(false)
     expect(await copier.exists("/data/providers/acme")).toBe(true)
+  })
+
+  /** `createFsDirCopier` can fail mid-copy in production (EACCES, ENOSPC, its own
+   * self/descendant guard) even after `exists` reported the source present and the
+   * destination free — an untested cleanup path here is exactly the "shipped with no test
+   * behind it" pattern being eliminated elsewhere in this task. */
+  it("cleans up the partial write when a copy fails after the destination-occupied check passes", async () => {
+    const failingCopier = {
+      exists: async (dir: string) => dir === "/src/acme",
+      copy: async () => err({ kind: "read-failed", detail: "ENOSPC" } as const),
+    }
+    const removed: string[] = []
+    const fileSource = {
+      ...createInMemoryExtensionFileSource([]),
+      removeExtension: async (id: string) => {
+        removed.push(id)
+        return ok(undefined)
+      },
+    }
+    const installer = createExtensionInstaller({
+      git: createFakeGitClient(),
+      copier: failingCopier,
+      fileSource,
+      readManifest: async () => err({ kind: "not-found", id: "unused" }),
+      pluginRoot: "/data/providers",
+      existingInstalls: () => [],
+    })
+    const r = await installer.install({ source: "/src/acme", mode: "copy" })
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.error.kind).toBe("read-failed")
+    expect(removed).toEqual(["acme"])
   })
 
   it("fails without copying when the source directory holds no manifest", async () => {
@@ -350,7 +417,10 @@ describe("install — path", () => {
 describe("update", () => {
   it("fetches the pinned ref and records the new commit when the manifest stays valid", async () => {
     const { installer, git } = harness({
-      manifests: { "/data/providers/acme": validManifest("acme") },
+      // Keyed by `fileSource.extensionDir("acme")` (`/fs/acme`), NOT `pluginRoot/id` — if
+      // `update` ever went back to re-deriving `join(pluginRoot, id)` instead of asking
+      // the file source, this manifest would go unread and the test would fail on `r.ok`.
+      manifests: { "/fs/acme": validManifest("acme") },
       installed: [gitInstall("acme")],
       commit: "feed01",
     })
@@ -359,11 +429,12 @@ describe("update", () => {
     if (r.ok && r.value.install.source.kind === "git")
       expect(r.value.install.source.commit).toBe("feed01")
     expect(git.calls.map((c) => c.op)).toEqual(["fetchCheckout", "revParse"])
+    expect(git.calls.map((c) => c.args[0])).toEqual(["/fs/acme", "/fs/acme"])
   })
 
   it("fails without adopting the new tree when the updated manifest is invalid", async () => {
     const { installer } = harness({
-      manifests: { "/data/providers/acme": v2Manifest("acme") },
+      manifests: { "/fs/acme": v2Manifest("acme") },
       installed: [gitInstall("acme")],
       commit: "feed01",
     })
@@ -374,7 +445,7 @@ describe("update", () => {
 
   it("never deletes the extension when an update fails, so the old install survives", async () => {
     const { installer, removed } = harness({
-      manifests: { "/data/providers/acme": v2Manifest("acme") },
+      manifests: { "/fs/acme": v2Manifest("acme") },
       installed: [gitInstall("acme")],
     })
     await installer.update(pid("acme"), gitInstall("acme"))
@@ -419,7 +490,7 @@ describe("update", () => {
 
   it("refuses when the install record's id does not match the requested id", async () => {
     const { installer, git } = harness({
-      manifests: { "/data/providers/acme": validManifest("acme") },
+      manifests: { "/fs/acme": validManifest("acme") },
       installed: [gitInstall("acme")],
     })
     const r = await installer.update(pid("other"), gitInstall("acme"))

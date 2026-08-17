@@ -294,9 +294,12 @@ export const createExtensionInstaller = (deps: {
     let pluginInstall: PluginInstall
     if (p.source.kind === "git") {
       if (commit === undefined) {
-        // Unreachable: the git branch above always sets `commit` before falling through
-        // to here on success. Kept as a typed guard rather than an `as string` cast so a
-        // future refactor that breaks that invariant fails a Result check, not silently.
+        // Reachable, not just defensive: `GitClient` is an injected adapter (real or
+        // fake), not in-package logic, so its `Result<string, ...>` contract is trusted
+        // rather than enforced by the type system here. A misbehaving adapter whose
+        // `revParse` resolves `ok(undefined)` despite the return type would otherwise
+        // produce a `PluginInstall` with an undefined commit; this guard turns that into
+        // a typed `write-failed` Result instead.
         const error: PluginError = {
           kind: "write-failed",
           detail: `internal: git install of "${p.id}" resolved no commit`,
