@@ -46,4 +46,30 @@ describe("createRecordingProcessSpawner", () => {
     spawner.spawn("/bin/echo", [], {})
     expect(spawner.calls[0]?.cwd).toBeUndefined()
   })
+
+  it("records no kills before any spawned process is killed", () => {
+    const spawner = createRecordingProcessSpawner(7)
+    spawner.spawn("/bin/echo", [], {})
+    expect(spawner.kills).toEqual([])
+  })
+
+  it("records the pid when a spawned process is killed", () => {
+    const spawner = createRecordingProcessSpawner(7)
+    const r = spawner.spawn("/bin/echo", [], {})
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    r.value.kill()
+    expect(spawner.kills).toEqual([7])
+  })
+
+  it("records each kill in call order when several processes are killed", () => {
+    const spawner = createRecordingProcessSpawner(11)
+    const a = spawner.spawn("/bin/a", [], {})
+    const b = spawner.spawn("/bin/b", [], {})
+    expect(a.ok && b.ok).toBe(true)
+    if (!a.ok || !b.ok) return
+    b.value.kill()
+    a.value.kill()
+    expect(spawner.kills).toEqual([11, 11])
+  })
 })

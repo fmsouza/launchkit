@@ -4,9 +4,9 @@ Low-level primitives for hosting a plugin-contributed LLM provider as a Spectrum
 local child process on loopback.
 
 ## Responsibility
-Port allocation, host-token generation, and readiness probing — the building blocks the
-Task 7 supervisor composes to launch and verify a plugin's provider server. Does not itself
-launch or supervise a process.
+Port allocation, host-token generation, readiness probing, and the supervisor that composes
+them: spawning a plugin's provider server, proving it is ours, restarting it when it dies,
+and stopping it on demand.
 
 ## Public API
 - `PortAllocator = { allocate(): Promise<Result<number, PluginError>> }`,
@@ -23,6 +23,13 @@ launch or supervise a process.
   — polls with backoff (50 ms → 500 ms cap) until the probe reports `ok` and, when
   `expectedToken` is defined, a matching token, or the deadline passes
 
+- `createProviderHost(deps: { registry, resolver, spawner, allocator, probe, sleep, now,
+  tokenGen, logger?, maxRestarts? }): ProviderHost` with
+  `ensureRunning({ instanceKey, providerId, secrets })`, `status(instanceKey)`,
+  `stop(instanceKey)`, `stopAllFor(providerId)`, `stopAll()`
+- `PluginStatus = "stopped" | "starting" | "running" | "failed"`,
+  `RunningPlugin = { baseUrl; pid; hostToken }`, `EnsureRunningInput`
+
 ## Local invariants
 - `waitForReady` takes `probe`, `sleep`, and `now` as injected dependencies — no real
   timers, network, or clock in its own logic.
@@ -33,3 +40,18 @@ launch or supervise a process.
   simply not have bound yet. A plugin with no launch block is user-run, has no token, and is
   not checked (`expectedToken === undefined`).
 - The host token is a credential — never logged.
+- Process state is keyed by `instanceKey` (the proxy factory's provider cache key), not by
+  contribution id: two Provider records can target one contribution with different API keys,
+  and one process per contribution would make "whose secrets go in the env" ambiguous. A
+  secondary `providerId → Set<instanceKey>` index backs `stopAllFor`.
+- Exactly one in-flight start per instance key, registered synchronously before the first
+  await — two racing `ensureRunning` calls spawn once. `ensureRunning` is idempotent and
+  cheap once running; the proxy calls it per request, and that is how a restarted plugin's
+  new port reaches the provider factory.
+- A restart mints a NEW port and a NEW host token — never reuses the dead instance's.
+- `stop` marks the instance `stopped` BEFORE killing. The kill resolves `exited`, and the
+  exit handler restarts only a `running` instance; marking after the kill would race the
+  handler into a zombie restart loop on shutdown. Same reason readiness failure marks
+  `failed` before killing.
+- Logs `envKeys` (`Object.keys(env)`) on spawn — never env values, the host token, or the
+  instance key (itself a hash of the provider's secret refs).
