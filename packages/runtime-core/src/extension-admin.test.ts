@@ -121,7 +121,7 @@ const harness = (opts?: {
         return ok(undefined)
       },
     },
-    registry: {
+    registry: async () => ({
       list: async () =>
         opts?.listFails === true
           ? err({
@@ -136,7 +136,7 @@ const harness = (opts?: {
               },
             ]),
       providerDescriptors: async () => ok([]),
-    },
+    }),
     providerHost: {
       ensureRunning: async () => err({ kind: "not-found", id: "unused" }),
       status: () => "stopped",
@@ -285,6 +285,84 @@ describe("createExtensionAdmin", () => {
     expect(refreshes.length).toBe(1)
   })
 
+  it("removes on the happy path in the documented order: load, list, load, stop, delete, load, save, refresh", async () => {
+    const cfg: Config = {
+      ...defaultConfig(),
+      providerPlugins: [acmeInstall],
+      providers: [],
+    }
+    const calls: string[] = []
+    const admin = createExtensionAdmin({
+      config: {
+        load: async () => {
+          calls.push("load")
+          return ok(cfg)
+        },
+        save: async () => {
+          calls.push("save")
+          return ok(undefined)
+        },
+      },
+      installer: {
+        install: async () =>
+          ok({
+            manifest: acmeManifest,
+            install: acmeInstall,
+            ignoredContributions: [],
+          }),
+        update: async () =>
+          ok({
+            manifest: acmeManifest,
+            install: acmeInstall,
+            ignoredContributions: [],
+          }),
+        remove: async () => {
+          calls.push("delete")
+          return ok(undefined)
+        },
+      },
+      registry: async () => ({
+        list: async () => {
+          calls.push("list")
+          return ok([
+            {
+              manifest: acmeManifest,
+              ignoredContributions: [],
+              dir: "/d/acme",
+            },
+          ])
+        },
+        providerDescriptors: async () => ok([]),
+      }),
+      providerHost: {
+        ensureRunning: async () => err({ kind: "not-found", id: "unused" }),
+        status: () => "stopped",
+        stop: async () => {},
+        stopAllFor: async () => {
+          calls.push("stop")
+        },
+        stopAll: async () => {},
+        retainOnly: async () => {},
+      },
+      refresh: async () => {
+        calls.push("refresh")
+      },
+    })
+
+    const r = await admin.remove(pid("acme"))
+    expect(r.ok).toBe(true)
+    expect(calls).toEqual([
+      "load",
+      "list",
+      "load",
+      "stop",
+      "delete",
+      "load",
+      "save",
+      "refresh",
+    ])
+  })
+
   it("records the new commit, refreshes, and resolves with the updated extension", async () => {
     const cfg = { ...defaultConfig(), providerPlugins: [acmeInstall] }
     const { admin, refreshes, read } = harness({ config: cfg })
@@ -297,6 +375,82 @@ describe("createExtensionAdmin", () => {
     const source = read().providerPlugins[0]?.source
     if (source?.kind === "git") expect(source.commit).toBe("c2")
     expect(refreshes.length).toBe(1)
+  })
+
+  it("re-loads config for the write, instead of erasing a concurrent config change", async () => {
+    let loadCount = 0
+    let stored: Config = {
+      ...defaultConfig(),
+      providerPlugins: [acmeInstall],
+      providers: [],
+    }
+    const admin = createExtensionAdmin({
+      config: {
+        load: async () => {
+          loadCount += 1
+          // Simulate an UNRELATED concurrent edit landing between `update`'s first load (used
+          // to find the current install record) and the late re-load right before the write.
+          if (loadCount === 2) {
+            stored = {
+              ...stored,
+              providers: [
+                {
+                  id: ProviderIdSchema.parse("prv_other"),
+                  name: "Other",
+                  sdkProvider: "openai",
+                  config: {},
+                  secrets: {},
+                  models: [],
+                },
+              ],
+            }
+          }
+          return ok(stored)
+        },
+        save: async (next: Config) => {
+          stored = next
+          return ok(undefined)
+        },
+      },
+      installer: {
+        install: async () =>
+          ok({
+            manifest: acmeManifest,
+            install: acmeInstall,
+            ignoredContributions: [],
+          }),
+        update: async () =>
+          ok({
+            manifest: acmeManifest,
+            install: {
+              ...acmeInstall,
+              source: { ...acmeInstall.source, commit: "c2" },
+            },
+            ignoredContributions: [],
+          }),
+        remove: async () => ok(undefined),
+      },
+      registry: async () => ({
+        list: async () => ok([]),
+        providerDescriptors: async () => ok([]),
+      }),
+      providerHost: {
+        ensureRunning: async () => err({ kind: "not-found", id: "unused" }),
+        status: () => "stopped",
+        stop: async () => {},
+        stopAllFor: async () => {},
+        stopAll: async () => {},
+        retainOnly: async () => {},
+      },
+      refresh: async () => {},
+    })
+
+    const r = await admin.update(pid("acme"))
+    expect(r.ok).toBe(true)
+    const source = stored.providerPlugins[0]?.source
+    if (source?.kind === "git") expect(source.commit).toBe("c2")
+    // The concurrently-added, UNRELATED provider record must survive the write.
+    expect(stored.providers.map((p) => String(p.id))).toEqual(["prv_other"])
   })
 
   describe("when registry.list() fails (a DIFFERENT extension's manifest is broken)", () => {
@@ -331,9 +485,13 @@ describe("createExtensionAdmin", () => {
           },
         ],
       }
-      const { admin } = harness({ config: cfg, listFails: true })
+      const { admin, stopAllCalls } = harness({ config: cfg, listFails: true })
       const r = await admin.remove(pid("acme"))
       expect(r.ok).toBe(true)
+      // Still stops (conservatively) even though `in-use` was never checked — a degraded
+      // removal must not leave an unreachable extension's children running just because the
+      // gate that would have named the referencing provider couldn't run.
+      expect(stopAllCalls.length).toBe(1)
     })
 
     it("logs a warning naming the listing failure's kind, bounded in length", async () => {
@@ -371,10 +529,10 @@ describe("createExtensionAdmin", () => {
         update: async () => err({ kind: "not-found", id: "acme" }),
         remove: async () => ok(undefined),
       },
-      registry: {
+      registry: async () => ({
         list: async () => ok([]),
         providerDescriptors: async () => ok([]),
-      },
+      }),
       providerHost: {
         ensureRunning: async () => err({ kind: "not-found", id: "unused" }),
         status: () => "stopped",
@@ -452,7 +610,7 @@ describe("createExtensionAdmin", () => {
           return ok(undefined)
         },
       },
-      registry: {
+      registry: async () => ({
         list: async () =>
           ok([
             {
@@ -462,7 +620,7 @@ describe("createExtensionAdmin", () => {
             },
           ]),
         providerDescriptors: async () => ok([]),
-      },
+      }),
       providerHost: {
         ensureRunning: async () => err({ kind: "not-found", id: "unused" }),
         status: () => "stopped",
@@ -512,10 +670,10 @@ describe("createExtensionAdmin", () => {
           return ok(undefined)
         },
       },
-      registry: {
+      registry: async () => ({
         list: async () => ok([]),
         providerDescriptors: async () => ok([]),
-      },
+      }),
       providerHost: {
         ensureRunning: async () => err({ kind: "not-found", id: "unused" }),
         status: () => "stopped",
@@ -584,12 +742,12 @@ describe("createExtensionAdmin", () => {
           }),
         remove: async () => ok(undefined),
       },
-      registry: {
+      registry: async () => ({
         // Listing fails -> the degraded path, which never computes `in-use` or contribution
         // keys — the write must still be based on the FRESH config, not the first load.
         list: async () => err({ kind: "invalid-manifest", detail: "broken" }),
         providerDescriptors: async () => ok([]),
-      },
+      }),
       providerHost: {
         ensureRunning: async () => err({ kind: "not-found", id: "unused" }),
         status: () => "stopped",

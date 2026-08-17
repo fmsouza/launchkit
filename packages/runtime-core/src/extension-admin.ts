@@ -31,8 +31,10 @@ export interface ExtensionAdmin {
 
 /** `ConfigError` has no `detail` field for `not-found`; every other variant does. Preserving
  * the real detail (rather than collapsing every kind to its own name) is what lets a user tell
- * "no config on disk yet" apart from "your config file is corrupt" or "permission denied". */
-const configErrorDetail = (e: ConfigError): string =>
+ * "no config on disk yet" apart from "your config file is corrupt" or "permission denied".
+ * Exported so `create-app-context.ts`'s extension-installer wiring can map a `config.load()`
+ * failure into the same `PluginError` shape, rather than a second, driftable mapping. */
+export const configErrorDetail = (e: ConfigError): string =>
   e.kind === "not-found" ? "not-found" : `${e.kind}: ${e.detail}`
 
 /** Bounds a log line to a fixed length. `registry.list()`'s `invalid-manifest` detail can carry
@@ -44,7 +46,17 @@ const summarizeForLog = (detail: string, max = 200): string =>
 export const createExtensionAdmin = (deps: {
   readonly config: ConfigStore
   readonly installer: ExtensionInstaller
-  readonly registry: ExtensionRegistry
+  /**
+   * The CURRENT extension registry, resolved live rather than handed once at wiring time.
+   * `create-app-context.ts` implements this as `async () => { await extensionsReady; return
+   * extensionRegistryCell }` — the same "await the refresh IN FLIGHT" pattern `resolveBaseUrl`
+   * uses. A plain `ExtensionRegistry` handed in once would still point at the wiring-time cell
+   * (built with an empty link map) until the constructor's own initial refresh happens to have
+   * resolved, which is exactly the cold-start bug `remove`'s `in-use` guard had: on a fresh
+   * process, `remove` as the very first call would read an empty registry and silently miss a
+   * referencing provider.
+   */
+  readonly registry: () => Promise<ExtensionRegistry>
   readonly providerHost: ProviderHost
   readonly refresh: () => Promise<void>
   readonly logger?: Logger
@@ -189,7 +201,8 @@ export const createExtensionAdmin = (deps: {
     const current = findInstall(cfg.value, id)
     if (current === undefined) return err({ kind: "not-found", id: String(id) })
 
-    const listed = await deps.registry.list()
+    const registry = await deps.registry()
+    const listed = await registry.list()
 
     // `registry.list()` fails the WHOLE batch on any one invalid manifest — including a
     // manifest belonging to some OTHER extension. Refusing `remove` here would make removal
@@ -268,9 +281,19 @@ export const createExtensionAdmin = (deps: {
     const removed = await deps.installer.remove(id, current, [])
     if (isErr(removed)) return removed
 
+    // A THIRD load, immediately before the write — distinct from `freshCfg` above. `freshCfg`
+    // exists to re-check `in-use` BEFORE anything destructive; it is deliberately read before
+    // the stop/delete, not adjacent to the write. Reusing it here would widen the very race this
+    // function narrows: a `config.save` landing during a multi-child stop or a slow recursive
+    // delete would be silently overwritten by a write built from a now-stale snapshot. This load
+    // is a `createCachedConfigStore` hit when nothing changed, so it costs nothing on the
+    // common path.
+    const cfgForWrite = await loadConfig()
+    if (isErr(cfgForWrite)) return cfgForWrite
+
     const next: Config = {
-      ...freshCfg.value,
-      providerPlugins: freshCfg.value.providerPlugins.filter(
+      ...cfgForWrite.value,
+      providerPlugins: cfgForWrite.value.providerPlugins.filter(
         (p) => String(p.id) !== String(id),
       ),
     }
@@ -294,9 +317,20 @@ export const createExtensionAdmin = (deps: {
     const updated = await deps.installer.update(id, current)
     if (isErr(updated)) return updated
 
+    // KNOWN LIMITATION, deliberately NOT fixed with a rollback: `installer.update` already
+    // mutated the on-disk clone (`git fetchCheckout`) before this point. If the config write
+    // below fails, disk is left at the NEW commit while config still records the OLD one — a
+    // version-skew, not the orphaned-directory corruption `install`'s rollback guards against
+    // (the manifest is read from disk on every load, so behaviour follows the new tree either
+    // way; nothing is invisible or duplicate-id-blocking). A git rollback here would add its own
+    // failure mode — the checkout itself can fail, and there is no atomic story for "undo a
+    // fetch+checkout" — to fix a skew that self-heals on the next successful update.
+    const freshCfg = await loadConfig()
+    if (isErr(freshCfg)) return freshCfg
+
     const next: Config = {
-      ...cfg.value,
-      providerPlugins: cfg.value.providerPlugins.map((p) =>
+      ...freshCfg.value,
+      providerPlugins: freshCfg.value.providerPlugins.map((p) =>
         String(p.id) === String(id) ? updated.value.install : p,
       ),
     }
