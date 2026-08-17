@@ -373,6 +373,30 @@ describe("createProviderHost", () => {
     expect(h.status("k1")).toBe("running")
   })
 
+  it("does not let a superseded start clobber the fresh start that replaced it", async () => {
+    const listing = gate()
+    const { host: h, spawner } = host({ registryGate: listing.promise })
+    const first = h.ensureRunning(run())
+    await flush()
+    await h.stop("k1")
+    // The restart puts the instance back into `starting`, so by the time the first start
+    // resumes, STATUS alone says "a start is wanted" — only the generation distinguishes
+    // WHICH start owns the instance.
+    const second = h.ensureRunning(run())
+    listing.open()
+    await Promise.all([first, second])
+    await flush()
+    const live = await h.ensureRunning(run())
+    expect(live.ok).toBe(true)
+    if (live.ok) {
+      expect(live.value.pid).toBe(101)
+      expect(live.value.baseUrl).toBe("http://127.0.0.1:9002")
+      expect(live.value.hostToken).toBe(spawner.calls[1]?.env.SPECTRUM_TOKEN)
+    }
+    expect(spawner.calls).toHaveLength(2)
+    expect(spawner.kills).toEqual([100])
+  })
+
   it("does not spawn a replacement when a stop lands during the restart backoff", async () => {
     const backoff = gate()
     const { host: h, spawner } = host({ sleepGate: backoff.promise })

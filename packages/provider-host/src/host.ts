@@ -172,10 +172,14 @@ export const createProviderHost = (deps: ProviderHostDeps): ProviderHost => {
   /**
    * True once a `stop` (or a newer start) has invalidated the generation this start owns.
    *
-   * The two clauses are deliberately redundant — today either one alone would catch every
-   * interleaving the tests exercise. Neither is dead: the generation is what survives a
-   * future state that is neither `starting` nor a stop, and the status check is what
-   * survives someone forgetting to bump. Cancellation is too cheap to defend once.
+   * The two clauses guard different things and neither is redundant:
+   * - `generation` guards IDENTITY — WHICH start owns this instance. After
+   *   `stop` + `ensureRunning`, the status is `starting` again, so only the generation tells
+   *   the superseded start that it no longer owns what it is about to write to.
+   * - `status` guards STATE — whether any start is wanted at all. After a bare `stop` with no
+   *   follow-up start, this is what stops the resuming start from resurrecting the instance.
+   *   (`stop`'s own generation bump covers the same case; keeping both is deliberate, because
+   *   losing BOTH leaks the orphan a stop was supposed to prevent.)
    */
   const stale = (instance: Instance, generation: number): boolean =>
     instance.generation !== generation || instance.status !== "starting"
