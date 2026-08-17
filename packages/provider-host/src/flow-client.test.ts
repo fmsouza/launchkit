@@ -144,6 +144,29 @@ describe("createFetchFlowHttp", () => {
     }
   })
 
+  it("fails with read-failed on a 2xx response with no body", async () => {
+    // A 204 is 2xx (response.ok is true) but the spec forbids a body, so response.body is
+    // null — this exercises the branch below the status check, not the status check itself.
+    const server = Bun.serve({
+      port: 0,
+      fetch() {
+        return new Response(null, { status: 204 })
+      },
+    })
+    try {
+      const http = createFetchFlowHttp()
+      const r = await http({
+        url: `http://127.0.0.1:${server.port}/anything`,
+        body: {},
+        hostToken: undefined,
+      })
+      expect(r.ok).toBe(false)
+      if (!r.ok) expect(r.error.kind).toBe("read-failed")
+    } finally {
+      server.stop(true)
+    }
+  })
+
   it("sends the host token header when a token is supplied", async () => {
     const captured: { seen: string | null } = { seen: null }
     const server = Bun.serve({
