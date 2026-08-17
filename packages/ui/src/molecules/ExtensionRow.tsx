@@ -77,6 +77,15 @@ const sourceBadge = (
 /** Only a git install has an upstream to pull — link/copy/local have no update source. */
 const canUpdate = (source: ExtensionSourceRow): boolean => source.kind === "git"
 
+/**
+ * A `local` row is a directory somebody dropped into the plugin root by hand: Spectrum holds
+ * no install record for it, so enable/disable, update and remove all resolve to `not-found`
+ * and can only ever produce an error toast. Render no control rather than a control that
+ * cannot succeed.
+ */
+const canMutate = (source: ExtensionSourceRow): boolean =>
+  source.kind !== "local"
+
 export const ExtensionRow = ({
   extension,
   onSetEnabled,
@@ -158,22 +167,29 @@ export const ExtensionRow = ({
         ))}
       </ul>
 
-      <div className="lk-extension-row__actions">
-        <Button
-          variant="secondary"
-          onClick={() => onSetEnabled(extension.id, !extension.enabled)}
-        >
-          {extension.enabled ? "Disable" : "Enable"}
-        </Button>
-        {canUpdate(extension.source) ? (
-          <Button variant="secondary" onClick={() => onUpdate(extension.id)}>
-            Update
+      {canMutate(extension.source) ? (
+        <div className="lk-extension-row__actions">
+          <Button
+            variant="secondary"
+            onClick={() => onSetEnabled(extension.id, !extension.enabled)}
+          >
+            {extension.enabled ? "Disable" : "Enable"}
           </Button>
-        ) : null}
-        <Button variant="danger" onClick={() => onRemove(extension.id)}>
-          Remove
-        </Button>
-      </div>
+          {canUpdate(extension.source) ? (
+            <Button variant="secondary" onClick={() => onUpdate(extension.id)}>
+              Update
+            </Button>
+          ) : null}
+          <Button variant="danger" onClick={() => onRemove(extension.id)}>
+            Remove
+          </Button>
+        </div>
+      ) : (
+        <p className="lk-extension-row__sub">
+          Placed by hand in the plugin directory — manage it by deleting that
+          directory.
+        </p>
+      )}
     </li>
   )
 }

@@ -42,6 +42,8 @@ const linkedExt: ExtensionRowData = {
   source: { kind: "path", path: "/src/acme", linked: true },
 }
 
+const localExt: ExtensionRowData = { ...ext, source: { kind: "local" } }
+
 describe("ExtensionList", () => {
   it("renders the extension name and its contributed provider status", () => {
     render(<ExtensionList extensions={[ext]} {...noops} />)
@@ -104,6 +106,28 @@ describe("ExtensionList", () => {
   it("offers the update control for a git install", () => {
     render(<ExtensionList extensions={[ext]} {...noops} />)
     expect(screen.getByRole("button", { name: /update/i })).toBeInTheDocument()
+  })
+
+  /** A hand-placed directory has no install record, so every admin mutation resolves to
+   * `not-found`. Rendering controls that can only ever produce an error toast is worse than
+   * rendering none — the row says how to manage it instead. */
+  it("offers no mutation control at all for a hand-placed local extension", () => {
+    render(<ExtensionList extensions={[localExt]} {...noops} />)
+    expect(screen.queryByRole("button", { name: /update/i })).toBeNull()
+    expect(screen.queryByRole("button", { name: /remove/i })).toBeNull()
+    expect(screen.queryByRole("button", { name: /disable/i })).toBeNull()
+    expect(screen.queryByRole("button", { name: /enable/i })).toBeNull()
+  })
+
+  it("tells the user how to manage a hand-placed local extension instead", () => {
+    render(<ExtensionList extensions={[localExt]} {...noops} />)
+    expect(screen.getByText(/delet/i)).toBeInTheDocument()
+  })
+
+  it("still offers enable and remove for an installed extension", () => {
+    render(<ExtensionList extensions={[linkedExt]} {...noops} />)
+    expect(screen.getByRole("button", { name: /remove/i })).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: /disable/i })).toBeInTheDocument()
   })
 
   it("calls back with the flipped enabled state when the toggle is used", () => {
