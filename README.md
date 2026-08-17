@@ -216,6 +216,31 @@ the GUI **Models** page. Harnesses request an alias, and the proxy routes it to 
 configured provider/model. The "default" option bypasses the proxy entirely and launches
 the harness with its own native credentials/model.
 
+## Custom providers and extensions
+
+Beyond the builtin provider catalog, Spectrum can load third-party LLM providers from
+**extensions** — directories declaring a `spectrum-extension.json` manifest, managed
+with `spectrum-cli plugin`:
+
+```sh
+spectrum-cli plugin install <git-url-or-abs-path>   # clones (git) or links (local path) by default
+spectrum-cli plugin list                            # id, name, enabled/disabled
+spectrum-cli plugin disable <id>                    # stops its supervised process, if any
+spectrum-cli plugin enable <id>
+spectrum-cli plugin update <id>                      # git installs only
+spectrum-cli plugin remove <id>                      # refused while a provider still uses it
+```
+
+`plugin install` prints exactly what it is about to do — the resolved commit or path,
+the command it will spawn, and the secret field names it declares — because
+installing is the trust decision; there is no separate confirmation prompt.
+
+See [`docs/01-conventions/extensions.md`](docs/01-conventions/extensions.md) for the
+full author contract: the manifest schema, the two supported wires (`openai` speaks
+the **Responses** API, not chat completions), the launch/host-token contract for a
+Spectrum-supervised provider server, and how to develop one locally with `--copy` or a
+linked path.
+
 ## Agents (ACP)
 
 Spectrum drives every coding agent over the **Agent Client Protocol** (ACP) — one shared
