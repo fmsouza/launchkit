@@ -1,4 +1,4 @@
-import type { GuiContext } from "../composition"
+import type { AppContext } from "../composition"
 
 /**
  * The app-exit gate: stop everything Spectrum supervises before the process actually goes away.
@@ -35,21 +35,65 @@ export type QuitGateDeps = {
 }
 
 /**
+ * Clock seam bounding the drain, injected so the never-settling case is testable without
+ * wall-clock. Mirrors `StartupWait` in `main.ts`.
+ */
+export interface DrainWait {
+  readonly capMs: number
+  readonly setTimeout: (fn: () => void, ms: number) => unknown
+  readonly clearTimeout: (handle: unknown) => void
+}
+
+export const defaultDrainWait: DrainWait = {
+  capMs: 2000,
+  setTimeout: (fn, ms) => setTimeout(fn, ms),
+  clearTimeout: (handle) =>
+    clearTimeout(handle as ReturnType<typeof setTimeout>),
+}
+
+/**
  * Build the `before-quit` listener. Returns a plain synchronous handler, because that is what the
  * emitter calls; the async work is deliberately started and not awaited.
+ *
+ * The drain is CAPPED. `.catch`/`.finally` cover a rejected shutdown, not a pending one, and a
+ * shutdown that never settles would mean the re-quit never issues — Cmd+Q silently doing nothing
+ * is a worse outcome than a leaked child. `stopAll` cannot hang today (its `stop` fires `kill()`
+ * and awaits nothing), but awaiting `exited` or adding SIGTERM→SIGKILL escalation — the very
+ * limitations documented above — is exactly what would make it hang.
  */
 export const createQuitGate = (
   deps: QuitGateDeps,
+  wait: DrainWait = defaultDrainWait,
 ): ((event: QuitEvent) => void) => {
   let draining = false
 
   return (event: QuitEvent): void => {
-    // Second pass (our own re-issued quit) — or a quit that raced the drain: set no veto and let
-    // the sequence run. Re-vetoing here would make the app unquittable.
+    // Set BEFORE any await, so the re-issued quit below can never recurse into a second drain.
+    //
+    // This also means a user's SECOND Cmd+Q during the drain is passed straight through and
+    // reaches `forceExit(0)` mid-shutdown, leaking whatever had not been killed yet. That is
+    // deliberate — an app that refuses to close is worse — and the cap below bounds how long the
+    // window stays open. Distinguishing our own re-quit from a user's would need an identity the
+    // event does not carry.
     if (draining) return
     draining = true
 
     event.response = { allow: false }
+
+    let settled = false
+    // Initialized (not a bare `let cap`) so a synchronously-firing fake seam reads a defined value
+    // instead of hitting the temporal dead zone — same reason as `awaitReadyWithCap` in main.ts.
+    let cap: unknown = undefined
+    const finish = (): void => {
+      if (settled) return
+      settled = true
+      wait.clearTimeout(cap)
+      deps.quit()
+    }
+    cap = wait.setTimeout(() => {
+      deps.onShutdownFailed(`shutdown did not settle within ${wait.capMs}ms`)
+      finish()
+    }, wait.capMs)
 
     void deps
       .shutdown()
@@ -59,11 +103,16 @@ export const createQuitGate = (
         )
       })
       // A failed teardown must not strand the user in an app that refuses to close.
-      .finally(() => {
-        deps.quit()
-      })
+      .finally(finish)
   }
 }
+
+/**
+ * Everything the mount needs from the app context. Narrowed to two members (rather than taking a
+ * whole `GuiContext`) so the scripted quit check in `scripts/quit-check.ts` can drive the REAL
+ * mount against a bare `AppContext`, with no window, tray or run manager.
+ */
+export type QuitGateContext = Pick<AppContext, "shutdown" | "log">
 
 /**
  * The native seam: register the gate on Electrobun's `before-quit`. Thin by design — all the
@@ -72,9 +121,13 @@ export const createQuitGate = (
  * The import is LAZY like every other native touchpoint here, so `bun test` never loads
  * Electrobun's FFI. `events` is reachable only through the default export (see
  * `../types/electrobun-bun.d.ts`).
+ *
+ * Returns a promise that settles once the listener is registered (it never rejects — a failed
+ * registration is logged). The GUI entry ignores it; `scripts/quit-check.ts` awaits it, because a
+ * signal arriving before registration would test nothing.
  */
-export const mountQuitGate = (ctx: GuiContext): void => {
-  void import("electrobun/bun")
+export const mountQuitGate = (ctx: QuitGateContext): Promise<void> =>
+  import("electrobun/bun")
     .then(({ default: Electrobun, Utils }) => {
       Electrobun.events.on(
         "before-quit",
@@ -95,4 +148,3 @@ export const mountQuitGate = (ctx: GuiContext): void => {
         detail: cause instanceof Error ? cause.message : String(cause),
       })
     })
-}

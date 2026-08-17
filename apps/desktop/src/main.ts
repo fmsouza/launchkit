@@ -232,7 +232,8 @@ export const buildRealDeps = (
     installQuitGate:
       overrides.installQuitGate ??
       ((): void => {
-        mountQuitGate(ctx)
+        // Registration is awaited only by `scripts/quit-check.ts`; startup must not block on it.
+        void mountQuitGate(ctx)
       }),
     onStartupCapExpired:
       overrides.onStartupCapExpired ??

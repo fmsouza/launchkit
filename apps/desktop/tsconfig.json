@@ -6,5 +6,5 @@
     "composite": false,
     "types": ["bun", "react", "react-dom", "@testing-library/jest-dom"]
   },
-  "include": ["src", "views", "electrobun.config.ts"]
+  "include": ["src", "views", "scripts/quit-check.ts", "electrobun.config.ts"]
 }

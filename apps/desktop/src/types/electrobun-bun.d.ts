@@ -172,7 +172,7 @@ export const Utils: {
  *
  * `before-quit` is emitted SYNCHRONOUSLY from `Utils.quit()`, and Electrobun aborts the quit when
  * a listener sets `response = { allow: false }`. That veto is the only asynchronous affordance in
- * the quit sequence — see `quit.ts`.
+ * the quit sequence — see `src/gui/quit-gate.ts`.
  */
 declare const Electrobun: {
   readonly events: {
