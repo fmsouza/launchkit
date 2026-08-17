@@ -394,7 +394,7 @@ describe("createExtensionAdmin", () => {
     }
   })
 
-  it("re-checks in-use immediately before the write, refusing a removal a provider record raced in after the first check", async () => {
+  it("re-checks in-use BEFORE anything destructive, refusing a removal a provider record raced in after the first check", async () => {
     const cfg: Config = {
       ...defaultConfig(),
       providerPlugins: [acmeInstall],
@@ -402,12 +402,15 @@ describe("createExtensionAdmin", () => {
     }
     let loadCount = 0
     let stored: Config = cfg
+    const removeCalls: string[] = []
+    const stopAllForCalls: string[] = []
+    let stopAllCalls = 0
     const admin = createExtensionAdmin({
       config: {
         load: async () => {
           loadCount += 1
-          // The SECOND load is the pre-save re-check. Simulate a concurrent write landing
-          // between the first `in-use` check and this point: a provider referencing the
+          // The SECOND load is the pre-delete/pre-save re-check. Simulate a concurrent write
+          // landing between the first `in-use` check and this point: a provider referencing the
           // extension's contribution now exists, even though the first check saw none.
           if (loadCount === 2) {
             stored = {
@@ -444,7 +447,10 @@ describe("createExtensionAdmin", () => {
             install: acmeInstall,
             ignoredContributions: [],
           }),
-        remove: async () => ok(undefined),
+        remove: async (id) => {
+          removeCalls.push(String(id))
+          return ok(undefined)
+        },
       },
       registry: {
         list: async () =>
@@ -461,8 +467,12 @@ describe("createExtensionAdmin", () => {
         ensureRunning: async () => err({ kind: "not-found", id: "unused" }),
         status: () => "stopped",
         stop: async () => {},
-        stopAllFor: async () => {},
-        stopAll: async () => {},
+        stopAllFor: async (contributionId: string) => {
+          stopAllForCalls.push(contributionId)
+        },
+        stopAll: async () => {
+          stopAllCalls += 1
+        },
         retainOnly: async () => {},
       },
       refresh: async () => {},
@@ -472,7 +482,129 @@ describe("createExtensionAdmin", () => {
     expect(r.ok).toBe(false)
     if (!r.ok && r.error.kind === "in-use")
       expect(r.error.providerIds).toEqual(["prv_race"])
-    // The install record is untouched: the write never happened once the re-check refused.
+    // The re-check must fire BEFORE anything destructive: nothing was stopped, nothing was
+    // deleted, and the install record is untouched — a refusal must leave config and disk in
+    // the SAME consistent state they were in before `remove` was called, not a state where
+    // config still claims the extension installed while its files are already gone.
+    expect(stopAllForCalls).toEqual([])
+    expect(stopAllCalls).toBe(0)
+    expect(removeCalls).toEqual([])
     expect(stored.providerPlugins.length).toBe(1)
+  })
+
+  it("rolls back the installer's write when the config LOAD fails after a successful install (not just the save)", async () => {
+    const installerRemoveCalls: string[] = []
+    const admin = createExtensionAdmin({
+      config: {
+        load: async () => err({ kind: "parse-failed", detail: "bad json" }),
+        save: async () => ok(undefined),
+      },
+      installer: {
+        install: async () =>
+          ok({
+            manifest: acmeManifest,
+            install: acmeInstall,
+            ignoredContributions: [],
+          }),
+        update: async () => err({ kind: "not-found", id: "acme" }),
+        remove: async (id) => {
+          installerRemoveCalls.push(String(id))
+          return ok(undefined)
+        },
+      },
+      registry: {
+        list: async () => ok([]),
+        providerDescriptors: async () => ok([]),
+      },
+      providerHost: {
+        ensureRunning: async () => err({ kind: "not-found", id: "unused" }),
+        status: () => "stopped",
+        stop: async () => {},
+        stopAllFor: async () => {},
+        stopAll: async () => {},
+        retainOnly: async () => {},
+      },
+      refresh: async () => {},
+    })
+
+    const r = await admin.install({ source: "https://e.com/a.git" })
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.error.kind).toBe("read-failed")
+    expect(installerRemoveCalls).toEqual(["acme"])
+  })
+
+  it("re-loads config for the WRITE even on the degraded (listing-failed) remove path, instead of erasing a concurrent config change", async () => {
+    let loadCount = 0
+    let stored: Config = {
+      ...defaultConfig(),
+      providerPlugins: [acmeInstall],
+      providers: [],
+    }
+    const admin = createExtensionAdmin({
+      config: {
+        load: async () => {
+          loadCount += 1
+          // Simulate a totally UNRELATED concurrent edit landing between the first load and
+          // the pre-write re-load — nothing to do with this extension's `in-use` status, just
+          // an ordinary config change that a stale read-modify-write would silently discard.
+          if (loadCount === 2) {
+            stored = {
+              ...stored,
+              providers: [
+                {
+                  id: ProviderIdSchema.parse("prv_other"),
+                  name: "Other",
+                  sdkProvider: "openai",
+                  config: {},
+                  secrets: {},
+                  models: [],
+                },
+              ],
+            }
+          }
+          return ok(stored)
+        },
+        save: async (next: Config) => {
+          stored = next
+          return ok(undefined)
+        },
+      },
+      installer: {
+        install: async () =>
+          ok({
+            manifest: acmeManifest,
+            install: acmeInstall,
+            ignoredContributions: [],
+          }),
+        update: async () =>
+          ok({
+            manifest: acmeManifest,
+            install: acmeInstall,
+            ignoredContributions: [],
+          }),
+        remove: async () => ok(undefined),
+      },
+      registry: {
+        // Listing fails -> the degraded path, which never computes `in-use` or contribution
+        // keys — the write must still be based on the FRESH config, not the first load.
+        list: async () => err({ kind: "invalid-manifest", detail: "broken" }),
+        providerDescriptors: async () => ok([]),
+      },
+      providerHost: {
+        ensureRunning: async () => err({ kind: "not-found", id: "unused" }),
+        status: () => "stopped",
+        stop: async () => {},
+        stopAllFor: async () => {},
+        stopAll: async () => {},
+        retainOnly: async () => {},
+      },
+      refresh: async () => {},
+    })
+
+    const r = await admin.remove(pid("acme"))
+    expect(r.ok).toBe(true)
+    expect(stored.providerPlugins).toEqual([])
+    // The concurrently-added, UNRELATED provider record must survive the write.
+    expect(stored.providers.map((p) => String(p.id))).toEqual(["prv_other"])
   })
 })

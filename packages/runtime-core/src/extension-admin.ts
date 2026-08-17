@@ -73,6 +73,33 @@ export const createExtensionAdmin = (deps: {
     return ok(undefined)
   }
 
+  // Rollback: `installer.install` already wrote (cloned/copied) the extension, but the config
+  // record that makes it "installed" never landed — whether because the config couldn't even
+  // be READ (a corrupt/unreadable config.json) or because the write itself failed. Either way,
+  // without this the on-disk directory is orphaned — invisible to the user, but occupying the
+  // id, so a retry hits `duplicate-id` (copy) or a clone into a non-empty directory (git) with
+  // no recovery short of manually deleting it.
+  const rollbackInstall = async (
+    installed: InstalledExtension,
+    reason: "config-load-failed" | "config-save-failed",
+  ): Promise<void> => {
+    const rollback = await deps.installer.remove(
+      installed.install.id,
+      installed.install,
+      [],
+    )
+    if (isErr(rollback)) {
+      logger.error(
+        "extension install: rollback after a post-install step failed also failed",
+        {
+          id: String(installed.install.id),
+          reason,
+          kind: rollback.error.kind,
+        },
+      )
+    }
+  }
+
   const install = async (
     input: InstallInput,
   ): Promise<Result<InstalledExtension, PluginError>> => {
@@ -80,7 +107,10 @@ export const createExtensionAdmin = (deps: {
     if (isErr(installed)) return installed
 
     const cfg = await loadConfig()
-    if (isErr(cfg)) return cfg
+    if (isErr(cfg)) {
+      await rollbackInstall(installed.value, "config-load-failed")
+      return cfg
+    }
 
     const next: Config = {
       ...cfg.value,
@@ -88,25 +118,7 @@ export const createExtensionAdmin = (deps: {
     }
     const saved = await saveConfig(next)
     if (isErr(saved)) {
-      // Rollback: `installer.install` already wrote (cloned/copied) the extension, but the
-      // config record that makes it "installed" never landed. Without this, the on-disk
-      // directory is orphaned — invisible to the user, but occupying the id, so a retry hits
-      // `duplicate-id` (copy) or a clone into a non-empty directory (git) with no recovery
-      // short of manually deleting it.
-      const rollback = await deps.installer.remove(
-        installed.value.install.id,
-        installed.value.install,
-        [],
-      )
-      if (isErr(rollback)) {
-        logger.error(
-          "extension install: rollback after config write failure also failed",
-          {
-            id: String(installed.value.install.id),
-            kind: rollback.error.kind,
-          },
-        )
-      }
+      await rollbackInstall(installed.value, "config-save-failed")
       return saved
     }
 
@@ -148,6 +160,28 @@ export const createExtensionAdmin = (deps: {
     return ok(undefined)
   }
 
+  const refuseInUse = (
+    id: PluginId,
+    providerIds: readonly string[],
+  ): Result<void, PluginError> => {
+    logger.warn("extension admin refusal", {
+      id: String(id),
+      op: "remove",
+      kind: "in-use",
+    })
+    return err({ kind: "in-use", id: String(id), providerIds })
+  }
+
+  /**
+   * Ordered so nothing DESTRUCTIVE (stopping a child, deleting a file, writing config) happens
+   * until every refusal has had its chance to fire: (1) load config, (2) `registry.list()` →
+   * this extension's contributed ids/keys (degrading per the comment below if listing fails),
+   * (3) the FIRST `in-use` check against that config, (4) a re-load + re-check against a FRESH
+   * config, THEN (5) stop, (6) delete, (7) drop the record from the step-4 config and save, (8)
+   * refresh. An earlier version deleted the files and stopped the children BEFORE the re-check
+   * could refuse, which left config still claiming the extension installed while its files were
+   * already gone — worse than the race it was meant to narrow.
+   */
   const remove = async (id: PluginId): Promise<Result<void, PluginError>> => {
     const cfg = await loadConfig()
     if (isErr(cfg)) return cfg
@@ -201,18 +235,26 @@ export const createExtensionAdmin = (deps: {
       const referencingProviderIds = cfg.value.providers
         .filter((p) => contributedKeys.includes(p.sdkProvider))
         .map((p) => String(p.id))
-      if (referencingProviderIds.length > 0) {
-        logger.warn("extension admin refusal", {
-          id: String(id),
-          op: "remove",
-          kind: "in-use",
-        })
-        return err({
-          kind: "in-use",
-          id: String(id),
-          providerIds: referencingProviderIds,
-        })
-      }
+      if (referencingProviderIds.length > 0)
+        return refuseInUse(id, referencingProviderIds)
+    }
+
+    // Re-load BEFORE anything destructive: a provider record referencing this extension's
+    // contribution could have been added between the FIRST check above and this point, and
+    // (independently of `in-use`) some OTHER config edit could have landed too. Re-checking
+    // narrows that window; it does not close it — there is no lock between this re-check and
+    // `saveConfig` below, so a write landing in that exact gap can still race past it.
+    // Unconditional, even when `degraded`: without `contributedKeys` there is nothing to
+    // re-check `in-use` against, but the WRITE below still must not silently erase whatever
+    // config changed since the first load — that is a plain stale read-modify-write bug, not a
+    // narrower version of the `in-use` race.
+    const freshCfg = await loadConfig()
+    if (isErr(freshCfg)) return freshCfg
+    if (!degraded) {
+      const stillReferencing = freshCfg.value.providers
+        .filter((p) => contributedKeys.includes(p.sdkProvider))
+        .map((p) => String(p.id))
+      if (stillReferencing.length > 0) return refuseInUse(id, stillReferencing)
     }
 
     if (degraded) {
@@ -226,37 +268,9 @@ export const createExtensionAdmin = (deps: {
     const removed = await deps.installer.remove(id, current, [])
     if (isErr(removed)) return removed
 
-    // Re-check immediately before the write: a provider record referencing this extension's
-    // contribution could have been added between the FIRST `in-use` check above and this point.
-    // Reloading + re-filtering against a FRESH config narrows that window; it does not close
-    // it — there is no lock between this re-check and `saveConfig` below, so a write landing in
-    // that gap can still race past it. Only meaningful on the non-degraded path: without
-    // `contributedKeys` there is nothing to re-check against.
-    let cfgForWrite = cfg.value
-    if (!degraded) {
-      const freshCfg = await loadConfig()
-      if (isErr(freshCfg)) return freshCfg
-      const stillReferencing = freshCfg.value.providers
-        .filter((p) => contributedKeys.includes(p.sdkProvider))
-        .map((p) => String(p.id))
-      if (stillReferencing.length > 0) {
-        logger.warn("extension admin refusal", {
-          id: String(id),
-          op: "remove",
-          kind: "in-use",
-        })
-        return err({
-          kind: "in-use",
-          id: String(id),
-          providerIds: stillReferencing,
-        })
-      }
-      cfgForWrite = freshCfg.value
-    }
-
     const next: Config = {
-      ...cfgForWrite,
-      providerPlugins: cfgForWrite.providerPlugins.filter(
+      ...freshCfg.value,
+      providerPlugins: freshCfg.value.providerPlugins.filter(
         (p) => String(p.id) !== String(id),
       ),
     }
