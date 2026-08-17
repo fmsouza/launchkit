@@ -56,6 +56,7 @@ import {
   defaultResolveBaseUrl,
   encodeSessionProxyKey,
   isProxyRunning,
+  providerInstanceKey,
   resolveTimeouts,
   startProxy,
 } from "@spectrum/proxy"
@@ -117,10 +118,12 @@ const createListProviderModels = (
   config: ConfigStore,
   secrets: SecretStore,
   getDescriptor: (key: string) => ProviderDescriptor | undefined,
+  resolveBaseUrl: ResolveBaseUrl,
 ): AppContext["listProviderModels"] => {
   const lister = createModelLister({
     httpGet: createFetchHttpGet(),
     getDescriptor,
+    resolveBaseUrl,
   })
   return async (providerId) => {
     const loaded = await config.load()
@@ -131,19 +134,29 @@ const createListProviderModels = (
     if (provider === undefined)
       return err({ kind: "unknown-provider", providerId })
 
-    // Resolve the apiKey from the keychain. Providers without secrets (e.g. ollama) have an
-    // empty secrets record, so apiKey stays undefined — the lister handles that gracefully.
-    let apiKey: string | undefined
-    const apiKeyRef = provider.secrets.apiKey
-    if (apiKeyRef !== undefined) {
-      const got = await secrets.get(apiKeyRef)
+    // Resolve EVERY secret from the keychain, not just the apiKey: a supervised extension
+    // renders its whole secret set into the child process's environment, and discovery goes
+    // through the same seam that starts it. Providers without secrets (e.g. ollama) have an
+    // empty record, so apiKey stays undefined — the lister handles that gracefully.
+    const resolvedSecrets: Record<string, string> = {}
+    for (const [field, ref] of Object.entries(provider.secrets)) {
+      const got = await secrets.get(ref)
       if (!got.ok) return got
-      apiKey = got.value
+      resolvedSecrets[field] = got.value
     }
+    const apiKey = resolvedSecrets.apiKey
 
     return lister({
       sdkProvider: provider.sdkProvider,
       config: provider.config,
+      secrets: resolvedSecrets,
+      // The SAME derivation the provider factory caches on, so discovery reaches the child
+      // process a request would reach rather than starting a second one.
+      instanceKey: providerInstanceKey({
+        sdkProvider: provider.sdkProvider,
+        config: provider.config,
+        secretRefs: provider.secrets,
+      }),
       ...(apiKey !== undefined ? { apiKey } : {}),
     })
   }
@@ -176,16 +189,21 @@ const createTestProviderDraft = (
  */
 const createListProviderModelsDraft = (
   getDescriptor: (key: string) => ProviderDescriptor | undefined,
+  resolveBaseUrl: ResolveBaseUrl,
 ): AppContext["listProviderModelsDraft"] => {
   const lister = createModelLister({
     httpGet: createFetchHttpGet(),
     getDescriptor,
+    resolveBaseUrl,
   })
+  // No `instanceKey`: a draft provider is unsaved, so the seam refuses a supervised extension
+  // here rather than spawning a throwaway child process per keystroke.
   return async ({ sdkProvider, config, secrets }) => {
     const apiKey = secrets.apiKey
     return lister({
       sdkProvider,
       config,
+      secrets,
       ...(apiKey !== undefined ? { apiKey } : {}),
     })
   }
@@ -947,11 +965,15 @@ export const createAppContext = (
       config,
       secrets,
       getDescriptor,
+      resolveBaseUrl,
     ),
     testProviderDraft: createTestProviderDraft(factory, gateway, () =>
       deps.createSystemClock(),
     ),
-    listProviderModelsDraft: createListProviderModelsDraft(getDescriptor),
+    listProviderModelsDraft: createListProviderModelsDraft(
+      getDescriptor,
+      resolveBaseUrl,
+    ),
     proxyPort,
     proxyBaseUrl,
     genProxyKey,

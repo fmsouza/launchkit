@@ -4,6 +4,7 @@ import type { Provider } from "@spectrum/types"
 import { type Result, err, ok } from "@spectrum/utils"
 import type { ProxyError } from "../types"
 import { buildSdkOptions } from "./build-sdk-options"
+import { providerInstanceKey } from "./instance-key"
 import type { ResolveBaseUrl } from "./resolve-base-url"
 
 export type ModelHandle = unknown
@@ -118,10 +119,10 @@ export const createProviderFactory = (deps: {
     getModel: async (provider, providerModel) => {
       const secrets = await resolveSecrets(provider)
       if (!secrets.ok) return secrets
-      const cacheKey = JSON.stringify({
-        s: provider.sdkProvider,
-        c: provider.config,
-        r: provider.secrets,
+      const cacheKey = providerInstanceKey({
+        sdkProvider: provider.sdkProvider,
+        config: provider.config,
+        secretRefs: provider.secrets,
       })
       return buildFromResolved(
         provider.sdkProvider,

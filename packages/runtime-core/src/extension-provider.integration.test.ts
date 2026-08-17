@@ -150,6 +150,8 @@ let host: ProviderHost
 let factory: ProviderFactory
 let gateway: LanguageModelGateway
 let descriptors: readonly ProviderDescriptor[] = []
+/** The ONE supervision seam, shared by the factory and the model lister exactly as production shares it. */
+let listerResolveBaseUrl: ResolveBaseUrl
 
 const descriptorFor = (id: string): ProviderDescriptor => {
   const found = descriptors.find((d) => pluginIdOf(String(d.key)) === id)
@@ -234,6 +236,7 @@ beforeAll(async () => {
       })
     return ok(running.value.baseUrl)
   }
+  listerResolveBaseUrl = resolveBaseUrl
 
   factory = createProviderFactory({
     secretStore: unusedSecretStore,
@@ -285,29 +288,28 @@ describe("extension-contributed provider, end to end", () => {
     expect(chunks.join("")).toContain("hello")
   }, 30_000)
 
-  it("discovers the fixture model through the contribution's discovery strategy", async () => {
-    const running = await host.ensureRunning({
-      instanceKey: "discovery",
-      providerId: "echo",
-      secrets: {},
-    })
-    expect(running.ok).toBe(true)
-    if (!running.ok) return
-
+  it("discovers the fixture model by starting the supervised process through the seam", async () => {
+    // NOTHING is started by hand and NO `serverUrl` is configured — production supplies neither
+    // for a supervised plugin, whose port is dynamic. The seam is the only route to a base url,
+    // so a lister that computed its own would find nothing to reach.
     const descriptor = descriptorFor("echo")
     const lister = createModelLister({
       httpGet: createFetchHttpGet(),
       getDescriptor: (key: string) =>
         key === descriptor.key ? descriptor : undefined,
+      resolveBaseUrl: listerResolveBaseUrl,
     })
 
     const models = await lister({
       sdkProvider: String(descriptor.key),
-      config: { serverUrl: running.value.baseUrl },
+      config: {},
+      secrets: {},
+      instanceKey: "discovery",
     })
     expect(models.ok).toBe(true)
     if (!models.ok) return
     expect(models.value.map((m) => m.id)).toEqual(["echo-1"])
+    expect(host.status("discovery")).toBe("running")
   }, 30_000)
 
   it("refuses to become ready when the fixture echoes the wrong host token", async () => {

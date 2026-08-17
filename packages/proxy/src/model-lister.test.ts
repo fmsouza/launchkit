@@ -1,9 +1,12 @@
 import { describe, expect, it } from "bun:test"
+import type { ProviderDescriptor } from "@spectrum/providers"
 import { createProviderRegistry } from "@spectrum/providers"
 import type { SdkProvider } from "@spectrum/types"
 import { type Result, err, ok } from "@spectrum/utils"
 import { createModelLister } from "./model-lister"
 import type { HttpGet } from "./model-lister"
+import { defaultResolveBaseUrl } from "./providers/resolve-base-url"
+import type { ResolveBaseUrl } from "./providers/resolve-base-url"
 import type { ProxyError } from "./types"
 
 // Real (builtins-only) registry, shared by every test below that doesn't care about descriptor
@@ -13,7 +16,12 @@ import type { ProxyError } from "./types"
 const registry = createProviderRegistry()
 const list = (deps: { readonly httpGet: HttpGet }): ReturnType<
   typeof createModelLister
-> => createModelLister({ ...deps, getDescriptor: registry.get })
+> =>
+  createModelLister({
+    ...deps,
+    getDescriptor: registry.get,
+    resolveBaseUrl: defaultResolveBaseUrl,
+  })
 
 // ── Fake HttpGet ─────────────────────────────────────────────────────────────
 
@@ -514,8 +522,133 @@ it("reports unsupported-provider when no descriptor claims the key", async () =>
   const lister = createModelLister({
     httpGet: async () => ok({}),
     getDescriptor: () => undefined,
+    resolveBaseUrl: defaultResolveBaseUrl,
   })
   const result = await lister({ sdkProvider: "plugin:gone", config: {} })
   expect(result.ok).toBe(false)
   if (!result.ok) expect(result.error.kind).toBe("unsupported-provider")
+})
+
+// ── Plugin-contributed descriptors ────────────────────────────────────────────
+
+/**
+ * A descriptor exactly as `descriptorFromContribution` builds one, except that `discovery`
+ * carries whatever the MANIFEST declared — which is untrusted input.
+ */
+const pluginDescriptor = (
+  id: string,
+  discovery: Readonly<Record<string, unknown>>,
+): ProviderDescriptor =>
+  ({
+    key: `plugin:${id}`,
+    label: id,
+    configFields: [],
+    secretFields: [],
+    sdkMapping: { baseUrlOption: "baseURL", apiKey: { kind: "option" } },
+    discovery,
+  }) as unknown as ProviderDescriptor
+
+describe("createModelLister – plugin-contributed descriptors", () => {
+  it("sends no request at all when a manifest names a remote discovery host", async () => {
+    // THE ATTACK: `discovery.defaultBaseUrl` is manifest-supplied, and the openai-models branch
+    // attaches `Authorization: Bearer <keychain apiKey>` to whatever base it resolves. A manifest
+    // that names a collector would receive the user's key the moment the Models page opens.
+    const { httpGet, calls } = capturingHttpGet(ok({ data: [] }))
+    const descriptor = pluginDescriptor("evil", {
+      strategy: "openai-models",
+      defaultBaseUrl: "https://collect.example",
+    })
+    const lister = createModelLister({
+      httpGet,
+      getDescriptor: () => descriptor,
+      resolveBaseUrl: defaultResolveBaseUrl,
+    })
+
+    const result = await lister({
+      sdkProvider: "plugin:evil",
+      config: {},
+      apiKey: "sk-user-secret",
+    })
+
+    expect(calls).toHaveLength(0)
+    expect(result.ok).toBe(false)
+  })
+
+  it("refuses a plugin server url that is not on loopback", async () => {
+    const { httpGet, calls } = capturingHttpGet(ok({ data: [] }))
+    const descriptor = pluginDescriptor("selfrun", {
+      strategy: "openai-models",
+    })
+    const lister = createModelLister({
+      httpGet,
+      getDescriptor: () => descriptor,
+      resolveBaseUrl: defaultResolveBaseUrl,
+    })
+
+    const result = await lister({
+      sdkProvider: "plugin:selfrun",
+      config: { serverUrl: "https://collect.example/v1" },
+      apiKey: "sk-user-secret",
+    })
+
+    expect(calls).toHaveLength(0)
+    expect(result.ok).toBe(false)
+  })
+
+  it("discovers models against the live loopback url the supervision seam resolves", async () => {
+    // A supervised plugin has no `serverUrl` and a DYNAMIC port, so the seam is the only way
+    // its base url can ever be known.
+    const { httpGet, calls } = capturingHttpGet(
+      ok({ data: [{ id: "echo-1" }] }),
+    )
+    const descriptor = pluginDescriptor("acme", { strategy: "openai-models" })
+    const seen: unknown[] = []
+    const resolveBaseUrl: ResolveBaseUrl = async (input) => {
+      seen.push(input)
+      return ok("http://127.0.0.1:45001")
+    }
+    const lister = createModelLister({
+      httpGet,
+      getDescriptor: () => descriptor,
+      resolveBaseUrl,
+    })
+
+    const result = await lister({
+      sdkProvider: "plugin:acme",
+      config: {},
+      secrets: { apiKey: "sk" },
+      instanceKey: "inst-1",
+    })
+
+    expect(result).toEqual({ ok: true, value: [{ id: "echo-1" }] })
+    expect(calls[0]?.url).toBe("http://127.0.0.1:45001/models")
+    expect(seen).toEqual([
+      {
+        descriptor,
+        config: {},
+        secrets: { apiKey: "sk" },
+        instanceKey: "inst-1",
+      },
+    ])
+  })
+
+  it("propagates the seam's refusal instead of falling back to a manifest url", async () => {
+    const { httpGet, calls } = capturingHttpGet(ok({ data: [] }))
+    const descriptor = pluginDescriptor("acme", {
+      strategy: "openai-models",
+      defaultBaseUrl: "https://collect.example",
+    })
+    const lister = createModelLister({
+      httpGet,
+      getDescriptor: () => descriptor,
+      resolveBaseUrl: async () =>
+        err({ kind: "bad-request", detail: "save the provider first" }),
+    })
+
+    const result = await lister({ sdkProvider: "plugin:acme", config: {} })
+
+    expect(calls).toHaveLength(0)
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.error.kind).toBe("bad-request")
+  })
 })
