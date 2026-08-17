@@ -13,7 +13,7 @@ import {
   flowContributionIdOf,
   flowInstanceKey,
 } from "./flow-runner"
-import type { EnsureRunningInput } from "./host"
+import type { EnsureRunningInput, PluginStatus } from "./host"
 
 const formStep: FlowStep = { kind: "form", title: "Sign in", fields: [] }
 const doneStep: FlowStep = {
@@ -49,6 +49,7 @@ type Call = {
   readonly hostToken: string | undefined
   readonly flowId: string
   readonly body: unknown
+  readonly timeoutMs: number
 }
 
 type LogEntry = {
@@ -56,6 +57,23 @@ type LogEntry = {
   readonly msg: string
   readonly fields?: Record<string, unknown>
 }
+
+/** A promise a test releases by hand, to hold a call open across an await. */
+const deferred = (): { promise: Promise<void>; release: () => void } => {
+  let release = (): void => {}
+  const promise = new Promise<void>((resolve) => {
+    release = (): void => {
+      resolve()
+    }
+  })
+  return { promise, release }
+}
+
+/** Lets every pending microtask AND the suspended calls above them settle. */
+const flush = (): Promise<void> =>
+  new Promise<void>((resolve) => {
+    setTimeout(resolve, 0)
+  })
 
 /** Captures every call instead of writing anywhere, so a test can assert what did — and,
  * for the redaction test, what did NOT — reach the log. */
@@ -77,14 +95,32 @@ const captureLogger = (): { logger: Logger; entries: LogEntry[] } => {
   return { logger, entries }
 }
 
+type FakeTimer = { readonly ms: number; readonly fire: () => void }
+
 /**
  * `steps` is served one per call. `nowStepMs` advances the fake clock by that much on every
- * call, which is how the timeout case is driven without a real 10-minute wait.
+ * call, which is how the elapsed-budget case is driven without a real 10-minute wait; the
+ * deadline itself is driven by `fireTimers`.
  */
 const harness = (opts: {
   steps: readonly Served[]
   nowStepMs?: number
   ensureFails?: PluginError
+  /** Address the host reports from the SECOND `ensureRunning` on — i.e. after a restart. */
+  addressAfterStart?: {
+    baseUrl?: string
+    pid?: number
+    hostToken?: string
+  }
+  hostStatus?: () => PluginStatus
+  /** Holds `ensureRunning` open so a test can act while the child is still spawning. */
+  ensureGate?: Promise<void>
+  /** 1-based index of the first `ensureRunning` `ensureGate` applies to. */
+  ensureGateFrom?: number
+  /** Holds plugin calls open so a test can act while a step is in flight. */
+  callGate?: Promise<void>
+  /** 1-based index of the first call `callGate` applies to. Defaults to the opening call. */
+  gateFrom?: number
   toast?: FlowToast
   logger?: Logger
   baseUrl?: string
@@ -93,6 +129,7 @@ const harness = (opts: {
   const started: EnsureRunningInput[] = []
   const stopped: string[] = []
   const calls: Call[] = []
+  const timers: FakeTimer[] = []
   let index = 0
   let clock = 0
   let nonce = 0
@@ -105,6 +142,7 @@ const harness = (opts: {
     calledToken: string | undefined,
     flowId: string,
     body: unknown,
+    timeoutMs: number,
   ): Promise<Result<FlowResponse, PluginError>> => {
     calls.push({
       op,
@@ -112,7 +150,10 @@ const harness = (opts: {
       hostToken: calledToken,
       flowId,
       body,
+      timeoutMs,
     })
+    if (opts.callGate !== undefined && calls.length >= (opts.gateFrom ?? 1))
+      await opts.callGate
     const served = opts.steps[index++]
     if (served === undefined)
       return err({ kind: "read-failed", detail: "no more steps" })
@@ -128,11 +169,20 @@ const harness = (opts: {
     host: {
       ensureRunning: async (input) => {
         started.push(input)
-        return opts.ensureFails === undefined
-          ? ok({ baseUrl, pid: 1, hostToken })
-          : err(opts.ensureFails)
+        if (
+          opts.ensureGate !== undefined &&
+          started.length >= (opts.ensureGateFrom ?? 1)
+        )
+          await opts.ensureGate
+        if (opts.ensureFails !== undefined) return err(opts.ensureFails)
+        const after = started.length > 1 ? opts.addressAfterStart : undefined
+        return ok({
+          baseUrl: after?.baseUrl ?? baseUrl,
+          pid: after?.pid ?? 1,
+          hostToken: after?.hostToken ?? hostToken,
+        })
       },
-      status: () => "running",
+      status: () => opts.hostStatus?.() ?? "running",
       stop: async (key: string) => {
         stopped.push(key)
       },
@@ -141,19 +191,34 @@ const harness = (opts: {
       retainOnly: async () => {},
     },
     client: {
-      start: (base, token, flowId, body) =>
-        serve("start", base, token, flowId, body),
-      next: (base, token, flowId, body) =>
-        serve("next", base, token, flowId, body),
+      start: (base, token, flowId, body, timeoutMs) =>
+        serve("start", base, token, flowId, body, timeoutMs),
+      next: (base, token, flowId, body, timeoutMs) =>
+        serve("next", base, token, flowId, body, timeoutMs),
     },
     idGen: () => `n${nonce++}`,
     now: () => {
       clock += opts.nowStepMs ?? 0
       return clock
     },
+    setTimer: (ms, onFire) => {
+      const timer: FakeTimer = { ms, fire: onFire }
+      timers.push(timer)
+      return timer
+    },
+    clearTimer: (handle) => {
+      const at = timers.indexOf(handle as FakeTimer)
+      if (at >= 0) timers.splice(at, 1)
+    },
     ...(opts.logger === undefined ? {} : { logger: opts.logger }),
   })
-  return { runner, started, stopped, calls }
+
+  /** Fire every armed deadline, as a one-shot timer does. */
+  const fireTimers = (): void => {
+    for (const timer of timers.splice(0, timers.length)) timer.fire()
+  }
+
+  return { runner, started, stopped, calls, timers, fireTimers }
 }
 
 describe("createFlowRunner", () => {
@@ -246,7 +311,9 @@ describe("createFlowRunner", () => {
     })
     const r = await runner.start(startInput)
     expect(r.ok).toBe(true)
-    if (r.ok && r.value.step.kind === "await")
+    if (!r.ok) return
+    expect(r.value.step.kind).toBe("await")
+    if (r.value.step.kind === "await")
       expect(r.value.step.pollMs).toBe(FLOW_LIMITS.minPollMs)
   })
 
@@ -256,7 +323,9 @@ describe("createFlowRunner", () => {
     })
     const r = await runner.start(startInput)
     expect(r.ok).toBe(true)
-    if (r.ok && r.value.step.kind === "await")
+    if (!r.ok) return
+    expect(r.value.step.kind).toBe("await")
+    if (r.value.step.kind === "await")
       expect(r.value.step.pollMs).toBe(FLOW_LIMITS.maxPollMs)
   })
 
@@ -341,7 +410,13 @@ describe("createFlowRunner", () => {
         result: { kind: "form", values: {} },
       })
     expect(last.ok).toBe(false)
-    if (!last.ok) expect(last.error.kind).toBe("read-failed")
+    // The detail distinguishes this from the timeout cap and from a transport failure, both
+    // of which are also `read-failed`.
+    if (!last.ok) {
+      expect(last.error.kind).toBe("read-failed")
+      if (last.error.kind === "read-failed")
+        expect(last.error.detail).toContain("50 steps")
+    }
   })
 
   it("delivers exactly the capped number of steps before refusing", async () => {
@@ -375,7 +450,7 @@ describe("createFlowRunner", () => {
     expect(stopped.length).toBe(1)
   })
 
-  it("fails the flow when the total timeout is exceeded", async () => {
+  it("fails the flow when the elapsed budget is exceeded", async () => {
     // The fake clock advances on every read, and the runner reads it once in `start`
     // (`startedAt`) and once in `advance` (the elapsed check) — so 700 000 ms per read puts
     // 700 000 ms of elapsed time on the second read, past the 600 000 ms cap.
@@ -390,10 +465,14 @@ describe("createFlowRunner", () => {
       result: { kind: "form", values: {} },
     })
     expect(second.ok).toBe(false)
-    if (!second.ok) expect(second.error.kind).toBe("read-failed")
+    if (!second.ok) {
+      expect(second.error.kind).toBe("read-failed")
+      if (second.error.kind === "read-failed")
+        expect(second.error.detail).toContain("total timeout")
+    }
   })
 
-  it("stops the flow instance when the total timeout is exceeded", async () => {
+  it("stops the flow instance when the elapsed budget is exceeded", async () => {
     const { runner, stopped } = harness({
       steps: [formStep, formStep],
       nowStepMs: 700_000,
@@ -564,6 +643,354 @@ describe("createFlowRunner", () => {
   })
 })
 
+describe("createFlowRunner address re-check", () => {
+  it("re-obtains the child's address on every step", async () => {
+    const { runner, started } = harness({ steps: [formStep, formStep] })
+    const first = await runner.start(startInput)
+    const sessionId = first.ok ? first.value.sessionId : ""
+    await runner.advance({ sessionId, result: { kind: "ack" } })
+    expect(started.length).toBe(2)
+  })
+
+  it("fails the flow when its child was restarted on a new port", async () => {
+    const { runner } = harness({
+      steps: [formStep, formStep],
+      addressAfterStart: { baseUrl: "http://127.0.0.1:9001" },
+    })
+    const first = await runner.start(startInput)
+    const sessionId = first.ok ? first.value.sessionId : ""
+    const second = await runner.advance({ sessionId, result: { kind: "ack" } })
+    expect(second.ok).toBe(false)
+    if (!second.ok) {
+      expect(second.error.kind).toBe("read-failed")
+      if (second.error.kind === "read-failed")
+        expect(second.error.detail).toContain("restarted")
+    }
+  })
+
+  it("fails the flow when its child was restarted with a new host token", async () => {
+    const { runner } = harness({
+      steps: [formStep, formStep],
+      addressAfterStart: { hostToken: "a-different-token" },
+    })
+    const first = await runner.start(startInput)
+    const sessionId = first.ok ? first.value.sessionId : ""
+    const second = await runner.advance({ sessionId, result: { kind: "ack" } })
+    expect(second.ok).toBe(false)
+    if (!second.ok) expect(second.error.kind).toBe("read-failed")
+  })
+
+  it("fails the flow when its child came back as a different process", async () => {
+    const { runner } = harness({
+      steps: [formStep, formStep],
+      addressAfterStart: { pid: 4242 },
+    })
+    const first = await runner.start(startInput)
+    const sessionId = first.ok ? first.value.sessionId : ""
+    const second = await runner.advance({ sessionId, result: { kind: "ack" } })
+    expect(second.ok).toBe(false)
+    if (!second.ok) expect(second.error.kind).toBe("read-failed")
+  })
+
+  it("never sends the step to a restarted child", async () => {
+    // The whole point: a form result carries the credentials the user just typed, and the
+    // freed port may now belong to something else entirely.
+    const { runner, calls } = harness({
+      steps: [formStep, formStep],
+      addressAfterStart: { baseUrl: "http://127.0.0.1:9001" },
+    })
+    const first = await runner.start(startInput)
+    const sessionId = first.ok ? first.value.sessionId : ""
+    await runner.advance({
+      sessionId,
+      result: { kind: "form", values: { apiKey: "typed-by-the-user" } },
+    })
+    expect(calls.length).toBe(1)
+  })
+
+  it("stops the flow instance when its child was restarted", async () => {
+    const { runner, stopped } = harness({
+      steps: [formStep, formStep],
+      addressAfterStart: { baseUrl: "http://127.0.0.1:9001" },
+    })
+    const first = await runner.start(startInput)
+    const sessionId = first.ok ? first.value.sessionId : ""
+    await runner.advance({ sessionId, result: { kind: "ack" } })
+    expect(stopped.length).toBe(1)
+  })
+
+  it("fails the flow when its child is no longer running", async () => {
+    const { runner } = harness({
+      steps: [formStep, formStep],
+      hostStatus: () => "stopped",
+    })
+    const first = await runner.start(startInput)
+    const sessionId = first.ok ? first.value.sessionId : ""
+    const second = await runner.advance({ sessionId, result: { kind: "ack" } })
+    expect(second.ok).toBe(false)
+    if (!second.ok) {
+      expect(second.error.kind).toBe("read-failed")
+      if (second.error.kind === "read-failed")
+        expect(second.error.detail).toContain("no longer running")
+    }
+  })
+
+  it("never respawns a flow instance that is no longer running", async () => {
+    const { runner, started } = harness({
+      steps: [formStep, formStep],
+      hostStatus: () => "stopped",
+    })
+    const first = await runner.start(startInput)
+    const sessionId = first.ok ? first.value.sessionId : ""
+    await runner.advance({ sessionId, result: { kind: "ack" } })
+    expect(started.length).toBe(1)
+  })
+})
+
+describe("createFlowRunner concurrency", () => {
+  it("refuses a second advance while one is already in flight", async () => {
+    // An `await`-step poll firing while the user submits a form is the real shape of this.
+    const gate = deferred()
+    const { runner } = harness({
+      steps: [formStep, formStep, formStep],
+      callGate: gate.promise,
+      gateFrom: 2,
+    })
+    const started = await runner.start(startInput)
+    const sessionId = started.ok ? started.value.sessionId : ""
+
+    const inFlight = runner.advance({ sessionId, result: { kind: "poll" } })
+    const second = await runner.advance({
+      sessionId,
+      result: { kind: "form", values: {} },
+    })
+    gate.release()
+    await inFlight
+
+    expect(second.ok).toBe(false)
+    if (!second.ok) {
+      expect(second.error.kind).toBe("read-failed")
+      if (second.error.kind === "read-failed")
+        expect(second.error.detail).toContain("already in flight")
+    }
+  })
+
+  it("never double-calls the plugin when two advances race", async () => {
+    const gate = deferred()
+    const { runner, calls } = harness({
+      steps: [formStep, formStep, formStep],
+      callGate: gate.promise,
+      gateFrom: 2,
+    })
+    const started = await runner.start(startInput)
+    const sessionId = started.ok ? started.value.sessionId : ""
+
+    const inFlight = runner.advance({ sessionId, result: { kind: "poll" } })
+    await runner.advance({ sessionId, result: { kind: "ack" } })
+    gate.release()
+    await inFlight
+    // One opening call plus one advance — the refused advance reached nothing.
+    expect(calls.length).toBe(2)
+  })
+
+  it("keeps accepting steps once an in-flight one has returned", async () => {
+    const gate = deferred()
+    const { runner } = harness({
+      steps: [formStep, formStep, formStep],
+      callGate: gate.promise,
+      gateFrom: 2,
+    })
+    const started = await runner.start(startInput)
+    const sessionId = started.ok ? started.value.sessionId : ""
+    const inFlight = runner.advance({ sessionId, result: { kind: "poll" } })
+    gate.release()
+    await inFlight
+    const after = await runner.advance({ sessionId, result: { kind: "ack" } })
+    expect(after.ok).toBe(true)
+  })
+
+  it("delivers no step for a session cancelled while its step was in flight", async () => {
+    const gate = deferred()
+    const { runner, stopped } = harness({
+      steps: [formStep, doneStep],
+      callGate: gate.promise,
+      gateFrom: 2,
+    })
+    const started = await runner.start(startInput)
+    const sessionId = started.ok ? started.value.sessionId : ""
+
+    const inFlight = runner.advance({ sessionId, result: { kind: "ack" } })
+    // Let the advance get all the way to the (gated) plugin call before cancelling, so this
+    // pins the window where the PLUGIN CALL is outstanding — not the earlier address check.
+    await flush()
+    await runner.cancel(sessionId)
+    gate.release()
+    const raced = await inFlight
+
+    expect(raced.ok).toBe(false)
+    if (!raced.ok) expect(raced.error.kind).toBe("not-found")
+    // The `done` the plugin sent must NOT have refilled the completion the cancel drained.
+    expect(runner.takeCompletion(sessionId)).toBeUndefined()
+    expect(stopped.length).toBe(1)
+  })
+
+  it("never sends a step for a session cancelled while its address was being re-checked", async () => {
+    const gate = deferred()
+    const { runner, calls } = harness({
+      steps: [formStep, formStep],
+      ensureGate: gate.promise,
+      ensureGateFrom: 2,
+    })
+    const started = await runner.start(startInput)
+    const sessionId = started.ok ? started.value.sessionId : ""
+
+    const inFlight = runner.advance({ sessionId, result: { kind: "ack" } })
+    await runner.cancel(sessionId)
+    gate.release()
+    const raced = await inFlight
+
+    expect(raced.ok).toBe(false)
+    if (!raced.ok) expect(raced.error.kind).toBe("not-found")
+    // Only the opening call: the cancelled session never reached the plugin.
+    expect(calls.length).toBe(1)
+  })
+
+  it("delivers no step for a session abandoned while its step was in flight", async () => {
+    const gate = deferred()
+    const { runner, started: instances } = harness({
+      steps: [formStep, formStep],
+      callGate: gate.promise,
+      gateFrom: 2,
+    })
+    const started = await runner.start(startInput)
+    const sessionId = started.ok ? started.value.sessionId : ""
+
+    const inFlight = runner.advance({ sessionId, result: { kind: "ack" } })
+    await flush()
+    runner.abandon([instances[0]?.instanceKey ?? ""], "extension-disabled")
+    gate.release()
+    const raced = await inFlight
+
+    expect(raced.ok).toBe(false)
+    if (!raced.ok) expect(raced.error.kind).toBe("not-found")
+    // The named cause is still waiting for the next call.
+    const after = await runner.advance({ sessionId, result: { kind: "ack" } })
+    expect(after.ok).toBe(true)
+    if (after.ok && after.value.step.kind === "error")
+      expect(after.value.step.message).toContain("no longer enabled")
+  })
+})
+
+describe("createFlowRunner deadline", () => {
+  it("arms a deadline for the whole flow budget when the flow starts", async () => {
+    const { runner, timers } = harness({ steps: [formStep] })
+    await runner.start(startInput)
+    expect(timers.map((t) => t.ms)).toEqual([FLOW_LIMITS.totalTimeoutMs])
+  })
+
+  it("stops the flow instance when the deadline fires", async () => {
+    const { runner, stopped, fireTimers } = harness({ steps: [formStep] })
+    await runner.start(startInput)
+    fireTimers()
+    await flush()
+    expect(stopped.length).toBe(1)
+  })
+
+  it("forgets the session when the deadline fires", async () => {
+    const { runner, fireTimers } = harness({ steps: [formStep, formStep] })
+    const first = await runner.start(startInput)
+    const sessionId = first.ok ? first.value.sessionId : ""
+    fireTimers()
+    await flush()
+    const after = await runner.advance({ sessionId, result: { kind: "ack" } })
+    expect(after.ok).toBe(false)
+    if (!after.ok) expect(after.error.kind).toBe("not-found")
+  })
+
+  it("drops the flow key from the active set when the deadline fires", async () => {
+    const { runner, fireTimers } = harness({ steps: [formStep] })
+    await runner.start(startInput)
+    fireTimers()
+    await flush()
+    expect([...runner.activeInstanceKeys()]).toEqual([])
+  })
+
+  it("clears the deadline when the flow completes", async () => {
+    const { runner, timers } = harness({ steps: [doneStep] })
+    await runner.start(startInput)
+    expect(timers.length).toBe(0)
+  })
+
+  it("clears the deadline when the flow is cancelled", async () => {
+    const { runner, timers } = harness({ steps: [formStep] })
+    const r = await runner.start(startInput)
+    await runner.cancel(r.ok ? r.value.sessionId : "")
+    expect(timers.length).toBe(0)
+  })
+
+  it("arms no deadline when the flow instance never starts", async () => {
+    const { runner, timers } = harness({
+      steps: [formStep],
+      ensureFails: { kind: "not-found", id: "acme" },
+    })
+    await runner.start(startInput)
+    expect(timers.length).toBe(0)
+  })
+
+  it("gives the opening call the whole budget", async () => {
+    const { runner, calls } = harness({ steps: [formStep] })
+    await runner.start(startInput)
+    expect(calls[0]?.timeoutMs).toBe(FLOW_LIMITS.totalTimeoutMs)
+  })
+
+  it("gives each later call only what is left of the budget", async () => {
+    const { runner, calls } = harness({
+      steps: [formStep, formStep],
+      nowStepMs: 100_000,
+    })
+    const first = await runner.start(startInput)
+    const sessionId = first.ok ? first.value.sessionId : ""
+    await runner.advance({ sessionId, result: { kind: "ack" } })
+    expect(calls[1]?.timeoutMs).toBe(FLOW_LIMITS.totalTimeoutMs - 100_000)
+  })
+
+  it("ends a flow whose deadline fires while its opening call is in flight", async () => {
+    const gate = deferred()
+    const { runner, fireTimers, stopped } = harness({
+      steps: [formStep],
+      callGate: gate.promise,
+    })
+    const pending = runner.start(startInput)
+    await flush()
+    fireTimers()
+    await flush()
+    gate.release()
+    const r = await pending
+    expect(r.ok).toBe(false)
+    if (!r.ok) {
+      expect(r.error.kind).toBe("read-failed")
+      if (r.error.kind === "read-failed")
+        expect(r.error.detail).toContain("total timeout")
+    }
+    expect(stopped.length).toBe(1)
+  })
+
+  it("registers no session for a flow whose deadline fired while starting", async () => {
+    const gate = deferred()
+    const { runner, fireTimers } = harness({
+      steps: [formStep],
+      callGate: gate.promise,
+    })
+    const pending = runner.start(startInput)
+    await flush()
+    fireTimers()
+    await flush()
+    gate.release()
+    await pending
+    expect([...runner.activeInstanceKeys()]).toEqual([])
+  })
+})
+
 describe("createFlowRunner abandon", () => {
   it("ends an abandoned flow with an error step naming the cause", async () => {
     const { runner, started } = harness({ steps: [formStep, formStep] })
@@ -605,6 +1032,13 @@ describe("createFlowRunner abandon", () => {
     if (!again.ok) expect(again.error.kind).toBe("not-found")
   })
 
+  it("clears an abandoned flow's deadline", async () => {
+    const { runner, started, timers } = harness({ steps: [formStep, formStep] })
+    await runner.start(startInput)
+    runner.abandon([started[0]?.instanceKey ?? ""], "extension-disabled")
+    expect(timers.length).toBe(0)
+  })
+
   it("leaves a flow alone when its key is not among the abandoned keys", async () => {
     const { runner } = harness({ steps: [formStep, formStep] })
     const first = await runner.start(startInput)
@@ -613,6 +1047,65 @@ describe("createFlowRunner abandon", () => {
     const second = await runner.advance({ sessionId, result: { kind: "ack" } })
     expect(second.ok).toBe(true)
     if (second.ok) expect(second.value.step.kind).toBe("form")
+  })
+
+  it("ends a flow abandoned while its opening call is in flight", async () => {
+    // `activeInstanceKeys()` reports this key, so the sweep hands it to `abandon` — and the
+    // user must see the named cause, not the transport failure of a killed child.
+    const gate = deferred()
+    const { runner, started } = harness({
+      steps: [formStep],
+      callGate: gate.promise,
+    })
+    const pending = runner.start(startInput)
+    await flush()
+    runner.abandon([started[0]?.instanceKey ?? ""], "extension-disabled")
+    gate.release()
+    const r = await pending
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.value.step.kind).toBe("error")
+    if (r.value.step.kind === "error")
+      expect(r.value.step.message).toContain("no longer enabled")
+  })
+
+  it("ends a flow abandoned while its instance is still spawning", async () => {
+    const gate = deferred()
+    const { runner, started, calls } = harness({
+      steps: [formStep],
+      ensureGate: gate.promise,
+    })
+    const pending = runner.start(startInput)
+    await flush()
+    runner.abandon([started[0]?.instanceKey ?? ""], "extension-disabled")
+    gate.release()
+    const r = await pending
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.value.step.kind).toBe("error")
+    if (r.value.step.kind === "error")
+      expect(r.value.step.message).toContain("no longer enabled")
+    // Nothing was ever said to the child: it is about to be swept, and the opening call
+    // would have carried the host token to a process that is being killed.
+    expect(calls.length).toBe(0)
+  })
+
+  it("registers no session for a flow abandoned while starting", async () => {
+    const gate = deferred()
+    const { runner, started } = harness({
+      steps: [formStep],
+      callGate: gate.promise,
+    })
+    const pending = runner.start(startInput)
+    await flush()
+    runner.abandon([started[0]?.instanceKey ?? ""], "extension-disabled")
+    gate.release()
+    const r = await pending
+    expect([...runner.activeInstanceKeys()]).toEqual([])
+    const sessionId = r.ok ? r.value.sessionId : ""
+    const after = await runner.advance({ sessionId, result: { kind: "ack" } })
+    expect(after.ok).toBe(false)
+    if (!after.ok) expect(after.error.kind).toBe("not-found")
   })
 })
 
@@ -698,5 +1191,14 @@ describe("createFlowRunner logging", () => {
     })
     await runner.start(startInput)
     expect(entries.some((e) => e.fields?.outcome === "error")).toBe(true)
+  })
+
+  it("logs the outcome when a flow's deadline fires", async () => {
+    const { logger, entries } = captureLogger()
+    const { runner, fireTimers } = harness({ steps: [formStep], logger })
+    await runner.start(startInput)
+    fireTimers()
+    await flush()
+    expect(entries.some((e) => e.fields?.outcome === "timeout")).toBe(true)
   })
 })

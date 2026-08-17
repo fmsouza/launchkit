@@ -49,6 +49,9 @@ export type FlowAdvanceInput = {
 /** Why a live flow was killed from outside. One member today; the map below keys off it. */
 export type FlowAbandonReason = "extension-disabled"
 
+/** Opaque timer handle, whatever the injected timer returns. */
+export type FlowTimerHandle = unknown
+
 export interface FlowRunner {
   start(input: FlowStartInput): Promise<Result<RunnerStep, PluginError>>
   advance(input: FlowAdvanceInput): Promise<Result<RunnerStep, PluginError>>
@@ -58,7 +61,7 @@ export interface FlowRunner {
   /** The keys of every live flow instance, for the composition root's retention sweep. */
   activeInstanceKeys(): ReadonlySet<string>
   /**
-   * Mark every session running on one of `keys` terminal, with an `error` step naming why.
+   * Mark every flow running on one of `keys` terminal, with an `error` step naming why.
    *
    * The caller stops the instances; this is the notification half. `retainOnly` stops and
    * FORGETS an instance with no callback and no reason code, and `host.status` reports
@@ -66,7 +69,11 @@ export interface FlowRunner {
    * existed — so the runner cannot discover why its child died and must be told. The
    * composition root calls this immediately BEFORE `retainOnly`, which is what turns a
    * mid-flow "disable this extension" into an actionable message instead of a flow that
-   * hangs against a dead process until its 10-minute timeout expires.
+   * hangs against a dead process until its deadline expires.
+   *
+   * Covers flows still inside their opening window as well as established sessions: a key
+   * reported by `activeInstanceKeys()` may have no session yet, and that flow must produce
+   * the same named error rather than the raw transport failure of talking to a killed child.
    */
   abandon(keys: readonly string[], reason: FlowAbandonReason): void
 }
@@ -82,6 +89,14 @@ export type FlowRunnerDeps = {
    */
   readonly idGen: () => string
   readonly now: () => number
+  /**
+   * The flow's wall-clock deadline. `now` alone bounds nothing: it is only read when a call
+   * arrives, so a user who closes the setup window without cancelling would leave the child
+   * running forever. Injected rather than `setTimeout` so tests fire the deadline instead of
+   * waiting ten minutes.
+   */
+  readonly setTimer: (ms: number, onFire: () => void) => FlowTimerHandle
+  readonly clearTimer: (handle: FlowTimerHandle) => void
   readonly logger?: Logger
 }
 
@@ -114,17 +129,33 @@ const ABANDON_MESSAGE: Record<FlowAbandonReason, string> = {
     "so it was stopped. Any credentials it had already exchanged were not saved.",
 }
 
+const TIMEOUT_DETAIL = `flow exceeded its ${FLOW_LIMITS.totalTimeoutMs} ms total timeout`
+
 type Session = {
   readonly instanceKey: string
   readonly providerId: string
   readonly flowId: string
   readonly baseUrl: string
   readonly hostToken: string | undefined
+  readonly pid: number
+  /**
+   * What the flow's child was started with, kept so the address re-check can call
+   * `ensureRunning` idempotently without handing the supervisor a different environment.
+   */
+  readonly secrets: Readonly<Record<string, string>>
   /** The id the PLUGIN minted for this exchange — its namespace, never Spectrum's. */
   readonly pluginSessionId: string
   stepCount: number
   readonly startedAt: number
+  /** True while a call to the plugin is outstanding; a second `advance` is refused. */
+  inFlight: boolean
 }
+
+/** A flow whose child exists but whose first step has not arrived yet. */
+type Starting = { readonly providerId: string; readonly flowId: string }
+
+/** How a flow still inside its opening window was killed from outside. */
+type Interrupt = FlowAbandonReason | "timeout"
 
 type Outcome =
   | "done"
@@ -144,6 +175,10 @@ type Outcome =
  * never take a working provider down with it. It is stopped on done, error, cancel,
  * timeout, step-cap exhaustion, and on a failed or unparseable response, on every path.
  *
+ * A flow does not survive its child. The supervisor restarts a crashed instance on a NEW
+ * port with a NEW host token, so an address captured at `start` is not a fact that stays
+ * true: every call re-obtains it and ends the flow if it moved.
+ *
  * `activeInstanceKeys` exists because the composition root's retention sweep
  * (`retainConfiguredInstances`) builds its retain-set from configured providers only. A flow
  * key belongs to no provider record, so without this the first `config.save` during a flow
@@ -157,10 +192,13 @@ export const createFlowRunner = (deps: FlowRunnerDeps): FlowRunner => {
    * for the retention sweep exactly like a session's key is — a sweep landing in that window
    * would otherwise stop the child the opening call is talking to.
    */
-  const starting = new Set<string>()
+  const starting = new Map<string, Starting>()
+  /** Keys killed from outside while still in `starting`, read by the in-flight `start`. */
+  const interrupted = new Map<string, Interrupt>()
   const completions = new Map<FlowSessionId, FlowCompletion>()
   /** Session id → the user-facing message its next `advance` must deliver, then forget. */
   const abandoned = new Map<FlowSessionId, string>()
+  const deadlines = new Map<string, FlowTimerHandle>()
 
   const logEnd = (
     providerId: string,
@@ -170,15 +208,74 @@ export const createFlowRunner = (deps: FlowRunnerDeps): FlowRunner => {
     logger.info("flow ended", { providerId, flowId, outcome })
   }
 
-  /** Every terminal path funnels through here: forget the session, then stop the child. */
+  const disarm = (instanceKey: string): void => {
+    const handle = deadlines.get(instanceKey)
+    if (handle === undefined) return
+    deadlines.delete(instanceKey)
+    deps.clearTimer(handle)
+  }
+
+  /** Every terminal path funnels through here: forget the flow, then stop the child. */
   const end = async (
     sessionId: FlowSessionId,
     session: Session,
     outcome: Outcome,
   ): Promise<void> => {
     sessions.delete(sessionId)
+    disarm(session.instanceKey)
     logEnd(session.providerId, session.flowId, outcome)
     await deps.host.stop(session.instanceKey)
+  }
+
+  /** The deadline fired: whatever stage the flow reached, it is over and the child dies. */
+  const expire = async (instanceKey: string): Promise<void> => {
+    deadlines.delete(instanceKey)
+    for (const [sessionId, session] of [...sessions])
+      if (session.instanceKey === instanceKey) {
+        completions.delete(sessionId)
+        await end(sessionId, session, "timeout")
+        return
+      }
+    const pending = starting.get(instanceKey)
+    if (pending === undefined) return
+    starting.delete(instanceKey)
+    interrupted.set(instanceKey, "timeout")
+    logEnd(pending.providerId, pending.flowId, "timeout")
+    await deps.host.stop(instanceKey)
+  }
+
+  const arm = (instanceKey: string): void => {
+    deadlines.set(
+      instanceKey,
+      deps.setTimer(FLOW_LIMITS.totalTimeoutMs, () => {
+        expire(instanceKey).catch((cause: unknown) => {
+          logger.error("flow deadline handling failed", {
+            detail: cause instanceof Error ? cause.message : String(cause),
+          })
+        })
+      }),
+    )
+  }
+
+  /**
+   * The outcome an opening call must return when its flow was killed while it was in flight,
+   * or undefined when it was not. The session id minted for the abandoned case is
+   * deliberately never registered: the flow is over, so any further call gets `not-found`.
+   */
+  const resolveInterrupt = (
+    instanceKey: string,
+  ): Result<RunnerStep, PluginError> | undefined => {
+    const why = interrupted.get(instanceKey)
+    if (why === undefined) return undefined
+    interrupted.delete(instanceKey)
+    // Neither branch stops the child: the timeout path already did, and the abandon path
+    // belongs to the caller that is about to sweep it.
+    if (why === "timeout")
+      return err({ kind: "read-failed", detail: TIMEOUT_DETAIL })
+    return ok({
+      sessionId: deps.idGen(),
+      step: { kind: "error", message: ABANDON_MESSAGE[why] },
+    })
   }
 
   const deliver = async (
@@ -226,30 +323,46 @@ export const createFlowRunner = (deps: FlowRunnerDeps): FlowRunner => {
       context: input.context,
     })
 
+    // A provider being created has no secrets yet; passing the caller's would hand the
+    // flow's child credentials the user never associated with it.
+    const secrets = input.context === "provider" ? (input.secrets ?? {}) : {}
+
     // Registered BEFORE the spawn: from here on a retention sweep must see the key.
-    starting.add(instanceKey)
+    starting.set(instanceKey, {
+      providerId: input.providerId,
+      flowId: input.flowId,
+    })
     const running = await deps.host.ensureRunning({
       instanceKey,
       providerId: input.providerId,
-      // A provider being created has no secrets yet; passing the caller's would hand the
-      // flow's child credentials the user never associated with it.
-      secrets: input.context === "provider" ? (input.secrets ?? {}) : {},
+      secrets,
     })
     if (!running.ok) {
       starting.delete(instanceKey)
+      interrupted.delete(instanceKey)
       logEnd(input.providerId, input.flowId, "failed")
       return running
     }
 
+    const atSpawn = resolveInterrupt(instanceKey)
+    if (atSpawn !== undefined) return atSpawn
+
+    arm(instanceKey)
     const startedAt = deps.now()
     const called = await deps.client.start(
       running.value.baseUrl,
       running.value.hostToken,
       input.flowId,
       { context: input.context, config: input.config },
+      FLOW_LIMITS.totalTimeoutMs,
     )
+
+    const duringCall = resolveInterrupt(instanceKey)
+    if (duringCall !== undefined) return duringCall
     starting.delete(instanceKey)
+
     if (!called.ok) {
+      disarm(instanceKey)
       logEnd(input.providerId, input.flowId, "failed")
       await deps.host.stop(instanceKey)
       return called
@@ -262,12 +375,50 @@ export const createFlowRunner = (deps: FlowRunnerDeps): FlowRunner => {
       flowId: input.flowId,
       baseUrl: running.value.baseUrl,
       hostToken: running.value.hostToken,
+      pid: running.value.pid,
+      secrets,
       pluginSessionId: called.value.sessionId,
       stepCount: 1,
       startedAt,
+      inFlight: false,
     }
     sessions.set(sessionId, session)
     return deliver(sessionId, session, called.value)
+  }
+
+  /**
+   * Re-obtain the child's address instead of trusting the one captured at `start`.
+   *
+   * A crashed instance is restarted on a fresh port with a fresh host token, and the freed
+   * port is an impersonation window. Posting a form result — the credentials the user just
+   * typed — plus the host token to whatever now owns that port is the failure this prevents.
+   * A restarted child is also a new process with no memory of `pluginSessionId`, so there is
+   * nothing to recover: the flow ends.
+   *
+   * The status gate comes first so a flow never RESURRECTS a child that was stopped or swept
+   * — `ensureRunning` would happily spawn a new one.
+   */
+  const verifyAddress = async (
+    session: Session,
+  ): Promise<Result<undefined, PluginError>> => {
+    if (deps.host.status(session.instanceKey) !== "running")
+      return err({
+        kind: "read-failed",
+        detail: "flow instance is no longer running",
+      })
+    const running = await deps.host.ensureRunning({
+      instanceKey: session.instanceKey,
+      providerId: session.providerId,
+      secrets: session.secrets,
+    })
+    if (!running.ok) return running
+    if (
+      running.value.baseUrl !== session.baseUrl ||
+      running.value.hostToken !== session.hostToken ||
+      running.value.pid !== session.pid
+    )
+      return err({ kind: "read-failed", detail: "flow instance restarted" })
+    return ok(undefined)
   }
 
   const advance = async (
@@ -288,12 +439,19 @@ export const createFlowRunner = (deps: FlowRunnerDeps): FlowRunner => {
     if (session === undefined)
       return err({ kind: "not-found", id: input.sessionId })
 
-    if (deps.now() - session.startedAt > FLOW_LIMITS.totalTimeoutMs) {
-      await end(input.sessionId, session, "timeout")
+    // Not terminal: a double-click or a poll racing a submit is a caller mistake, not a
+    // reason to kill the flow. Refusing here is also what keeps the completion map's
+    // "drained by exactly one take" true — two deliveries could otherwise refill it.
+    if (session.inFlight)
       return err({
         kind: "read-failed",
-        detail: `flow exceeded its ${FLOW_LIMITS.totalTimeoutMs} ms total timeout`,
+        detail: "a flow step is already in flight",
       })
+
+    const elapsed = deps.now() - session.startedAt
+    if (elapsed > FLOW_LIMITS.totalTimeoutMs) {
+      await end(input.sessionId, session, "timeout")
+      return err({ kind: "read-failed", detail: TIMEOUT_DETAIL })
     }
 
     if (session.stepCount >= FLOW_LIMITS.maxSteps) {
@@ -303,19 +461,38 @@ export const createFlowRunner = (deps: FlowRunnerDeps): FlowRunner => {
         detail: `flow exceeded ${FLOW_LIMITS.maxSteps} steps`,
       })
     }
-    session.stepCount += 1
 
-    const called = await deps.client.next(
-      session.baseUrl,
-      session.hostToken,
-      session.flowId,
-      { sessionId: session.pluginSessionId, result: input.result },
-    )
-    if (!called.ok) {
-      await end(input.sessionId, session, "failed")
-      return called
+    /** Did this session get ended (cancel, abandon, deadline) while we were suspended? */
+    const orphaned = (): boolean => sessions.get(input.sessionId) !== session
+
+    session.inFlight = true
+    try {
+      const verified = await verifyAddress(session)
+      if (orphaned()) return err({ kind: "not-found", id: input.sessionId })
+      if (!verified.ok) {
+        await end(input.sessionId, session, "failed")
+        return verified
+      }
+
+      session.stepCount += 1
+      const called = await deps.client.next(
+        session.baseUrl,
+        session.hostToken,
+        session.flowId,
+        { sessionId: session.pluginSessionId, result: input.result },
+        // Whatever is left of the flow's budget, so one unanswered call cannot outlive it.
+        Math.max(1, FLOW_LIMITS.totalTimeoutMs - elapsed),
+      )
+      if (orphaned()) return err({ kind: "not-found", id: input.sessionId })
+
+      if (!called.ok) {
+        await end(input.sessionId, session, "failed")
+        return called
+      }
+      return await deliver(input.sessionId, session, called.value)
+    } finally {
+      session.inFlight = false
     }
-    return deliver(input.sessionId, session, called.value)
   }
 
   return {
@@ -338,7 +515,7 @@ export const createFlowRunner = (deps: FlowRunnerDeps): FlowRunner => {
     },
     activeInstanceKeys: (): ReadonlySet<string> =>
       new Set([
-        ...starting,
+        ...starting.keys(),
         ...[...sessions.values()].map((session) => session.instanceKey),
       ]),
     abandon: (keys: readonly string[], reason: FlowAbandonReason): void => {
@@ -348,7 +525,15 @@ export const createFlowRunner = (deps: FlowRunnerDeps): FlowRunner => {
           sessions.delete(sessionId)
           completions.delete(sessionId)
           abandoned.set(sessionId, ABANDON_MESSAGE[reason])
+          disarm(session.instanceKey)
           logEnd(session.providerId, session.flowId, reason)
+        }
+      for (const [instanceKey, pending] of [...starting])
+        if (dropped.has(instanceKey)) {
+          starting.delete(instanceKey)
+          interrupted.set(instanceKey, reason)
+          disarm(instanceKey)
+          logEnd(pending.providerId, pending.flowId, reason)
         }
     },
   }

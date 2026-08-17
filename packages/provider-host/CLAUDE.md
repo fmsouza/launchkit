@@ -32,8 +32,8 @@ and stopping it on demand.
   `RunningPlugin = { baseUrl; pid; hostToken }`, `EnsureRunningInput`
 
 ### Setup flows
-- `createFlowRunner(deps: { host, client, idGen, now, logger? }): FlowRunner` with
-  `start`, `advance`, `takeCompletion`, `cancel`, `activeInstanceKeys()`,
+- `createFlowRunner(deps: { host, client, idGen, now, setTimer, clearTimer, logger? }): FlowRunner`
+  with `start`, `advance`, `takeCompletion`, `cancel`, `activeInstanceKeys()`,
   `abandon(keys, reason)` — drives one multi-step provider setup exchange over a DEDICATED
   supervised instance and enforces `FLOW_LIMITS` itself
 - `flowInstanceKey(providerId, nonce)` / `flowContributionIdOf(key)` — the one definition of
@@ -90,11 +90,27 @@ and stopping it on demand.
   `failed` before killing.
 - A flow runs on its OWN instance, never the serving one: in `context: "create"` there is no
   provider record yet, and a flow that hangs must not take a working provider down with it.
-  The flow instance is stopped on EVERY terminal path — done, error, cancel, timeout,
-  step-cap exhaustion, a failed or unparseable response.
-- Caps are the RUNNER's, never the plugin's: 50 steps, a 10-minute total budget measured with
-  the injected `now`, and an `await` step's `pollMs` replaced by `clampPollMs` before the step
-  leaves the runner. A UI that trusted the plugin's number would poll at the plugin's rate.
+  The flow instance is stopped on EVERY terminal path — done, error, cancel, the deadline,
+  the elapsed-budget check, step-cap exhaustion, a moved address, and a failed or unparseable
+  response. The one exception is `abandon`, whose caller stops the instances itself (below).
+- Caps are the RUNNER's, never the plugin's: 50 steps, a 10-minute total budget, and an
+  `await` step's `pollMs` replaced by `clampPollMs` before the step leaves the runner. A UI
+  that trusted the plugin's number would poll at the plugin's rate.
+- The 10-minute budget is a DEADLINE, not only a check. `now` is read when a call arrives, so
+  on its own it bounds nothing — a user who closes the setup window without cancelling would
+  leave the child running forever. An injected `setTimer` arms the budget at `start` and ends
+  the flow when it fires; every terminal path clears it. Each call is also given what remains
+  of that budget as its `FlowHttp` `timeoutMs`, so one unanswered request cannot outlive it.
+- **A flow does not survive its child.** A crashed instance is restarted on a NEW port with a
+  NEW host token, so the address captured at `start` is not a fact that stays true. Every step
+  re-obtains it and ends the flow if the base URL, host token, or pid moved: the freed port is
+  the impersonation window this package documents, and a form result is the credentials the
+  user just typed. `status` is checked first so the re-check can never RESURRECT a child that
+  was stopped or swept.
+- One step in flight per session. A second concurrent `advance` is refused (not terminal — a
+  double-click is not a reason to kill a flow), and the session identity is re-checked after
+  every await: without that, a `done` resolving after a `cancel` would refill the completion
+  the cancel had already drained.
 - Two session ids, never interchanged: the runner mints the Spectrum-side `FlowSessionId` it
   hands its caller; the plugin mints its own, kept as `pluginSessionId` and echoed back to the
   plugin only.
