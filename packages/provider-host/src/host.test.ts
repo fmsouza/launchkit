@@ -9,9 +9,7 @@ import type {
 import type { Logger } from "@spectrum/logger"
 import {
   type ProcError,
-  type ProcessSpawner,
-  type SpawnCall,
-  type SpawnedProcess,
+  createControllableProcessSpawner,
   createFakeCommandResolver,
 } from "@spectrum/proc"
 import type { PluginId } from "@spectrum/types"
@@ -45,47 +43,10 @@ const createFakeLogger = (): FakeLogger => {
   return self
 }
 
-/** A spawner whose children only exit when the test says so, and that records kills. */
-type FakeChild = { readonly pid: number; exit(code: number): void }
-type FakeSpawner = ProcessSpawner & {
-  readonly calls: readonly SpawnCall[]
-  readonly kills: readonly number[]
-  readonly children: readonly FakeChild[]
-}
-
-const createFakeSpawner = (fail?: ProcError, firstPid = 100): FakeSpawner => {
-  const calls: SpawnCall[] = []
-  const kills: number[] = []
-  const children: FakeChild[] = []
-  let nextPid = firstPid
-  return {
-    calls,
-    kills,
-    children,
-    spawn: (command, args, env, cwd): Result<SpawnedProcess, ProcError> => {
-      if (fail !== undefined) return { ok: false, error: fail }
-      calls.push({ command, args, env, ...(cwd !== undefined ? { cwd } : {}) })
-      const pid = nextPid++
-      let settle: (code: number) => void = () => {}
-      const exited = new Promise<number>((resolve) => {
-        settle = resolve
-      })
-      children.push({ pid, exit: (code: number) => settle(code) })
-      return ok({
-        pid,
-        exited,
-        // A killed child really does exit — mirroring that is what makes the
-        // stop-vs-restart ordering observable in these tests.
-        kill: (): void => {
-          kills.push(pid)
-          settle(143)
-        },
-      })
-    },
-  }
-}
-
-const contribution = (noLaunch = false): ProviderContribution => ({
+const contribution = (options?: {
+  readonly noLaunch?: boolean
+  readonly secretInArgs?: boolean
+}): ProviderContribution => ({
   id: "acme" as PluginId,
   descriptor: {
     label: "Acme",
@@ -100,12 +61,15 @@ const contribution = (noLaunch = false): ProviderContribution => ({
   transport: {
     kind: "http",
     wire: "openai",
-    ...(noLaunch
+    ...(options?.noLaunch === true
       ? {}
       : {
           launch: {
             command: "acme-server",
-            args: ["--port", "{{port}}", "--base", "{{baseUrl}}"],
+            args:
+              options?.secretInArgs === true
+                ? ["--port", "{{port}}", "--key", "{{apiKey}}"]
+                : ["--port", "{{port}}", "--base", "{{baseUrl}}"],
             envTemplate: {
               ACME_KEY: "{{apiKey}}",
               SPECTRUM_TOKEN: "{{hostToken}}",
@@ -139,6 +103,27 @@ const fakeRegistry = (contributions: readonly ProviderContribution[]) => {
   return registry
 }
 
+/** Wraps a registry so a test can suspend `list()` and interleave a stop mid-start. */
+const gatedRegistry = (
+  inner: ExtensionRegistry,
+  waitFor: Promise<void> | undefined,
+): ExtensionRegistry => ({
+  list: async (): Promise<Result<readonly LoadedExtension[], PluginError>> => {
+    if (waitFor !== undefined) await waitFor
+    return inner.list()
+  },
+  providerDescriptors: inner.providerDescriptors,
+})
+
+/** A promise plus the function that resolves it — the test's interleaving lever. */
+const gate = (): { promise: Promise<void>; open: () => void } => {
+  let open = (): void => {}
+  const promise = new Promise<void>((resolve) => {
+    open = resolve
+  })
+  return { promise, open }
+}
+
 const run = (providerId = "acme", instanceKey = "k1", apiKey = "sk-x") => ({
   instanceKey,
   providerId,
@@ -155,18 +140,25 @@ type HostOptions = {
   readonly probeToken?: string
   readonly probeOk?: boolean
   readonly probeGate?: Promise<void>
+  readonly registryGate?: Promise<void>
+  readonly sleepGate?: Promise<void>
+  readonly clockStepMs?: number
   readonly maxRestarts?: number
   readonly logger?: Logger
   readonly spawnFailure?: ProcError
 }
 
 const host = (options: HostOptions = {}) => {
-  const spawner = createFakeSpawner(options.spawnFailure)
+  const spawner = createControllableProcessSpawner(
+    options.spawnFailure !== undefined ? { failure: options.spawnFailure } : {},
+  )
   const sleeps: number[] = []
   let nextPort = 9001
   // The probe answers as the process that actually bound the port would: it finds the
   // spawn whose args carry that port and echoes THAT child's host token.
+  const probedUrls: string[] = []
   const probe: HealthProbe = async (url: string) => {
+    probedUrls.push(url)
     if (options.probeGate !== undefined) await options.probeGate
     const port = new URL(url).port
     const call = spawner.calls.find((c) => c.args.includes(port))
@@ -178,7 +170,10 @@ const host = (options: HostOptions = {}) => {
   let clock = 0
   let mintedTokens = 0
   const providerHost = createProviderHost({
-    registry: fakeRegistry(options.contributions ?? [contribution()]),
+    registry: gatedRegistry(
+      fakeRegistry(options.contributions ?? [contribution()]),
+      options.registryGate,
+    ),
     resolver: createFakeCommandResolver({
       "acme-server": "/opt/acme/bin/acme-server",
     }),
@@ -187,9 +182,10 @@ const host = (options: HostOptions = {}) => {
     probe,
     sleep: async (ms: number) => {
       sleeps.push(ms)
+      if (options.sleepGate !== undefined) await options.sleepGate
     },
     now: () => {
-      clock += 5000
+      clock += options.clockStepMs ?? 5000
       return clock
     },
     tokenGen: () => {
@@ -201,7 +197,7 @@ const host = (options: HostOptions = {}) => {
       ? { maxRestarts: options.maxRestarts }
       : {}),
   })
-  return { host: providerHost, spawner, sleeps }
+  return { host: providerHost, spawner, sleeps, probedUrls }
 }
 
 describe("createProviderHost", () => {
@@ -300,7 +296,7 @@ describe("createProviderHost", () => {
 
   it("fails with invalid-manifest when the contribution declares no launch block", async () => {
     const { host: h, spawner } = host({
-      contributions: [contribution(true)],
+      contributions: [contribution({ noLaunch: true })],
     })
     const result = await h.ensureRunning(run())
     expect(result.ok).toBe(false)
@@ -309,16 +305,99 @@ describe("createProviderHost", () => {
   })
 
   it("reports starting while the first start is still in flight", async () => {
-    let open = (): void => {}
-    const gate = new Promise<void>((resolve) => {
-      open = resolve
-    })
-    const { host: h } = host({ probeGate: gate })
+    const ready = gate()
+    const { host: h } = host({ probeGate: ready.promise })
     const pending = h.ensureRunning(run())
     await flush()
     expect(h.status("k1")).toBe("starting")
-    open()
+    ready.open()
     await pending
+    expect(h.status("k1")).toBe("running")
+  })
+
+  it("kills the child and stays stopped when a stop lands mid-start", async () => {
+    const listing = gate()
+    const { host: h, spawner } = host({ registryGate: listing.promise })
+    const pending = h.ensureRunning(run())
+    await flush()
+    // The start is suspended inside registry.list(): nothing has spawned yet, so stop has
+    // no process to kill — the child it orphans would appear only afterwards.
+    expect(spawner.calls).toHaveLength(0)
+    await h.stop("k1")
+    listing.open()
+    const result = await pending
+    await flush()
+    expect(result.ok).toBe(false)
+    expect(h.status("k1")).toBe("stopped")
+    expect(spawner.kills).toEqual([100])
+  })
+
+  it("never health-probes the orphan a mid-start stop leaves behind", async () => {
+    const listing = gate()
+    const {
+      host: h,
+      spawner,
+      probedUrls,
+    } = host({
+      registryGate: listing.promise,
+    })
+    const pending = h.ensureRunning(run())
+    await flush()
+    await h.stop("k1")
+    listing.open()
+    await pending
+    await flush()
+    // The superseded start must bail at the spawn, not wait out a readiness deadline on a
+    // process it is about to kill — and must never write its port onto the stopped instance.
+    expect(probedUrls).toEqual([])
+    expect(spawner.kills).toEqual([100])
+  })
+
+  it("keeps exactly one live process when ensureRunning follows a stop that landed mid-start", async () => {
+    const listing = gate()
+    const { host: h, spawner } = host({ registryGate: listing.promise })
+    const first = h.ensureRunning(run())
+    await flush()
+    await h.stop("k1")
+    const second = h.ensureRunning(run())
+    listing.open()
+    const [a, b] = await Promise.all([first, second])
+    await flush()
+    expect(a.ok).toBe(false)
+    expect(b.ok).toBe(true)
+    // Both starts spawned, but the superseded one killed its own child rather than
+    // leaving a second untracked process bound to a second port.
+    expect(spawner.calls).toHaveLength(2)
+    expect(spawner.kills).toEqual([100])
+    if (b.ok) expect(b.value.pid).toBe(101)
+    expect(h.status("k1")).toBe("running")
+  })
+
+  it("does not spawn a replacement when a stop lands during the restart backoff", async () => {
+    const backoff = gate()
+    const { host: h, spawner } = host({ sleepGate: backoff.promise })
+    await h.ensureRunning(run())
+    spawner.children[0]?.exit(1)
+    await flush()
+    // The restart is parked in sleep(backoff) — the window a shutdown lands in.
+    expect(spawner.calls).toHaveLength(1)
+    await h.stop("k1")
+    backoff.open()
+    await flush()
+    expect(spawner.calls).toHaveLength(1)
+    expect(h.status("k1")).toBe("stopped")
+  })
+
+  it("restores the full restart budget after the plugin has run stably", async () => {
+    // A one-minute clock step makes every instance's uptime exceed the stability window,
+    // so each crash is an isolated incident rather than part of a crash loop.
+    const { host: h, spawner } = host({ maxRestarts: 1, clockStepMs: 60_000 })
+    await h.ensureRunning(run())
+    spawner.children[0]?.exit(1)
+    await flush()
+    spawner.children[1]?.exit(1)
+    await flush()
+    expect(spawner.calls).toHaveLength(3)
     expect(h.status("k1")).toBe("running")
   })
 
@@ -445,7 +524,7 @@ describe("createProviderHost", () => {
     expect(h.status("k1")).toBe("failed")
   })
 
-  it("logs the spawn with env keys only and the ready port", async () => {
+  it("logs the spawn with env keys and UNRENDERED args, plus the ready port", async () => {
     const logger = createFakeLogger()
     const { host: h } = host({ logger })
     await h.ensureRunning(run())
@@ -454,12 +533,22 @@ describe("createProviderHost", () => {
     expect(spawnLog?.fields).toEqual({
       providerId: "acme",
       command: "/opt/acme/bin/acme-server",
-      args: ["--port", "9001", "--base", "http://127.0.0.1:9001"],
+      args: ["--port", "{{port}}", "--base", "{{baseUrl}}"],
       envKeys: ["ACME_KEY", "SPECTRUM_TOKEN"],
     })
     const readyLog = logger.records.find((r) => r.fields?.port !== undefined)
     expect(readyLog?.level).toBe("info")
     expect(readyLog?.fields).toEqual({ providerId: "acme", port: 9001 })
+  })
+
+  it("never logs a secret that the manifest renders into an ARG", async () => {
+    const logger = createFakeLogger()
+    const { host: h } = host({
+      logger,
+      contributions: [contribution({ secretInArgs: true })],
+    })
+    await h.ensureRunning(run("acme", "k1", "sk-in-an-arg"))
+    expect(JSON.stringify(logger.records)).not.toContain("sk-in-an-arg")
   })
 
   it("never logs the host token, a secret value, or the instance key", async () => {

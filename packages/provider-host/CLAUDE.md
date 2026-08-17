@@ -49,9 +49,22 @@ and stopping it on demand.
   cheap once running; the proxy calls it per request, and that is how a restarted plugin's
   new port reaches the provider factory.
 - A restart mints a NEW port and a NEW host token — never reuses the dead instance's.
+- Every start carries the `generation` it was issued under; `stop` and each new start bump it.
+  A start whose generation went stale kills whatever it spawned and commits NOTHING. Without
+  this, a `stop` landing while a start is suspended (mid `registry.list()`, mid restart
+  backoff) leaves an orphan process that outlives Spectrum and flips the instance back to
+  `running` after `stop` returned — and a following `ensureRunning` yields two live
+  processes on two ports under one key.
+- The `maxRestarts` budget counts CONSECUTIVE failures: an instance that stayed ready for
+  `STABLE_UPTIME_MS` (60s, measured with the injected `now`) resets it. A lifetime counter
+  would make a plugin that crashes monthly permanently `failed`; a naive reset on every
+  successful start would make the budget unreachable, since a plugin that dies right after
+  binding would restart forever.
 - `stop` marks the instance `stopped` BEFORE killing. The kill resolves `exited`, and the
   exit handler restarts only a `running` instance; marking after the kill would race the
   handler into a zombie restart loop on shutdown. Same reason readiness failure marks
   `failed` before killing.
-- Logs `envKeys` (`Object.keys(env)`) on spawn — never env values, the host token, or the
-  instance key (itself a hash of the provider's secret refs).
+- Logs `envKeys` (`Object.keys(env)`) and the UNRENDERED `launch.args` on spawn — never env
+  values, never rendered args (a manifest may write `--key {{apiKey}}`), never the host
+  token, never the instance key (itself a hash of the provider's secret refs). The resolved
+  port is logged on ready, so nothing diagnostic is lost.

@@ -1,5 +1,6 @@
 import type {
   ExtensionRegistry,
+  LoadedExtension,
   PluginError,
   PluginLaunch,
   ProviderContribution,
@@ -65,6 +66,14 @@ const LOOPBACK = "127.0.0.1"
 const DEFAULT_MAX_RESTARTS = 3
 const RESTART_BACKOFF_MS = 250
 const MAX_RESTART_BACKOFF_MS = 5000
+/**
+ * How long an instance must stay ready before its crash counts as an isolated incident
+ * rather than another turn of a crash loop. `maxRestarts` is a budget for CONSECUTIVE
+ * failures: without this window a plugin that crashes once a month would exhaust its
+ * lifetime budget and stay `failed` forever, and with a naive reset-on-ready a plugin that
+ * dies one millisecond after binding its port would restart without limit.
+ */
+const STABLE_UPTIME_MS = 60_000
 
 type Instance = {
   status: PluginStatus
@@ -74,20 +83,26 @@ type Instance = {
   baseUrl: string | undefined
   hostToken: string | undefined
   restarts: number
+  /** `deps.now()` at the moment the instance last became ready; undefined until then. */
+  readyAt: number | undefined
+  /**
+   * Bumped by `stop` and by every start. A start carries the generation it was issued
+   * under and commits nothing once that generation is stale — this is what makes `stop`
+   * CANCEL an in-flight start instead of merely forgetting it.
+   */
+  generation: number
   /** The single in-flight start (first start OR restart) for this key, if any. */
   inflight: Promise<Result<RunningPlugin, PluginError>> | undefined
 }
 
 const findContribution = (
-  extensions: readonly {
-    readonly manifest: { readonly contributes: { providers: unknown } }
-  }[],
+  extensions: readonly LoadedExtension[],
   providerId: string,
 ): ProviderContribution | undefined => {
   for (const extension of extensions) {
-    const providers = extension.manifest.contributes
-      .providers as readonly ProviderContribution[]
-    const match = providers.find((p) => p.id === providerId)
+    const match = extension.manifest.contributes.providers.find(
+      (p) => p.id === providerId,
+    )
     if (match !== undefined) return match
   }
   return undefined
@@ -148,23 +163,49 @@ export const createProviderHost = (deps: ProviderHostDeps): ProviderHost => {
     return ok({ launch, command: resolved.value })
   }
 
-  /** Spawns one attempt and waits for the child to prove it is ours. Never restarts. */
+  const superseded = (): Result<RunningPlugin, PluginError> =>
+    err({
+      kind: "write-failed",
+      detail: "start superseded by a stop or a newer start",
+    })
+
+  /**
+   * True once a `stop` (or a newer start) has invalidated the generation this start owns.
+   *
+   * The two clauses are deliberately redundant — today either one alone would catch every
+   * interleaving the tests exercise. Neither is dead: the generation is what survives a
+   * future state that is neither `starting` nor a stop, and the status check is what
+   * survives someone forgetting to bump. Cancellation is too cheap to defend once.
+   */
+  const stale = (instance: Instance, generation: number): boolean =>
+    instance.generation !== generation || instance.status !== "starting"
+
+  /**
+   * Spawns one attempt and waits for the child to prove it is ours. Never restarts, and
+   * never commits anything to an instance whose generation moved on underneath it.
+   */
   const startOnce = async (
     instanceKey: string,
     providerId: string,
     secrets: Readonly<Record<string, string>>,
+    generation: number,
   ): Promise<Result<RunningPlugin, PluginError>> => {
     const instance = instances.get(instanceKey)
+    if (instance === undefined) return superseded()
+    // Checked here as well as after the spawn so a stop landing during the restart backoff
+    // costs nothing at all — no registry read, no port, no token, no process.
+    if (stale(instance, generation)) return superseded()
+
     const found = await resolveLaunch(providerId)
     if (isErr(found)) {
-      if (instance !== undefined) instance.status = "failed"
+      if (!stale(instance, generation)) instance.status = "failed"
       return found
     }
     const { launch, command } = found.value
 
     const port = await deps.allocator.allocate()
     if (isErr(port)) {
-      if (instance !== undefined) instance.status = "failed"
+      if (!stale(instance, generation)) instance.status = "failed"
       return port
     }
 
@@ -182,11 +223,13 @@ export const createProviderHost = (deps: ProviderHostDeps): ProviderHost => {
     const args = renderPluginArgs(launch, values)
     const env = renderPluginEnv(launch, values)
 
-    // envKeys only: the env carries resolved secrets AND the host token.
+    // Keys and TEMPLATES only. The env carries resolved secrets and the host token, and a
+    // manifest may legitimately render a secret into an arg (`--key {{apiKey}}`), so the
+    // rendered forms of both are unloggable. The resolved port is logged on ready instead.
     logger.info("spawning plugin provider", {
       providerId,
       command,
-      args,
+      args: launch.args,
       envKeys: Object.keys(env),
     })
 
@@ -197,23 +240,39 @@ export const createProviderHost = (deps: ProviderHostDeps): ProviderHost => {
         kind: spawned.error.kind,
         detail: spawned.error.detail,
       })
-      if (instance !== undefined) instance.status = "failed"
+      if (!stale(instance, generation)) instance.status = "failed"
       return err({ kind: "write-failed", detail: spawned.error.detail })
     }
 
-    const current = instances.get(instanceKey)
-    if (current === undefined) return err({ kind: "not-found", id: providerId })
-    current.process = spawned.value
-    current.baseUrl = baseUrl
-    current.hostToken = hostToken
-    current.secrets = secrets
+    // The commit point. A stop that landed while this start was suspended has already
+    // bumped the generation and had no process to kill — so this start must kill the child
+    // it just created and write NOTHING, or it leaks an orphan (and, if a newer start is
+    // also in flight, a second live process on a second port under one instance key).
+    if (stale(instance, generation)) {
+      spawned.value.kill()
+      return superseded()
+    }
+
+    instance.process = spawned.value
+    instance.baseUrl = baseUrl
+    instance.hostToken = hostToken
+    instance.secrets = secrets
 
     // Attached BEFORE readiness so a child that dies mid-probe is still observed. The
     // handler only restarts an instance in the `running` state, so an exit during startup
     // or after `stop` is not treated as a crash.
-    void spawned.value.exited.then((code: number) => {
-      onExit(instanceKey, code)
-    })
+    void spawned.value.exited
+      .then((code: number) => {
+        onExit(instanceKey, generation, code)
+      })
+      // `exited` is not documented to reject, but the interface promises nothing: a rejection
+      // must not become an unhandled rejection that takes the app down.
+      .catch((cause: unknown) => {
+        logger.error("plugin provider exit watch failed", {
+          providerId,
+          detail: cause instanceof Error ? cause.message : String(cause),
+        })
+      })
 
     const ready = await waitForReady(
       { probe: deps.probe, sleep: deps.sleep },
@@ -232,7 +291,7 @@ export const createProviderHost = (deps: ProviderHostDeps): ProviderHost => {
       })
       // Mark failed BEFORE killing: the kill resolves `exited`, and the handler must see a
       // non-running instance so it does not read the death as a crash worth restarting.
-      current.status = "failed"
+      if (!stale(instance, generation)) instance.status = "failed"
       spawned.value.kill()
       return err({
         kind: "write-failed",
@@ -240,16 +299,33 @@ export const createProviderHost = (deps: ProviderHostDeps): ProviderHost => {
       })
     }
 
-    current.status = "running"
+    if (stale(instance, generation)) {
+      spawned.value.kill()
+      return superseded()
+    }
+
+    instance.status = "running"
+    instance.readyAt = deps.now()
     logger.info("plugin provider ready", { providerId, port: port.value })
     return ok({ baseUrl, pid: spawned.value.pid, hostToken })
   }
 
-  const onExit = (instanceKey: string, code: number): void => {
+  const onExit = (
+    instanceKey: string,
+    generation: number,
+    code: number,
+  ): void => {
     const instance = instances.get(instanceKey)
     // Only a RUNNING instance can crash. `stopped` means we killed it, `failed` means the
     // start path already gave up, `starting` means the start path owns the outcome.
     if (instance === undefined || instance.status !== "running") return
+    // A child from a superseded generation dying is not this instance's crash.
+    if (instance.generation !== generation) return
+
+    // The budget counts CONSECUTIVE failures: an instance that stayed ready long enough to
+    // be considered healthy starts its next incident with a full budget.
+    const uptime = deps.now() - (instance.readyAt ?? deps.now())
+    if (uptime >= STABLE_UPTIME_MS) instance.restarts = 0
 
     if (instance.restarts >= maxRestarts) {
       instance.status = "failed"
@@ -266,6 +342,9 @@ export const createProviderHost = (deps: ProviderHostDeps): ProviderHost => {
     const attempt = instance.restarts
     instance.status = "starting"
     instance.process = undefined
+    instance.readyAt = undefined
+    instance.generation += 1
+    const restartGeneration = instance.generation
     logger.warn("restarting plugin provider", {
       providerId: instance.providerId,
       attempt,
@@ -283,6 +362,7 @@ export const createProviderHost = (deps: ProviderHostDeps): ProviderHost => {
         instanceKey,
         instance.providerId,
         instance.secrets,
+        restartGeneration,
       )
       const settled = instances.get(instanceKey)
       if (settled !== undefined && settled.inflight === slot.promise)
@@ -320,16 +400,25 @@ export const createProviderHost = (deps: ProviderHostDeps): ProviderHost => {
       baseUrl: undefined,
       hostToken: undefined,
       restarts: 0,
+      readyAt: undefined,
+      generation: 0,
       inflight: undefined,
     }
     instance.status = "starting"
     instance.secrets = input.secrets
+    instance.generation += 1
+    const generation = instance.generation
     instances.set(input.instanceKey, instance)
     index(input.providerId, input.instanceKey)
 
     // Registered synchronously, before the first await, so two callers racing on the same
     // key share one start and the process is spawned exactly once.
-    const start = startOnce(input.instanceKey, input.providerId, input.secrets)
+    const start = startOnce(
+      input.instanceKey,
+      input.providerId,
+      input.secrets,
+      generation,
+    )
     instance.inflight = start
     try {
       return await start
@@ -345,8 +434,12 @@ export const createProviderHost = (deps: ProviderHostDeps): ProviderHost => {
     // resolve, and the exit handler restarts only a `running` instance — marking after
     // the kill would race the handler and produce a zombie restart loop on shutdown.
     instance.status = "stopped"
+    // Cancels any in-flight start: it will kill whatever it spawned and commit nothing,
+    // rather than resurrecting this instance after stop returned.
+    instance.generation += 1
     instance.inflight = undefined
     instance.restarts = 0
+    instance.readyAt = undefined
     const process = instance.process
     instance.process = undefined
     instance.baseUrl = undefined

@@ -6,6 +6,11 @@ export type {
   SpawnedProcess,
   SpawnCall,
   RecordingProcessSpawner,
+  ControllableChild,
+  ControllableProcessSpawner,
 } from "./process-spawner"
-export { createRecordingProcessSpawner } from "./process-spawner"
+export {
+  createRecordingProcessSpawner,
+  createControllableProcessSpawner,
+} from "./process-spawner"
 export { createPathCommandResolver, createBunProcessSpawner } from "./adapters"
