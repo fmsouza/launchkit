@@ -49,6 +49,28 @@ const renderPage = (stubs: Parameters<typeof createFakeIpcClient>[0]) => {
 }
 
 describe("ExtensionsPage", () => {
+  /** `planInstall`, the README and `docs/01-conventions/extensions.md` all say `link` is the
+   * default. A GUI defaulting to `copy` silently hands the user a snapshot, and their edits
+   * to the working copy then have no effect — the exact confusion link mode exists to
+   * prevent. */
+  it("installs in link mode by default, as the docs promise", async () => {
+    const seen: unknown[] = []
+    renderPage({
+      installExtension: async (input: unknown) => {
+        seen.push(input)
+        return { ok: true, value: [ext] }
+      },
+    })
+    await waitFor(() => expect(screen.getByText("Acme")).toBeInTheDocument())
+    fireEvent.click(screen.getByRole("button", { name: /install extension/i }))
+    fireEvent.change(screen.getByLabelText(/source/i), {
+      target: { value: "/home/me/acme" },
+    })
+    fireEvent.click(screen.getByRole("button", { name: /^install$/i }))
+    await waitFor(() => expect(seen.length).toBe(1))
+    expect(seen[0]).toMatchObject({ source: "/home/me/acme", mode: "link" })
+  })
+
   it("names the referencing provider (not its opaque id) when removal is refused as in-use", async () => {
     renderPage({
       getProviders: async () => ({ ok: true, value: [openaiProvider] }),

@@ -30,9 +30,12 @@ const toRow = (view: ExtensionView): ExtensionRowData => ({
   providers: view.providers,
 })
 
+/** `link` first, and the state below defaults to it: `planInstall` and the author docs both
+ * make link the default, and a GUI that silently snapshots instead leaves a user editing a
+ * working copy that no longer has any effect. */
 const MODE_OPTIONS = [
-  { value: "copy", label: "Copy (snapshot)" },
   { value: "link", label: "Link (live reload from source)" },
+  { value: "copy", label: "Copy (snapshot)" },
 ] as const
 
 export const ExtensionsPage = (): ReactElement => {
@@ -49,13 +52,13 @@ export const ExtensionsPage = (): ReactElement => {
   const [installOpen, setInstallOpen] = useState<boolean>(false)
   const [source, setSource] = useState<string>("")
   const [ref, setRef] = useState<string>("")
-  const [mode, setMode] = useState<string>("copy")
+  const [mode, setMode] = useState<string>("link")
 
   const closeInstallModal = (): void => {
     setInstallOpen(false)
     setSource("")
     setRef("")
-    setMode("copy")
+    setMode("link")
   }
 
   const submitInstall = async (): Promise<void> => {
