@@ -809,6 +809,132 @@ describe("createAppContext wiring", () => {
       expect(listed.value.map((e) => String(e.manifest.id))).toEqual(["linked"])
   })
 
+  it("surfaces the actual PluginError through ctx.extensionRegistry.list(), not a constant placeholder, when no refresh has ever succeeded", async () => {
+    // "no good extension state" alone tells a user nothing. `unsupported-api-version` names the
+    // extension's actual problem (a manifest written for a newer Spectrum) and carries the
+    // version it declared — exactly what a "list installed extensions" surface needs to say
+    // WHICH extension is broken and why, not just "something is wrong".
+    const { deps } = makeFakeDeps()
+    const cfg: Config = {
+      ...defaultConfig(),
+      providerPlugins: [
+        {
+          id: PluginIdSchema.parse("bad-plugin"),
+          source: { kind: "path", path: "/work/bad", linked: true },
+          enabled: true,
+        },
+      ],
+    }
+    ;(deps as { createCachedConfigStore: unknown }).createCachedConfigStore =
+      (() => ({
+        load: async () => ok(cfg),
+        save: async () => ok(undefined),
+      })) as never
+    ;(
+      deps as { createDirExtensionFileSource: unknown }
+    ).createDirExtensionFileSource = ((
+      root: string,
+      linkMap: Readonly<Record<string, string>>,
+    ) => ({
+      listExtensions: async () => ok([]),
+      readExtension: async () => err({ kind: "not-found", id: "none" }),
+      removeExtension: async () => ok(undefined),
+      extensionDir: (id: string) => linkMap[id] ?? `${root}/${id}`,
+      __linkMap: linkMap,
+    })) as never
+    ;(deps as { createExtensionRegistry: unknown }).createExtensionRegistry =
+      ((registryDeps: {
+        fileSource: { __linkMap?: Readonly<Record<string, string>> }
+      }) => {
+        const isWiringTime =
+          Object.keys(registryDeps.fileSource.__linkMap ?? {}).length === 0
+        return {
+          list: async () =>
+            isWiringTime
+              ? ok([])
+              : err({
+                  kind: "unsupported-api-version",
+                  apiVersion: "spectrum.dev/v99",
+                }),
+          providerDescriptors: async () =>
+            isWiringTime
+              ? ok([])
+              : err({
+                  kind: "unsupported-api-version",
+                  apiVersion: "spectrum.dev/v99",
+                }),
+        }
+      }) as never
+
+    const ctx = createAppContext(deps)
+    await ctx.refreshExtensions()
+
+    const listed = await ctx.extensionRegistry.list()
+    expect(listed.ok).toBe(false)
+    if (!listed.ok) expect(listed.error.kind).toBe("unsupported-api-version")
+    if (!listed.ok && listed.error.kind === "unsupported-api-version")
+      expect(listed.error.apiVersion).toBe("spectrum.dev/v99")
+  })
+
+  it("bounds the wait for a stalled refresh instead of hanging ctx.extensionRegistry.list() forever", async () => {
+    // Simulates a stalled `config.load()` — the refresh this starts will never settle, so
+    // `firstRefreshSettled` never resolves either. Without a bounded wait, EVERY later call
+    // to `ctx.extensionRegistry.list()` would hang indefinitely: an IPC handler that never
+    // returns, a spinning GUI with no error.
+    const { deps } = makeFakeDeps()
+    ;(deps as { createCachedConfigStore: unknown }).createCachedConfigStore =
+      (() => ({
+        load: () => new Promise<never>(() => {}),
+        save: async () => ok(undefined),
+      })) as never
+
+    const ctx = createAppContext(deps)
+    // Deliberately NOT awaiting `refreshExtensions()` — it will never settle.
+    const listed = await ctx.extensionRegistry.list()
+    expect(listed.ok).toBe(false)
+  }, 8000)
+
+  it("keeps extensionsReady usable even after a refresh's own promise rejects, instead of poisoning it forever", async () => {
+    // `.then` on a rejected promise skips its callback and just propagates the rejection, so
+    // without a guard, ONE rejected `runRefresh()` would make every LATER `refreshExtensions()`
+    // call inherit that same rejection forever — poisoning `resolveBaseUrl` (which awaits
+    // `extensionsReady` on every proxy request) and breaking `ExtensionAdmin`'s no-throw
+    // contract. Forces `runRefresh()` itself to reject (via `abandonRefresh` throwing, called
+    // from both the try body and the catch clause on this fixture — the same shape as round 4's
+    // hardening scenario), then proves a SUBSEQUENT refresh still actually RUNS rather than
+    // being skipped by an inherited rejection.
+    const { deps } = makeFakeDeps()
+    ;(deps as { createExtensionRegistry: unknown }).createExtensionRegistry =
+      (() => ({
+        list: async () => err({ kind: "invalid-manifest", detail: "bad" }),
+        providerDescriptors: async () =>
+          err({ kind: "invalid-manifest", detail: "bad" }),
+      })) as never
+    let createProviderRegistryCalls = 0
+    ;(deps as { createProviderRegistry: unknown }).createProviderRegistry = ((
+      ..._a: unknown[]
+    ) => {
+      createProviderRegistryCalls += 1
+      // Call 1 is the synchronous wiring-time construction. Calls 2 and 3 are the FIRST
+      // refresh's two `abandonRefresh` invocations (try body, then catch clause) — both throw,
+      // rejecting that `runRefresh()`. Call 4 onward (a LATER refresh's first `abandonRefresh`
+      // call) succeeds, so that refresh can complete normally IF it actually runs at all.
+      if (createProviderRegistryCalls > 1 && createProviderRegistryCalls <= 3)
+        throw new Error("boom")
+      return { get: () => undefined, list: () => [], catalog: () => [] }
+    }) as never
+
+    const ctx = createAppContext(deps)
+    // The constructor's own initial refresh rejects. Swallow it here so the test's own await
+    // doesn't throw — the point under test is what happens to `extensionsReady` AFTER this.
+    await ctx.refreshExtensions().catch(() => {})
+
+    // If `extensionsReady` were permanently poisoned, this `.then(runRefresh)` would be skipped
+    // entirely (the rejection just propagates) and `createProviderRegistry` would never reach
+    // call 4 — this call would reject too, for the SAME inherited reason. It must resolve.
+    await expect(ctx.refreshExtensions()).resolves.toBeUndefined()
+  })
+
   it("continues with builtins only when the extension registry fails to list", async () => {
     // A broken manifest must not take startup down: the refresh logs and falls back.
     const { deps } = makeFakeDeps()

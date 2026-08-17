@@ -590,13 +590,24 @@ export const createAppContext = (
   })
 
   /**
+   * The full error from the MOST RECENT abandoned refresh — not just its `kind`. Consulted by
+   * `noGoodStateRegistry` (below) so a caller reading through it when there is no good state
+   * sees WHICH extension is broken and why (`unsupported-api-version` with the version,
+   * `duplicate-id` with the colliding id, `invalid-manifest` with the zod detail), not a
+   * constant "something is wrong". The LOG line still records only `{ kind }` — unchanged —
+   * this is purely about not discarding the rest of the error after logging it.
+   */
+  let lastAbandonError: PluginError | undefined
+
+  /**
    * Give up on this refresh. At startup (no good state yet) that means falling back to builtins
    * only; on a LATER refresh the last known-good view is KEPT — a momentary fs error must not
    * silently demote a supervised plugin to "not supervised", which is how plugin traffic would
    * end up resolved against an SDK's cloud default.
    */
-  const abandonRefresh = (msg: string, kind: string): void => {
-    extensionsLog.error(msg, { kind })
+  const abandonRefresh = (msg: string, error: PluginError): void => {
+    extensionsLog.error(msg, { kind: error.kind })
+    lastAbandonError = error
     if (haveGoodExtensionState) return
     supervisedIds = new Set<string>()
     enabledExtensionIds = new Set<string>()
@@ -631,7 +642,7 @@ export const createAppContext = (
 
       const listed = await nextRegistry.list()
       if (!listed.ok) {
-        abandonRefresh("extension load failed", listed.error.kind)
+        abandonRefresh("extension load failed", listed.error)
         return
       }
       const enabledIds = cfg.providerPlugins
@@ -662,10 +673,7 @@ export const createAppContext = (
 
       const descriptors = await nextRegistry.providerDescriptors(enabledIds)
       if (!descriptors.ok) {
-        abandonRefresh(
-          "extension descriptors unavailable",
-          descriptors.error.kind,
-        )
+        abandonRefresh("extension descriptors unavailable", descriptors.error)
         return
       }
       const nextProviders = deps.createProviderRegistry(descriptors.value)
@@ -684,11 +692,15 @@ export const createAppContext = (
     } catch (cause) {
       // Defensive: every adapter above returns a Result, so this is unreachable by design.
       // It exists so an unexpected throw degrades gracefully instead of rejecting
-      // `extensionsReady` — which the proxy's routing path awaits on every request.
-      abandonRefresh(
-        "extension refresh failed",
-        cause instanceof Error ? cause.name : "unknown",
-      )
+      // `extensionsReady` — which the proxy's routing path awaits on every request. No real
+      // `PluginError` exists for an unexpected throw, so one is synthesized here.
+      abandonRefresh("extension refresh failed", {
+        kind: "read-failed",
+        detail:
+          cause instanceof Error
+            ? `${cause.name}: ${cause.message}`
+            : String(cause),
+      })
     } finally {
       // Runs on every path — success, an early `abandonRefresh` + return, or the catch above —
       // and even if `abandonRefresh` itself throws, so `firstRefreshSettled` can never hang.
@@ -706,7 +718,16 @@ export const createAppContext = (
   /** Refreshes are SERIALIZED: two overlapping calls must not interleave their reads. */
   const refreshExtensions = (): Promise<void> => {
     const next = extensionsReady.then(runRefresh)
-    extensionsReady = next
+    // `extensionsReady` itself is never allowed to become (permanently) rejected: if `next`
+    // ever DID reject, `.then` on a rejected promise skips its callback and just propagates the
+    // rejection, so every LATER `refreshExtensions()` call would inherit it forever — poisoning
+    // `resolveBaseUrl` (which awaits `extensionsReady` on every proxy request) and
+    // `ExtensionAdmin` (whose `await deps.refresh()` would throw out of a `Promise<Result<…>>`,
+    // breaking its no-throw contract). Currently unreachable — `runRefresh`'s only way to reject
+    // is `abandonRefresh` throwing, and its only fallible call is the logger, which never throws
+    // by construction — but the blast radius earns the guard. The CALLER of `refreshExtensions`
+    // still gets `next` (and its real rejection, if any) unmodified.
+    extensionsReady = next.catch(() => {})
     return next
   }
 
@@ -723,32 +744,83 @@ export const createAppContext = (
    * as "nothing is installed" rather than "the real answer is unavailable" — `remove`'s `in-use`
    * guard, reading `ok([])`, would compute zero contributed keys and refuse nothing, silently
    * deleting an install record a provider still references.
+   *
+   * Surfaces `lastAbandonError` — the ACTUAL cause (`unsupported-api-version` with the version,
+   * `duplicate-id` with the colliding id, `invalid-manifest` with the zod detail) — rather than a
+   * constant placeholder, so a caller built on this (a "list installed extensions" IPC handler or
+   * CLI command) can tell the user WHICH extension is broken and why, not just "something is
+   * wrong". Falls back to the constant only in the — currently unreached — case where this is
+   * consulted before any refresh has run at all.
    */
   const noGoodStateRegistry: ExtensionRegistry = {
     list: async () =>
-      err({ kind: "read-failed", detail: "no good extension state" }),
+      err(
+        lastAbandonError ?? {
+          kind: "read-failed",
+          detail: "no good extension state",
+        },
+      ),
     providerDescriptors: async () =>
-      err({ kind: "read-failed", detail: "no good extension state" }),
+      err(
+        lastAbandonError ?? {
+          kind: "read-failed",
+          detail: "no good extension state",
+        },
+      ),
   }
+
+  /**
+   * `firstRefreshSettled` only resolves in `runRefresh`'s `finally`, which sits AFTER
+   * `await retainConfiguredInstances(cfg)` — so a stalled `config.load()` or a stalled sweep
+   * would hang `liveExtensionRegistry` (and therefore `ctx.extensionRegistry.list()`) forever.
+   * An IPC handler that never returns is a spinning GUI with no error, worse than a wrong
+   * answer, so this bounds the wait. 5s: generous for real fs IO (a `readdir` + per-manifest
+   * `JSON.parse`, not a network call) while still being a human-noticeable-but-not-infinite
+   * wait for a caller that DOES get a `noGoodStateRegistry` timeout error back instead of
+   * hanging.
+   */
+  const FIRST_REFRESH_TIMEOUT_MS = 5000
+
+  /** Registers whichever of `promise` / a `ms`-bounded timer settles first, WITHOUT leaving a
+   * dangling timer behind when `promise` wins (unlike a bare `Promise.race`, which never
+   * cancels the loser). */
+  const raceWithTimeout = <T>(
+    promise: Promise<T>,
+    ms: number,
+  ): Promise<T | "timeout"> =>
+    new Promise((resolve) => {
+      const timer = setTimeout(() => resolve("timeout"), ms)
+      promise.then(
+        (value) => {
+          clearTimeout(timer)
+          resolve(value)
+        },
+        () => {
+          clearTimeout(timer)
+          resolve("timeout")
+        },
+      )
+    })
 
   /**
    * The registry every EXTERNAL consumer (the public `AppContext.extensionRegistry` and
    * `ExtensionAdmin`'s `registry` accessor) reads through: waits for the FIRST refresh to have
    * settled (cold-start protection — see `firstRefreshSettled`'s doc comment for why this is
-   * NOT `extensionsReady`), then returns the live cell ONLY if some refresh has ever actually
-   * succeeded. Never `providerHost`'s dependency (see `rawExtensionRegistry` above) and never
-   * called from inside `runRefresh` itself.
+   * NOT `extensionsReady`), bounded so a stalled refresh can't hang a caller forever, then
+   * returns the live cell ONLY if some refresh has ever actually succeeded. Never
+   * `providerHost`'s dependency (see `rawExtensionRegistry` above) and never called from inside
+   * `runRefresh` itself.
    */
   const liveExtensionRegistry = async (): Promise<ExtensionRegistry> => {
-    try {
-      await firstRefreshSettled
-    } catch {
-      // `firstRefreshSettled` should never actually reject — it is resolved directly by its own
-      // resolver in a `finally`, never chained off another promise's rejection. This exists so a
-      // consumer calling through here gets a `Result`, never an uncaught throw, even if that
-      // invariant is ever violated.
-      return noGoodStateRegistry
-    }
+    // `firstRefreshSettled` should never actually reject — it is resolved directly by its own
+    // resolver in a `finally`, never chained off another promise's rejection — but
+    // `raceWithTimeout` treats a rejection the same as a timeout regardless, so a consumer
+    // calling through here always gets a `Result`, never an uncaught throw or an indefinite hang.
+    const outcome = await raceWithTimeout(
+      firstRefreshSettled,
+      FIRST_REFRESH_TIMEOUT_MS,
+    )
+    if (outcome === "timeout") return noGoodStateRegistry
     return haveGoodExtensionState ? extensionRegistryCell : noGoodStateRegistry
   }
 
