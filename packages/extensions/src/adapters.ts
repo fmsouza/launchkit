@@ -172,10 +172,11 @@ export const createBunCaptureStdout = (): CaptureStdout => {
     try {
       const child = Bun.spawn([command, ...args], {
         cwd,
-        // Minimal env only — never the whole process env — matching `createProcessGitClient`'s
-        // `run`. `git rev-parse` gets the same restricted environment every other git
-        // invocation does.
-        env: gitEnv(),
+        // Same policy as `createBunProcessSpawner` (the spawner `clone`/`fetchCheckout` go
+        // through): merge the ambient env, then let `gitEnv()`'s overrides win, so `git
+        // rev-parse` gets PATH/HOME/etc. from the environment plus the same askpass/proxy/
+        // prompt neutralisation as every other git invocation here.
+        env: { ...process.env, ...gitEnv() },
         stdio: ["inherit", "pipe", "inherit"],
       })
       const [text, exitCode] = await Promise.all([

@@ -1,3 +1,4 @@
+import { resolve as resolvePath } from "node:path"
 import type { CommandResolver, ProcessSpawner } from "@spectrum/proc"
 import { type Result, err, ok } from "@spectrum/utils"
 import type { PluginError } from "./errors"
@@ -31,16 +32,24 @@ export type GitCall = {
 const redactUrlCredentials = (url: string): string =>
   url.replace(/\/\/[^/@\s]+@/, "//[REDACTED]@")
 
-/** The minimal env git needs — never the whole process env. `GIT_TERMINAL_PROMPT=0` makes a
- * private repo fail fast instead of hanging on a password prompt nobody can answer; the
- * ambient `GIT_ASKPASS`/`SSH_ASKPASS`/`GIT_TERMINAL_PROMPT` are deliberately NOT forwarded so
- * an interactive prompt can never be triggered underneath us. */
-export const gitEnv = (): Readonly<Record<string, string>> => {
-  const env: Record<string, string> = { GIT_TERMINAL_PROMPT: "0" }
-  if (process.env.PATH !== undefined) env.PATH = process.env.PATH
-  if (process.env.HOME !== undefined) env.HOME = process.env.HOME
-  return env
-}
+/**
+ * Overrides for the vars that turn env inheritance into command execution or a stuck
+ * credential prompt. This is NOT a minimal env in the strict sense: the only real
+ * `ProcessSpawner` (`createBunProcessSpawner`, shared with `@spectrum/harnesses`,
+ * `@spectrum/pty`, and `@spectrum/provider-host`) merges the ambient process env
+ * UNDERNEATH whatever is passed here (`{ ...process.env, ...env }`), so an ambient
+ * `SECRET_TOKEN` or similar still reaches the child. What this map guarantees is narrower
+ * but load-bearing: `GIT_ASKPASS`/`SSH_ASKPASS`/`GIT_PROXY_COMMAND` are forced empty so an
+ * ambient askpass helper or proxy command can never run underneath us, and
+ * `GIT_TERMINAL_PROMPT=0` makes a private repo fail fast instead of hanging on a prompt
+ * nobody can answer.
+ */
+export const gitEnv = (): Readonly<Record<string, string>> => ({
+  GIT_TERMINAL_PROMPT: "0",
+  GIT_ASKPASS: "",
+  SSH_ASKPASS: "",
+  GIT_PROXY_COMMAND: "",
+})
 
 /**
  * Resolves `git` through the injected `CommandResolver`, spawns with an argument array (never
@@ -81,16 +90,25 @@ export const createProcessGitClient = (deps: {
   }
 
   return {
+    // `--` ends option parsing: without it, a `ref`/`url` value starting with `-` (e.g.
+    // `--upload-pack=<cmd>`) is parsed by git as an OPTION, not a positional argument, and
+    // can run an arbitrary command (`git clone --upload-pack=<cmd>`). An argument array
+    // stops shell injection but not this — verified against real git that `--` still
+    // clones/fetches normally and turns a malicious `--upload-pack=...` ref into a rejected
+    // "invalid refspec" instead of an executed command.
     clone: (url, dest, ref) => {
       const args =
         ref === undefined
-          ? ["clone", "--depth", "1", url, dest]
-          : ["clone", "--depth", "1", "--branch", ref, url, dest]
+          ? ["clone", "--depth", "1", "--", url, dest]
+          : ["clone", "--depth", "1", "--branch", ref, "--", url, dest]
       return run(args)
     },
 
     fetchCheckout: async (dir, ref) => {
-      const fetched = await run(["fetch", "--depth", "1", "origin", ref], dir)
+      const fetched = await run(
+        ["fetch", "--depth", "1", "--", "origin", ref],
+        dir,
+      )
       if (!fetched.ok) return fetched
       return run(["checkout", "FETCH_HEAD"], dir)
     },
@@ -158,15 +176,14 @@ export type DirCopier = {
   exists(dir: string): Promise<boolean>
 }
 
-/** Normalises trailing separators so containment comparisons aren't fooled by them. */
-const stripTrailingSep = (p: string): string =>
-  p.endsWith("/") ? p.slice(0, -1) : p
-
-/** True when `candidate` is `root` itself or a descendant of it. Compares normalised absolute
- * paths — copying a directory into itself or into its own descendant would be destructive. */
+/** True when `candidate` is `root` itself or a descendant of it. Both sides are resolved with
+ * `path.resolve` (against `process.cwd()`) before comparing — a lexical prefix check on the
+ * raw strings is defeated by a `from` containing `..` (e.g. `copy("/a/b/..", "/a/b")` is
+ * really a self-copy but does not lexically match) or by a missing/differing trailing
+ * separator. Copying a directory into itself or into its own descendant is destructive. */
 const isSelfOrDescendant = (candidate: string, root: string): boolean => {
-  const normCandidate = stripTrailingSep(candidate)
-  const normRoot = stripTrailingSep(root)
+  const normCandidate = resolvePath(candidate)
+  const normRoot = resolvePath(root)
   return normCandidate === normRoot || normCandidate.startsWith(`${normRoot}/`)
 }
 

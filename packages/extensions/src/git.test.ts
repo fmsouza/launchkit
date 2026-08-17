@@ -1,10 +1,17 @@
-import { describe, expect, it } from "bun:test"
+import { afterEach, describe, expect, it } from "bun:test"
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import {
   createFakeCommandResolver,
   createRecordingProcessSpawner,
 } from "@spectrum/proc"
 import { ok } from "@spectrum/utils"
-import { createInMemoryDirCopier, createProcessGitClient } from "./git"
+import {
+  createFsDirCopier,
+  createInMemoryDirCopier,
+  createProcessGitClient,
+} from "./git"
 
 const client = (opts?: { exitCode?: number; commit?: string }) => {
   const spawner = createRecordingProcessSpawner(4242, opts?.exitCode ?? 0)
@@ -26,6 +33,7 @@ describe("createProcessGitClient", () => {
       "clone",
       "--depth",
       "1",
+      "--",
       "https://example.com/a.git",
       "/data/providers/a",
     ])
@@ -40,9 +48,20 @@ describe("createProcessGitClient", () => {
       "1",
       "--branch",
       "v1.2.3",
+      "--",
       "https://example.com/a.git",
       "/data/providers/a",
     ])
+  })
+
+  it("puts -- before the url/dest positionals so a leading-dash url can't be parsed as a git option", async () => {
+    const { git, spawner } = client()
+    await git.clone("https://example.com/a.git", "/data/providers/a")
+    expect(spawner.calls[0]?.args).toContain("--")
+    const dashIndex = spawner.calls[0]?.args.indexOf("--") ?? -1
+    const urlIndex = spawner.calls[0]?.args.indexOf("https://example.com/a.git")
+    expect(dashIndex).toBeGreaterThanOrEqual(0)
+    expect(urlIndex).toBeGreaterThan(dashIndex)
   })
 
   it("never interpolates the url into a shell string", async () => {
@@ -79,10 +98,24 @@ describe("createProcessGitClient", () => {
     const r = await git.fetchCheckout("/data/providers/a", "v2")
     expect(r.ok).toBe(true)
     expect(spawner.calls.map((c) => c.args)).toEqual([
-      ["fetch", "--depth", "1", "origin", "v2"],
+      ["fetch", "--depth", "1", "--", "origin", "v2"],
       ["checkout", "FETCH_HEAD"],
     ])
     expect(spawner.calls[0]?.cwd).toBe("/data/providers/a")
+  })
+
+  it("puts -- before origin/ref in fetch so a leading-dash ref can't be parsed as a git option", async () => {
+    const { git, spawner } = client()
+    await git.fetchCheckout(
+      "/data/providers/a",
+      "--upload-pack=touch /tmp/pwned",
+    )
+    const fetchArgs = spawner.calls[0]?.args ?? []
+    expect(fetchArgs).toContain("--")
+    const dashIndex = fetchArgs.indexOf("--")
+    const refIndex = fetchArgs.indexOf("--upload-pack=touch /tmp/pwned")
+    expect(dashIndex).toBeGreaterThanOrEqual(0)
+    expect(refIndex).toBeGreaterThan(dashIndex)
   })
 
   it("returns the trimmed commit sha when rev-parsing", async () => {
@@ -104,6 +137,16 @@ describe("createProcessGitClient", () => {
       expect(JSON.stringify(r.error)).not.toContain("s3cr3t")
       expect(JSON.stringify(r.error)).not.toContain("alice:s3cr3t@")
     }
+  })
+
+  it("forces askpass/proxy-command empty and the terminal prompt off on every spawn", async () => {
+    const { git, spawner } = client()
+    await git.clone("https://example.com/a.git", "/data/providers/a")
+    const env = spawner.calls[0]?.env
+    expect(env?.GIT_ASKPASS).toBe("")
+    expect(env?.SSH_ASKPASS).toBe("")
+    expect(env?.GIT_PROXY_COMMAND).toBe("")
+    expect(env?.GIT_TERMINAL_PROMPT).toBe("0")
   })
 })
 
@@ -127,5 +170,90 @@ describe("createInMemoryDirCopier", () => {
     const r = await copier.copy("/src/missing", "/data/providers/a")
     expect(r.ok).toBe(false)
     if (!r.ok) expect(r.error.kind).toBe("read-failed")
+  })
+})
+
+describe("createFsDirCopier", () => {
+  const tmpDirs: string[] = []
+
+  const makeTmpDir = async (): Promise<string> => {
+    const dir = await mkdtemp(join(tmpdir(), "spectrum-dircopier-"))
+    tmpDirs.push(dir)
+    return dir
+  }
+
+  afterEach(async () => {
+    await Promise.all(
+      tmpDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })),
+    )
+  })
+
+  it("copies a directory tree's contents to the destination", async () => {
+    const root = await makeTmpDir()
+    const src = join(root, "src")
+    const dest = join(root, "dest")
+    await mkdir(src, { recursive: true })
+    await mkdir(join(src, "nested"), { recursive: true })
+    await writeFile(join(src, "file.txt"), "hello")
+    await writeFile(join(src, "nested", "inner.txt"), "world")
+
+    const copier = createFsDirCopier()
+    const r = await copier.copy(src, dest)
+    expect(r.ok).toBe(true)
+    expect(await readFile(join(dest, "file.txt"), "utf8")).toBe("hello")
+    expect(await readFile(join(dest, "nested", "inner.txt"), "utf8")).toBe(
+      "world",
+    )
+  })
+
+  it("fails with read-failed when copying a directory into itself", async () => {
+    const root = await makeTmpDir()
+    await mkdir(root, { recursive: true })
+
+    const copier = createFsDirCopier()
+    const r = await copier.copy(root, root)
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.error.kind).toBe("read-failed")
+  })
+
+  it("fails with read-failed when copying a directory into its own descendant", async () => {
+    const root = await makeTmpDir()
+    await mkdir(root, { recursive: true })
+    const child = join(root, "child")
+
+    const copier = createFsDirCopier()
+    const r = await copier.copy(root, child)
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.error.kind).toBe("read-failed")
+  })
+
+  it("fails with read-failed when the self-copy is disguised with a .. segment", async () => {
+    const root = await makeTmpDir()
+    const sub = join(root, "sub")
+    await mkdir(sub, { recursive: true })
+    // Built with raw string concatenation, NOT `path.join`/`path.normalize` — `join` would
+    // collapse `..` itself and defeat the point of this test. `${sub}/..` is lexically
+    // distinct from `root` but resolves (via `path.resolve`) to the exact same directory —
+    // a genuine self-copy that a plain string-prefix check on the raw strings would miss.
+    const disguisedFrom = `${sub}/..`
+
+    const copier = createFsDirCopier()
+    const r = await copier.copy(disguisedFrom, root)
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.error.kind).toBe("read-failed")
+  })
+
+  it("reports a directory as not existing (ENOENT) as false", async () => {
+    const root = await makeTmpDir()
+    const copier = createFsDirCopier()
+    expect(await copier.exists(join(root, "missing"))).toBe(false)
+  })
+
+  it("reports a directory that exists as true", async () => {
+    const root = await makeTmpDir()
+    const dir = join(root, "present")
+    await mkdir(dir, { recursive: true })
+    const copier = createFsDirCopier()
+    expect(await copier.exists(dir)).toBe(true)
   })
 })
