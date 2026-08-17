@@ -75,6 +75,16 @@ seam; nothing in this package spawns a process (that is `@spectrum/provider-host
 - The manifest root is strict (typos are loud); `contributes` passes unknown keys through
   untouched rather than rejecting them, so an older Spectrum can still install a manifest
   written for a newer one and simply contribute less.
+- `parseManifest` (via `ExtensionManifestSchema`'s `ContributesSchema`) refuses a manifest
+  whose OWN `contributes.providers` declares the same contribution id more than once. This is
+  the primary defense against a self-colliding manifest bricking `list()`: `list()` dedupes
+  contribution ids in one pass ACROSS the whole installed set, so a self-colliding manifest
+  that ever reached disk would make every other installed extension fail to load too, not just
+  itself. Catching it here — the one seam every manifest source passes through (git clone,
+  copy, link, and a hand-placed directory `@spectrum/extensions/installer` never touches) —
+  covers sources `installer.ts`'s own pre-install check cannot see. Reports exactly one issue
+  regardless of how many duplicates exist (`break`s after the first) — the loop runs over
+  attacker-controlled content, and an issue per duplicate is an unbounded `PluginError.detail`.
 - `parseManifest` takes `unknown` and returns `Result`; it never throws. All IO lives in
   `adapters.ts` behind `ExtensionFileSource` and returns `Result` too.
 - `ProviderContributionSchema`'s `reasoning`/`discovery` fields validate against
@@ -84,11 +94,14 @@ seam; nothing in this package spawns a process (that is `@spectrum/provider-host
 - Template validation and rendering are split: `validateContributionTemplates` is the only
   place unknown tokens are rejected; `renderPluginEnv`/`renderPluginArgs` are pure
   substitution and never fail, so callers must validate before spawning.
-- `list()` refuses duplicate MANIFEST ids and duplicate provider-CONTRIBUTION ids across the
-  whole installed set. The contribution id is the security-relevant one: it becomes
-  `plugin:<id>` and is what `@spectrum/provider-host` keys on when it spawns a launch block, so
-  two extensions claiming one contribution id would make "whose command gets spawned" depend on
-  directory-read order. Refusing the whole batch beats picking a winner.
+- `list()` refuses duplicate MANIFEST ids and duplicate provider-CONTRIBUTION ids ACROSS
+  DIFFERENT extensions in the whole installed set (a single manifest's own self-collision is
+  caught earlier, by `parseManifest`, above — `list()` never sees that case, since a
+  self-colliding manifest fails to parse before `list()`'s own scan runs). The contribution id
+  is the security-relevant one: it becomes `plugin:<id>` and is what `@spectrum/provider-host`
+  keys on when it spawns a launch block, so two extensions claiming one contribution id would
+  make "whose command gets spawned" depend on directory-read order. Refusing the whole batch
+  beats picking a winner.
 - A directory id and the manifest id it declares must agree, or `dir` would point somewhere the
   manifest never claimed — silently breaking uninstall-by-id.
 - A `source-unavailable` entry (a dead linked path) is logged and SKIPPED; an invalid manifest,

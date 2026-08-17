@@ -24,6 +24,11 @@ const ContributesSchema = z
     // brick every other installed plugin on the next load, not just itself. Reject it
     // here, at the one seam every manifest source (git clone, copy, link, and a
     // hand-placed directory the installer never touched) passes through.
+    // `break` after the first collision: this loop runs over attacker-controlled content
+    // (an installed or about-to-be-installed manifest), and `addIssue` per duplicate with
+    // no bound turns a manifest with N duplicate ids into an N-issue, unboundedly long
+    // `detail` string on the `PluginError` this ultimately becomes — one issue is enough
+    // to report and reject.
     const seen = new Set<string>()
     for (const provider of c.providers) {
       const id = String(provider.id)
@@ -33,6 +38,7 @@ const ContributesSchema = z
           message: `contributes.providers declares the id "${id}" more than once`,
           path: ["providers"],
         })
+        break
       }
       seen.add(id)
     }

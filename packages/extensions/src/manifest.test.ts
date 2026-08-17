@@ -52,6 +52,21 @@ describe("ExtensionManifestSchema", () => {
     expect(parsed.success).toBe(false)
   })
 
+  it("reports exactly one issue when many contributions collide, not one per duplicate", () => {
+    const providers = Array.from({ length: 200 }, () => contribution("dup"))
+    const parsed = ExtensionManifestSchema.safeParse({
+      ...valid,
+      contributes: { providers },
+    })
+    expect(parsed.success).toBe(false)
+    if (!parsed.success) {
+      const duplicateIssues = parsed.error.issues.filter((issue) =>
+        issue.message.includes("more than once"),
+      )
+      expect(duplicateIssues.length).toBe(1)
+    }
+  })
+
   it("accepts a manifest whose contributions all have distinct ids", () => {
     const parsed = ExtensionManifestSchema.safeParse({
       ...valid,
