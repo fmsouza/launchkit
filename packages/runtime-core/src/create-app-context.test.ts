@@ -1277,6 +1277,29 @@ describe("createAppContext resolveBaseUrl", () => {
     sdkMapping: { baseUrlOption: "baseURL", apiKey: { kind: "option" } },
   })
 
+  /**
+   * Mark extensions enabled in the live config. `enabledIds` comes ONLY from
+   * `cfg.providerPlugins`, so an installed-but-not-enabled extension is not supervised.
+   */
+  const withEnabledPlugins = (
+    deps: CreateAppContextDeps,
+    ids: readonly string[],
+  ): void => {
+    ;(deps as { createCachedConfigStore: unknown }).createCachedConfigStore =
+      (() => ({
+        load: async () =>
+          ok({
+            ...defaultConfig(),
+            providerPlugins: ids.map((id) => ({
+              id,
+              source: { kind: "local" },
+              enabled: true,
+            })),
+          }),
+        save: async () => ok(undefined),
+      })) as never
+  }
+
   /** Wire an extension registry whose `list` reports `extensions` (optionally behind a gate). */
   const withExtensions = (
     deps: CreateAppContextDeps,
@@ -1296,6 +1319,7 @@ describe("createAppContext resolveBaseUrl", () => {
 
   it("resolves a supervised extension to the live loopback url from the provider host", async () => {
     const { deps, calls } = makeFakeDeps()
+    withEnabledPlugins(deps, ["acme"])
     withExtensions(deps, () => [extension("acme", true)])
     const seen: unknown[] = []
     ;(deps as { createProviderHost: unknown }).createProviderHost = (() => ({
@@ -1325,8 +1349,43 @@ describe("createAppContext resolveBaseUrl", () => {
     ])
   })
 
+  it("never supervises a contribution from an extension that is not enabled", async () => {
+    // THE ATTACK: `providerDescriptors` filtered by `enabled`, but the supervised set scanned
+    // every installed extension. A disabled extension's launch block was therefore reachable —
+    // and it is spawned with the resolved secrets of whichever provider record named its id.
+    const { deps, calls } = makeFakeDeps()
+    withEnabledPlugins(deps, []) // installed, NOT enabled
+    withExtensions(deps, () => [extension("acme", true)])
+    let ensureRunningCalls = 0
+    ;(deps as { createProviderHost: unknown }).createProviderHost = (() => ({
+      ensureRunning: async () => {
+        ensureRunningCalls += 1
+        return ok({ baseUrl: "http://127.0.0.1:45009", pid: 4 })
+      },
+      status: () => "running",
+      stop: async () => undefined,
+      stopAllFor: async () => undefined,
+      stopAll: async () => undefined,
+      retainOnly: async () => undefined,
+    })) as never
+
+    const ctx = createAppContext(deps)
+    await ctx.refreshExtensions()
+    const r = await resolveOf(calls)({
+      descriptor: pluginDescriptor("acme"),
+      config: {},
+      secrets: { apiKey: "k" },
+      instanceKey: "inst-1",
+    })
+
+    expect(ensureRunningCalls).toBe(0)
+    expect(r.ok).toBe(false)
+    expect(r.error?.kind).toBe("bad-request")
+  })
+
   it("refuses the draft-probe path for a supervised extension instead of spawning a process", async () => {
     const { deps, calls } = makeFakeDeps()
+    withEnabledPlugins(deps, ["acme"])
     withExtensions(deps, () => [extension("acme", true)])
     let ensureRunningCalls = 0
     ;(deps as { createProviderHost: unknown }).createProviderHost = (() => ({
@@ -1357,6 +1416,7 @@ describe("createAppContext resolveBaseUrl", () => {
 
   it("reports provider-failed when the supervised extension will not start", async () => {
     const { deps, calls } = makeFakeDeps()
+    withEnabledPlugins(deps, ["acme"])
     withExtensions(deps, () => [extension("acme", true)])
     ;(deps as { createProviderHost: unknown }).createProviderHost = (() => ({
       ensureRunning: async () => err({ kind: "spawn-failed", detail: "boom" }),
@@ -1457,6 +1517,7 @@ describe("createAppContext resolveBaseUrl", () => {
     const gate = makeGate()
     let installed: readonly unknown[] = []
     let held = false
+    withEnabledPlugins(deps, ["acme"])
     withExtensions(
       deps,
       () => installed,
@@ -1545,6 +1606,7 @@ describe("createAppContext resolveBaseUrl", () => {
     // not demote a supervised plugin — that is precisely the mis-route the guard above catches.
     const { deps, calls } = makeFakeDeps()
     let failing = false
+    withEnabledPlugins(deps, ["acme"])
     ;(deps as { createExtensionRegistry: unknown }).createExtensionRegistry =
       (() => ({
         list: async () =>

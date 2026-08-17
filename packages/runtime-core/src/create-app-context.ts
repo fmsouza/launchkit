@@ -502,8 +502,14 @@ export const createAppContext = (
     fileSource: deps.createDirExtensionFileSource(paths.providerPluginDir, {}),
     logger: extensionsLog,
   })
-  /** Contribution ids whose transport declares a `launch` block — the ones Spectrum supervises. */
+  /**
+   * Contribution ids of ENABLED extensions whose transport declares a `launch` block — the ones
+   * Spectrum supervises. Gated on `enabled` for the same reason `providerDescriptors` is: an
+   * installed-but-disabled extension must be inert, not merely unlisted.
+   */
   let supervisedIds: ReadonlySet<string> = new Set<string>()
+  /** Manifest ids the user has enabled. The provider host consults this before spawning anything. */
+  let enabledExtensionIds: ReadonlySet<string> = new Set<string>()
 
   const providerRegistry: ProviderRegistry = {
     get: (key) => providerRegistryCell.get(key),
@@ -531,6 +537,7 @@ export const createAppContext = (
     extensionsLog.error(msg, { kind })
     if (haveGoodExtensionState) return
     supervisedIds = new Set<string>()
+    enabledExtensionIds = new Set<string>()
     providerRegistryCell = deps.createProviderRegistry()
   }
 
@@ -570,17 +577,23 @@ export const createAppContext = (
         abandonRefresh("extension load failed", listed.error.kind)
         return
       }
-      const nextSupervised = new Set<string>(
-        listed.value.flatMap((e) =>
-          e.manifest.contributes.providers
-            .filter((p) => p.transport.launch !== undefined)
-            .map((p) => String(p.id)),
-        ),
-      )
-
       const enabledIds = cfg.providerPlugins
         .filter((p) => p.enabled)
         .map((p) => String(p.id))
+      const nextEnabled = new Set<string>(enabledIds)
+      // SECURITY: only an ENABLED extension's contribution is supervised — the same filter
+      // `providerDescriptors` applies. A disabled extension that reached this set would have
+      // its `launch.command` spawned with the secrets of whatever provider named its id.
+      const nextSupervised = new Set<string>(
+        listed.value
+          .filter((e) => nextEnabled.has(String(e.manifest.id)))
+          .flatMap((e) =>
+            e.manifest.contributes.providers
+              .filter((p) => p.transport.launch !== undefined)
+              .map((p) => String(p.id)),
+          ),
+      )
+
       const descriptors = await nextRegistry.providerDescriptors(enabledIds)
       if (!descriptors.ok) {
         abandonRefresh(
@@ -593,6 +606,7 @@ export const createAppContext = (
 
       // The atomic swap. No await may appear between these assignments.
       extensionRegistryCell = nextRegistry
+      enabledExtensionIds = nextEnabled
       supervisedIds = nextSupervised
       providerRegistryCell = nextProviders
       haveGoodExtensionState = true
@@ -630,6 +644,8 @@ export const createAppContext = (
 
   const providerHost = deps.createProviderHost({
     registry: extensionRegistry,
+    // Reads the CELL, not a snapshot: the host is built once and must see every later refresh.
+    isEnabled: (extensionId: string) => enabledExtensionIds.has(extensionId),
     resolver,
     spawner: deps.createBunProcessSpawner(),
     allocator: deps.createLoopbackPortAllocator(),

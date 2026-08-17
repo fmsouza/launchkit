@@ -15,9 +15,10 @@ export interface ProviderRegistry {
  * Build a provider registry over the builtin catalog plus zero or more plugin descriptors.
  *
  * A plugin descriptor whose key is not `plugin:`-prefixed is DISCARDED — a plugin may never
- * claim or shadow a builtin key. Duplicate plugin keys resolve first-wins; the caller
- * (`@spectrum/extensions`) rejects duplicates before they reach here, so this is a
- * defensive tiebreak rather than the enforcement point.
+ * claim or shadow a builtin key. Duplicate plugin keys resolve first-wins. That tiebreak is
+ * NOT the enforcement point and must not be relied on: `@spectrum/extensions` refuses a
+ * duplicate contribution id outright, because first-wins here would still leave the SUPERVISOR
+ * free to spawn the loser's launch block for the winner's key.
  *
  * `createProviderRegistry()` with no plugins is behaviourally identical to the previous
  * static catalog.

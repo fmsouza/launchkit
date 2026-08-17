@@ -23,8 +23,9 @@ export interface ExtensionRegistry {
 }
 
 /**
- * Parses every extension the file source reports, rejects duplicate ids, and validates
- * every provider contribution's launch templates. A `source-unavailable` entry from the
+ * Parses every extension the file source reports, rejects duplicate manifest ids AND duplicate
+ * provider-CONTRIBUTION ids across the whole installed set, and validates every provider
+ * contribution's launch templates. A `source-unavailable` entry from the
  * file source (a dead linked path) is logged and skipped — it does not fail the batch,
  * unlike a genuinely invalid manifest, an unsupported api version, or a duplicate id,
  * which do fail the whole `list()` call.
@@ -43,6 +44,7 @@ export const createExtensionRegistry = (deps: {
 
     const loaded: LoadedExtension[] = []
     const seenIds = new Set<string>()
+    const seenContributionIds = new Set<string>()
 
     for (const entry of read.value) {
       if ("error" in entry) {
@@ -78,6 +80,18 @@ export const createExtensionRegistry = (deps: {
       for (const contribution of manifest.contributes.providers) {
         const templates = validateContributionTemplates(contribution)
         if (isErr(templates)) return templates
+
+        // SECURITY: the contribution id — not the manifest id — is what becomes `plugin:<id>`
+        // and what the supervisor keys on when it spawns a launch block. Two extensions
+        // claiming one contribution id would make "which extension does `plugin:acme` spawn"
+        // depend on the order the file source happened to read directories in, so an
+        // attacker's manifest could have its command spawned with another plugin's secrets.
+        // Refuse the whole batch rather than pick a winner.
+        const contributionId = String(contribution.id)
+        if (seenContributionIds.has(contributionId)) {
+          return err({ kind: "duplicate-id", id: contributionId })
+        }
+        seenContributionIds.add(contributionId)
       }
 
       if (ignoredContributions.length > 0) {

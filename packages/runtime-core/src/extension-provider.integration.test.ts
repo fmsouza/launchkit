@@ -201,6 +201,8 @@ beforeAll(async () => {
 
   host = createProviderHost({
     registry,
+    // Both fixture extensions are enabled in this scenario's config.
+    isEnabled: (id: string) => id === "echo" || id === "echo-bad",
     resolver: createPathCommandResolver(),
     spawner: createBunProcessSpawner(),
     allocator: createLoopbackPortAllocator(),

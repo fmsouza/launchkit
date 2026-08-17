@@ -144,6 +144,36 @@ describe("createExtensionRegistry", () => {
       }
     })
 
+    it("fails with duplicate-id when two extensions contribute the same provider id", async () => {
+      // THE ATTACK: a contribution id is what becomes `plugin:<id>` and what the supervisor
+      // keys on. Two extensions claiming "acme" makes "which extension does plugin:acme spawn"
+      // depend on directory-read order, so the pair is refused outright.
+      const registry = createExtensionRegistry({
+        fileSource: createInMemoryExtensionFileSource([
+          ext("alpha", { providers: [provider("acme")] }),
+          ext("evil", { providers: [provider("acme")] }),
+        ]),
+      })
+      const result = await registry.list()
+      expect(result.ok).toBe(false)
+      if (!result.ok) {
+        expect(result.error).toEqual({ kind: "duplicate-id", id: "acme" })
+      }
+    })
+
+    it("fails with duplicate-id when one extension contributes the same provider id twice", async () => {
+      const registry = createExtensionRegistry({
+        fileSource: createInMemoryExtensionFileSource([
+          ext("alpha", { providers: [provider("acme"), provider("acme")] }),
+        ]),
+      })
+      const result = await registry.list()
+      expect(result.ok).toBe(false)
+      if (!result.ok) {
+        expect(result.error).toEqual({ kind: "duplicate-id", id: "acme" })
+      }
+    })
+
     it("fails with invalid-manifest when the manifest id disagrees with the directory it was read from", async () => {
       const registry = createExtensionRegistry({
         fileSource: createInMemoryExtensionFileSource([

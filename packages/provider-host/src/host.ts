@@ -61,6 +61,15 @@ export interface ProviderHost {
 
 export type ProviderHostDeps = {
   readonly registry: ExtensionRegistry
+  /**
+   * Whether an installed extension (by MANIFEST id) is enabled in the user's config.
+   *
+   * SECURITY: `registry.list()` reports every extension on disk, enabled or not. Without this
+   * gate a disabled extension's `launch.command` is spawnable the moment anything asks for a
+   * contribution id it declares — with the resolved secrets of whichever provider record named
+   * that id rendered into its environment.
+   */
+  readonly isEnabled: (extensionId: string) => boolean
   readonly resolver: CommandResolver
   readonly spawner: ProcessSpawner
   readonly allocator: PortAllocator
@@ -105,11 +114,20 @@ type Instance = {
   inflight: Promise<Result<RunningPlugin, PluginError>> | undefined
 }
 
+/**
+ * The contribution an ENABLED extension declares under `providerId`.
+ *
+ * The enabled filter is not a nicety: the registry reports everything installed, and a disabled
+ * extension must never have its launch block reached. Contribution ids are unique across the
+ * installed set (`@spectrum/extensions` rejects duplicates), so at most one match exists.
+ */
 const findContribution = (
   extensions: readonly LoadedExtension[],
+  isEnabled: (extensionId: string) => boolean,
   providerId: string,
 ): ProviderContribution | undefined => {
   for (const extension of extensions) {
+    if (!isEnabled(String(extension.manifest.id))) continue
     const match = extension.manifest.contributes.providers.find(
       (p) => p.id === providerId,
     )
@@ -150,7 +168,11 @@ export const createProviderHost = (deps: ProviderHostDeps): ProviderHost => {
     const listed = await deps.registry.list()
     if (isErr(listed)) return listed
 
-    const contribution = findContribution(listed.value, providerId)
+    const contribution = findContribution(
+      listed.value,
+      deps.isEnabled,
+      providerId,
+    )
     if (contribution === undefined)
       return err({ kind: "not-found", id: providerId })
 

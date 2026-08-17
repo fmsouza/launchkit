@@ -23,8 +23,8 @@ and stopping it on demand.
   — polls with backoff (50 ms → 500 ms cap) until the probe reports `ok` and, when
   `expectedToken` is defined, a matching token, or the deadline passes
 
-- `createProviderHost(deps: { registry, resolver, spawner, allocator, probe, sleep, now,
-  tokenGen, logger?, maxRestarts? }): ProviderHost` with
+- `createProviderHost(deps: { registry, isEnabled, resolver, spawner, allocator, probe, sleep,
+  now, tokenGen, logger?, maxRestarts? }): ProviderHost` with
   `ensureRunning({ instanceKey, providerId, secrets })`, `status(instanceKey)`,
   `stop(instanceKey)`, `stopAllFor(providerId)`, `stopAll()`,
   `retainOnly(instanceKeys)` — stop and FORGET every instance the set does not name
@@ -40,6 +40,12 @@ and stopping it on demand.
   mismatched token rather than accepting or failing immediately, because the real plugin may
   simply not have bound yet. A plugin with no launch block is user-run, has no token, and is
   not checked (`expectedToken === undefined`).
+- SECURITY: `registry.list()` reports every extension ON DISK, enabled or not, so every lookup
+  goes through the injected `isEnabled` (by MANIFEST id). Without it a disabled extension's
+  `launch.command` is spawnable the moment anything asks for a contribution id it declares —
+  with the resolved secrets of whichever provider record named that id in its environment.
+  Contribution ids are unique across the installed set (`@spectrum/extensions` refuses
+  duplicates), so at most one enabled extension can answer for a given contribution id.
 - The host token is a credential — never logged.
 - Process state is keyed by `instanceKey` (the proxy factory's provider cache key), not by
   contribution id: two Provider records can target one contribution with different API keys,

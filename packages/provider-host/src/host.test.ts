@@ -146,6 +146,8 @@ type HostOptions = {
   readonly maxRestarts?: number
   readonly logger?: Logger
   readonly spawnFailure?: ProcError
+  /** Defaults to "every fixture extension is enabled"; the fixture manifest id is `acme-ext`. */
+  readonly enabledExtensionIds?: ReadonlySet<string>
 }
 
 const host = (options: HostOptions = {}) => {
@@ -178,6 +180,8 @@ const host = (options: HostOptions = {}) => {
       "acme-server": "/opt/acme/bin/acme-server",
     }),
     spawner,
+    isEnabled: (extensionId: string) =>
+      options.enabledExtensionIds?.has(extensionId) ?? true,
     allocator: { allocate: async () => ok(nextPort++) },
     probe,
     sleep: async (ms: number) => {
@@ -450,6 +454,20 @@ describe("createProviderHost", () => {
     expect(spawner.kills).toEqual([100, 101])
     expect(h.status("k1")).toBe("stopped")
     expect(h.status("k2")).toBe("stopped")
+  })
+
+  it("never spawns a contribution whose extension is disabled", async () => {
+    // THE ATTACK: `enabled` gated only which DESCRIPTORS were published, while the supervisor
+    // scanned every installed extension. A disabled extension whose contribution id is asked
+    // for would therefore have its `launch.command` spawned — with the resolved secrets of
+    // whichever provider record named that id rendered into its environment.
+    const { host: h, spawner } = host({
+      enabledExtensionIds: new Set<string>(),
+    })
+    const result = await h.ensureRunning(run())
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.error.kind).toBe("not-found")
+    expect(spawner.calls).toHaveLength(0)
   })
 
   it("stops the instances retainOnly no longer names and keeps the rest", async () => {
