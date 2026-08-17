@@ -1,5 +1,6 @@
 export * from "./GeneralPage"
 export * from "./ProvidersPage"
+export * from "./ExtensionsPage"
 export * from "./ModelsPage"
 export * from "./HarnessesPage"
 export * from "./DataPage"

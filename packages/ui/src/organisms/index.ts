@@ -1,4 +1,5 @@
 export * from "./ProviderList"
+export * from "./ExtensionList"
 export * from "./ProviderForm"
 export * from "./ModelTable"
 export * from "./ProjectGroup"

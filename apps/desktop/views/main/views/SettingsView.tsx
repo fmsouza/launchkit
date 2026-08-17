@@ -6,6 +6,7 @@ import { useNotifications } from "../hooks/useNotifications"
 import { useUpdate } from "../hooks/useUpdate"
 import {
   DataPage,
+  ExtensionsPage,
   GeneralPage,
   HarnessesPage,
   ModelsPage,
@@ -19,6 +20,7 @@ const SECTIONS = [
   { key: "providers", label: "Providers" },
   { key: "models", label: "Models" },
   { key: "harnesses", label: "Harnesses" },
+  { key: "extensions", label: "Extensions" },
   { key: "data", label: "Data" },
 ] as const
 
@@ -85,6 +87,8 @@ const detailFor = (section: string): ReactNode => {
       return <ModelsPage />
     case "harnesses":
       return <HarnessesPage />
+    case "extensions":
+      return <ExtensionsPage />
     case "data":
       return <DataPageConnected />
     case "updates":

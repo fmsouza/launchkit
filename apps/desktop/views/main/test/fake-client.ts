@@ -56,6 +56,11 @@ const METHOD_NAMES = [
   "readUploadThumbnail",
   "readUploadDataUrl",
   "openUploadExternal",
+  "listExtensions",
+  "installExtension",
+  "setExtensionEnabled",
+  "updateExtension",
+  "removeExtension",
 ] as const satisfies ReadonlyArray<keyof IpcClient>
 
 /**
