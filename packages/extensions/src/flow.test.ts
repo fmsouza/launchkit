@@ -208,4 +208,16 @@ describe("FlowResponseSchema", () => {
       }).success,
     ).toBe(false)
   })
+
+  it("rejects a response whose session id is empty", () => {
+    const parsed = FlowResponseSchema.safeParse({
+      sessionId: "",
+      step: { kind: "done" },
+    })
+    expect(parsed.success).toBe(false)
+    if (!parsed.success)
+      expect(parsed.error.issues.some((i) => i.path[0] === "sessionId")).toBe(
+        true,
+      )
+  })
 })
