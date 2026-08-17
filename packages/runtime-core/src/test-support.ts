@@ -186,9 +186,14 @@ export const buildFakeAppContextDeps = (
         calls.launchHarness = _a
         return (..._p: unknown[]) => ok({ pid: 1, exited: Promise.resolve(0) })
       }) as never),
+    // Shaped, not `record(...)`: the composition root's registry façade calls `get`/`list`/
+    // `catalog` straight through to whatever this returns.
     createProviderRegistry:
       overrides.createProviderRegistry ??
-      (record("createProviderRegistry") as never),
+      (((...a: unknown[]) => {
+        calls.createProviderRegistry = a
+        return { get: () => undefined, list: () => [], catalog: () => [] }
+      }) as never),
     // Extension/plugin layer: SHAPED stubs, not `record(...)` — the composition root calls
     // methods on the returned objects during its initial refresh, and `{ __stub }` has none.
     createDirExtensionFileSource:

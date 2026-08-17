@@ -98,8 +98,17 @@ export const createProviderFactory = (deps: {
       instance = mod.create(
         buildSdkOptions(descriptor, effectiveConfig, secrets),
       )
-      if (effectiveCacheKey !== undefined)
+      if (cacheKey !== undefined && effectiveCacheKey !== undefined) {
+        // Drop every other entry for this provider configuration before inserting. A supervised
+        // plugin comes back on a FRESH port after each restart, so without this the cache would
+        // gain one permanently unreachable instance per restart instead of staying bounded by
+        // the configured provider count. Restarts are rare — scanning the small key set is fine.
+        const prefix = `${cacheKey}|`
+        for (const key of instanceCache.keys()) {
+          if (key.startsWith(prefix)) instanceCache.delete(key)
+        }
         instanceCache.set(effectiveCacheKey, instance)
+      }
     }
     const inst = instance as (id: string) => unknown
     return ok(typeof inst === "function" ? inst(providerModel) : instance)

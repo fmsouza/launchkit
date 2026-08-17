@@ -494,12 +494,33 @@ export const createAppContext = (
   const getDescriptor = (key: string): ProviderDescriptor | undefined =>
     providerRegistry.get(key)
 
+  /** False until one refresh has produced a complete, consistent view of the installed set. */
+  let haveGoodExtensionState = false
+
+  /**
+   * Give up on this refresh. At startup (no good state yet) that means falling back to builtins
+   * only; on a LATER refresh the last known-good view is KEPT — a momentary fs error must not
+   * silently demote a supervised plugin to "not supervised", which is how plugin traffic would
+   * end up resolved against an SDK's cloud default.
+   */
+  const abandonRefresh = (msg: string, kind: string): void => {
+    extensionsLog.error(msg, { kind })
+    if (haveGoodExtensionState) return
+    supervisedIds = new Set<string>()
+    providerRegistryCell = deps.createProviderRegistry()
+  }
+
   /**
    * Re-read the installed extensions and rebuild everything derived from them. A failure is
    * logged (`{ kind }` only) and swallowed: a broken plugin manifest must never stop the app
-   * from starting, so the process continues on builtins only.
+   * from starting.
+   *
+   * Everything is computed into locals and the three cells are swapped in ONE synchronous block
+   * at the end. A torn intermediate state — a new supervised set against the previous provider
+   * registry — would make a supervised contribution look unsupervised for the width of an await,
+   * and an unsupervised plugin resolves to no base url at all.
    */
-  const refreshExtensions = async (): Promise<void> => {
+  const runRefresh = async (): Promise<void> => {
     try {
       const loaded = await config.load()
       const cfg = loaded.ok ? loaded.value : (liveConfig ?? defaultConfig())
@@ -512,25 +533,20 @@ export const createAppContext = (
             : [],
         ),
       )
-      const next = deps.createExtensionRegistry({
+      const nextRegistry = deps.createExtensionRegistry({
         fileSource: deps.createDirExtensionFileSource(
           paths.providerPluginDir,
           linkMap,
         ),
         logger: extensionsLog,
       })
-      extensionRegistryCell = next
 
-      const listed = await next.list()
+      const listed = await nextRegistry.list()
       if (!listed.ok) {
-        extensionsLog.error("extension load failed", {
-          kind: listed.error.kind,
-        })
-        supervisedIds = new Set<string>()
-        providerRegistryCell = deps.createProviderRegistry()
+        abandonRefresh("extension load failed", listed.error.kind)
         return
       }
-      supervisedIds = new Set<string>(
+      const nextSupervised = new Set<string>(
         listed.value.flatMap((e) =>
           e.manifest.contributes.providers
             .filter((p) => p.transport.launch !== undefined)
@@ -541,27 +557,48 @@ export const createAppContext = (
       const enabledIds = cfg.providerPlugins
         .filter((p) => p.enabled)
         .map((p) => String(p.id))
-      const descriptors = await next.providerDescriptors(enabledIds)
+      const descriptors = await nextRegistry.providerDescriptors(enabledIds)
       if (!descriptors.ok) {
-        extensionsLog.error("extension descriptors unavailable", {
-          kind: descriptors.error.kind,
-        })
-        providerRegistryCell = deps.createProviderRegistry()
+        abandonRefresh(
+          "extension descriptors unavailable",
+          descriptors.error.kind,
+        )
         return
       }
-      providerRegistryCell = deps.createProviderRegistry(descriptors.value)
+      const nextProviders = deps.createProviderRegistry(descriptors.value)
+
+      // The atomic swap. No await may appear between these assignments.
+      extensionRegistryCell = nextRegistry
+      supervisedIds = nextSupervised
+      providerRegistryCell = nextProviders
+      haveGoodExtensionState = true
     } catch (cause) {
-      // Defensive: every adapter below returns a Result, so this is unreachable by design.
-      // It exists so an unexpected throw degrades to "builtins only" instead of rejecting
+      // Defensive: every adapter above returns a Result, so this is unreachable by design.
+      // It exists so an unexpected throw degrades gracefully instead of rejecting
       // `extensionsReady` — which the proxy's routing path awaits on every request.
-      extensionsLog.error("extension refresh failed", {
-        kind: cause instanceof Error ? cause.name : "unknown",
-      })
+      abandonRefresh(
+        "extension refresh failed",
+        cause instanceof Error ? cause.name : "unknown",
+      )
     }
   }
 
+  /**
+   * The most recent refresh. Reassigned on every call so the routing path always awaits the
+   * refresh actually in flight — pinning it to the first one would let a request read the state
+   * a later refresh is midway through replacing.
+   */
+  let extensionsReady: Promise<void> = Promise.resolve()
+
+  /** Refreshes are SERIALIZED: two overlapping calls must not interleave their reads. */
+  const refreshExtensions = (): Promise<void> => {
+    const next = extensionsReady.then(runRefresh)
+    extensionsReady = next
+    return next
+  }
+
   /** The initial load, started at construction and awaited by the routing path below. */
-  const extensionsReady: Promise<void> = refreshExtensions()
+  refreshExtensions()
 
   const providerHost = deps.createProviderHost({
     registry: extensionRegistry,
@@ -581,28 +618,49 @@ export const createAppContext = (
    * plugin servers with no `launch` block — falls through to the ordinary `serverUrl` path.
    */
   const resolveBaseUrl: ResolveBaseUrl = async (input) => {
-    // Close the startup race: `supervisedIds` is empty until the first refresh resolves.
+    // Await the refresh IN FLIGHT, not merely the first one: `supervisedIds` is empty until the
+    // initial load resolves, and a later refresh replaces it wholesale.
     await extensionsReady
     const id = pluginIdOf(String(input.descriptor.key))
-    if (id === undefined || !supervisedIds.has(id))
-      return defaultResolveBaseUrl(input)
-    // Draft probe: refusing beats spawning a throwaway child process per keystroke.
-    if (input.instanceKey === undefined)
+    if (id === undefined) return defaultResolveBaseUrl(input) // builtin
+
+    if (supervisedIds.has(id)) {
+      // Draft probe: refusing beats spawning a throwaway child process per keystroke.
+      if (input.instanceKey === undefined)
+        return err({
+          kind: "bad-request",
+          detail: "save the provider before testing a supervised extension",
+        })
+      const running = await providerHost.ensureRunning({
+        instanceKey: input.instanceKey,
+        providerId: id,
+        secrets: input.secrets,
+      })
+      if (!running.ok)
+        return err({
+          kind: "provider-failed",
+          detail: `extension ${id} not running`,
+        })
+      return ok(running.value.baseUrl)
+    }
+
+    // A user-run plugin server: no launch block, so its url comes from the `serverUrl` config
+    // field as for any builtin.
+    //
+    // SECURITY (defence in depth): a plugin-contributed provider is local BY DEFINITION, and
+    // plugin descriptors carry no `defaultBaseUrl`. If it resolves to no url at all, the AI SDK
+    // would silently fall back to its own cloud endpoint (e.g. api.openai.com) and send the
+    // plugin's secrets there. Refuse instead — any bug that lands here becomes a failed request
+    // rather than an exfiltration.
+    const hasUrl =
+      (input.config.serverUrl ?? "") !== "" ||
+      (input.descriptor.sdkMapping.defaultBaseUrl ?? "") !== ""
+    if (!hasUrl)
       return err({
         kind: "bad-request",
-        detail: "save the provider before testing a supervised extension",
+        detail: `extension ${id} has no server url`,
       })
-    const running = await providerHost.ensureRunning({
-      instanceKey: input.instanceKey,
-      providerId: id,
-      secrets: input.secrets,
-    })
-    if (!running.ok)
-      return err({
-        kind: "provider-failed",
-        detail: `extension ${id} not running`,
-      })
-    return ok(running.value.baseUrl)
+    return defaultResolveBaseUrl(input)
   }
 
   // proxy provider layer: factory (secrets + lazy SDK loader) + real streamText gateway

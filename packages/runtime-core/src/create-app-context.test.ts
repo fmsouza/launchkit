@@ -13,6 +13,7 @@ import type { HarnessId } from "@spectrum/types"
 import { err, ok } from "@spectrum/utils"
 import { createAppContext } from "./create-app-context"
 import type { CreateAppContextDeps } from "./deps"
+import { buildFakeAppContextDeps } from "./test-support"
 
 /** Record which constructor saw which argument, returning inert stand-ins. */
 const makeFakeDeps = (): {
@@ -510,6 +511,16 @@ describe("createAppContext wiring", () => {
     expect((ctx.providerRegistry.get("openai") as { key: string }).key).toBe(
       latest,
     )
+  })
+
+  it("builds a usable provider registry from the shared buildFakeAppContextDeps stand-ins", () => {
+    // `buildFakeAppContextDeps` is what apps/desktop and apps/cli construct contexts with, and
+    // the registry façade calls straight through to whatever its stub returns — so an inert
+    // `{ __stub }` there is a TypeError waiting for the first consumer that reads the field.
+    const ctx = createAppContext(buildFakeAppContextDeps())
+    expect(ctx.providerRegistry.list()).toEqual([])
+    expect(ctx.providerRegistry.catalog()).toEqual([])
+    expect(ctx.providerRegistry.get("openai")).toBeUndefined()
   })
 
   it("stops every supervised plugin process when shutdown is called", async () => {
@@ -1196,5 +1207,363 @@ describe("createAppContext ACP driver wiring", () => {
       env: {},
     })
     expect(started).toBe(true)
+  })
+})
+
+/**
+ * The base-url resolver the composition root injects into the provider factory. It is the single
+ * point where a plugin-contributed provider's traffic is aimed, so every branch is asserted here
+ * through the recorded `createProviderFactory` argument.
+ */
+describe("createAppContext resolveBaseUrl", () => {
+  type ResolveResult = {
+    readonly ok: boolean
+    readonly value?: unknown
+    readonly error?: { readonly kind: string; readonly detail?: string }
+  }
+  type Resolve = (input: {
+    descriptor: unknown
+    config: Readonly<Record<string, string>>
+    secrets: Readonly<Record<string, string>>
+    instanceKey: string | undefined
+  }) => Promise<ResolveResult>
+
+  const resolveOf = (calls: Record<string, unknown[]>): Resolve =>
+    (calls.createProviderFactory?.[0] as { resolveBaseUrl: Resolve })
+      .resolveBaseUrl
+
+  /** A gate a test can hold a refresh open on. */
+  const makeGate = (): { wait: Promise<void>; open: () => void } => {
+    let open = (): void => {}
+    const wait = new Promise<void>((resolve) => {
+      open = () => {
+        resolve()
+      }
+    })
+    return { wait, open }
+  }
+
+  /** A LoadedExtension-shaped record; `launch` present ⇒ Spectrum supervises the contribution. */
+  const extension = (id: string, supervised: boolean): unknown => ({
+    manifest: {
+      id,
+      contributes: {
+        providers: [
+          {
+            id,
+            transport: {
+              kind: "http",
+              wire: "openai",
+              ...(supervised
+                ? { launch: { command: "srv", args: [], envTemplate: {} } }
+                : {}),
+            },
+          },
+        ],
+      },
+    },
+    ignoredContributions: [],
+    dir: `/plugins/${id}`,
+  })
+
+  /** A plugin descriptor: no `defaultBaseUrl`, exactly as `descriptorFromContribution` builds. */
+  const pluginDescriptor = (id: string): unknown => ({
+    key: `plugin:${id}`,
+    sdkMapping: { baseUrlOption: "baseURL", apiKey: { kind: "option" } },
+  })
+
+  /** Wire an extension registry whose `list` reports `extensions` (optionally behind a gate). */
+  const withExtensions = (
+    deps: CreateAppContextDeps,
+    extensions: () => readonly unknown[],
+    gate?: () => Promise<void> | undefined,
+  ): void => {
+    ;(deps as { createExtensionRegistry: unknown }).createExtensionRegistry =
+      (() => ({
+        list: async () => {
+          const held = gate?.()
+          if (held !== undefined) await held
+          return ok(extensions())
+        },
+        providerDescriptors: async () => ok([]),
+      })) as never
+  }
+
+  it("resolves a supervised extension to the live loopback url from the provider host", async () => {
+    const { deps, calls } = makeFakeDeps()
+    withExtensions(deps, () => [extension("acme", true)])
+    const seen: unknown[] = []
+    ;(deps as { createProviderHost: unknown }).createProviderHost = (() => ({
+      ensureRunning: async (input: unknown) => {
+        seen.push(input)
+        return ok({ baseUrl: "http://127.0.0.1:45001", pid: 7 })
+      },
+      status: () => "running",
+      stop: async () => undefined,
+      stopAllFor: async () => undefined,
+      stopAll: async () => undefined,
+    })) as never
+
+    const ctx = createAppContext(deps)
+    await ctx.refreshExtensions()
+    const r = await resolveOf(calls)({
+      descriptor: pluginDescriptor("acme"),
+      config: {},
+      secrets: { apiKey: "k" },
+      instanceKey: "inst-1",
+    })
+
+    expect(r.ok && r.value).toBe("http://127.0.0.1:45001")
+    expect(seen).toEqual([
+      { instanceKey: "inst-1", providerId: "acme", secrets: { apiKey: "k" } },
+    ])
+  })
+
+  it("refuses the draft-probe path for a supervised extension instead of spawning a process", async () => {
+    const { deps, calls } = makeFakeDeps()
+    withExtensions(deps, () => [extension("acme", true)])
+    let ensureRunningCalls = 0
+    ;(deps as { createProviderHost: unknown }).createProviderHost = (() => ({
+      ensureRunning: async () => {
+        ensureRunningCalls += 1
+        return err({ kind: "not-found", id: "acme" })
+      },
+      status: () => "stopped",
+      stop: async () => undefined,
+      stopAllFor: async () => undefined,
+      stopAll: async () => undefined,
+    })) as never
+
+    const ctx = createAppContext(deps)
+    await ctx.refreshExtensions()
+    const r = await resolveOf(calls)({
+      descriptor: pluginDescriptor("acme"),
+      config: {},
+      secrets: {},
+      instanceKey: undefined,
+    })
+
+    expect(r.ok).toBe(false)
+    expect(r.error?.kind).toBe("bad-request")
+    expect(ensureRunningCalls).toBe(0)
+  })
+
+  it("reports provider-failed when the supervised extension will not start", async () => {
+    const { deps, calls } = makeFakeDeps()
+    withExtensions(deps, () => [extension("acme", true)])
+    ;(deps as { createProviderHost: unknown }).createProviderHost = (() => ({
+      ensureRunning: async () => err({ kind: "spawn-failed", detail: "boom" }),
+      status: () => "failed",
+      stop: async () => undefined,
+      stopAllFor: async () => undefined,
+      stopAll: async () => undefined,
+    })) as never
+
+    const ctx = createAppContext(deps)
+    await ctx.refreshExtensions()
+    const r = await resolveOf(calls)({
+      descriptor: pluginDescriptor("acme"),
+      config: {},
+      secrets: {},
+      instanceKey: "inst-1",
+    })
+
+    expect(r.ok).toBe(false)
+    expect(r.error?.kind).toBe("provider-failed")
+  })
+
+  it("keeps the serverUrl path for a plugin server Spectrum does not launch", async () => {
+    // No `launch` block ⇒ a user-run server: its own `serverUrl` config field still works.
+    const { deps, calls } = makeFakeDeps()
+    withExtensions(deps, () => [extension("selfrun", false)])
+
+    const ctx = createAppContext(deps)
+    await ctx.refreshExtensions()
+    const r = await resolveOf(calls)({
+      descriptor: pluginDescriptor("selfrun"),
+      config: { serverUrl: "http://127.0.0.1:9999" },
+      secrets: {},
+      instanceKey: "inst-1",
+    })
+
+    // undefined ⇒ no override; buildSdkOptions applies config.serverUrl unchanged.
+    expect(r.ok).toBe(true)
+    expect(r.value).toBeUndefined()
+  })
+
+  it("refuses a plugin provider that resolves to no base url at all", async () => {
+    // Defence in depth: a plugin descriptor carries no defaultBaseUrl, so falling through with
+    // no serverUrl would let the AI SDK aim the request — and the plugin's secrets — at its own
+    // cloud endpoint. This guard turns that into a failed request.
+    const { deps, calls } = makeFakeDeps()
+    withExtensions(deps, () => [extension("acme", false)])
+
+    const ctx = createAppContext(deps)
+    await ctx.refreshExtensions()
+    const r = await resolveOf(calls)({
+      descriptor: pluginDescriptor("acme"),
+      config: {},
+      secrets: {},
+      instanceKey: "inst-1",
+    })
+
+    expect(r.ok).toBe(false)
+    expect(r.error?.kind).toBe("bad-request")
+  })
+
+  it("leaves a builtin provider on the ordinary serverUrl path", async () => {
+    const { deps, calls } = makeFakeDeps()
+    withExtensions(deps, () => [])
+    let hostTouched = false
+    ;(deps as { createProviderHost: unknown }).createProviderHost = (() => ({
+      ensureRunning: async () => {
+        hostTouched = true
+        return err({ kind: "not-found", id: "x" })
+      },
+      status: () => "stopped",
+      stop: async () => undefined,
+      stopAllFor: async () => undefined,
+      stopAll: async () => undefined,
+    })) as never
+
+    const ctx = createAppContext(deps)
+    await ctx.refreshExtensions()
+    const r = await resolveOf(calls)({
+      descriptor: { key: "openai", sdkMapping: { baseUrlOption: "baseURL" } },
+      config: {},
+      secrets: {},
+      instanceKey: "inst-1",
+    })
+
+    expect(r.ok).toBe(true)
+    expect(r.value).toBeUndefined()
+    expect(hostTouched).toBe(false)
+  })
+
+  it("waits for the refresh in flight before routing a supervised provider", async () => {
+    // `extensionsReady` must track the LATEST refresh. Pinned to the first one, this request
+    // would read the pre-refresh (empty) supervised set and fall through to the guard — the
+    // routing bug the atomic-swap work exists to prevent.
+    const { deps, calls } = makeFakeDeps()
+    const gate = makeGate()
+    let installed: readonly unknown[] = []
+    let held = false
+    withExtensions(
+      deps,
+      () => installed,
+      () => (held ? gate.wait : undefined),
+    )
+    ;(deps as { createProviderHost: unknown }).createProviderHost = (() => ({
+      ensureRunning: async () =>
+        ok({ baseUrl: "http://127.0.0.1:45002", pid: 9 }),
+      status: () => "running",
+      stop: async () => undefined,
+      stopAllFor: async () => undefined,
+      stopAll: async () => undefined,
+    })) as never
+
+    const ctx = createAppContext(deps)
+    await ctx.refreshExtensions()
+
+    // A second refresh installs the plugin, blocked partway through.
+    installed = [extension("acme", true)]
+    held = true
+    const refresh = ctx.refreshExtensions()
+    const pending = resolveOf(calls)({
+      descriptor: pluginDescriptor("acme"),
+      config: {},
+      secrets: {},
+      instanceKey: "inst-1",
+    })
+    gate.open()
+    await refresh
+
+    const r = await pending
+    expect(r.ok && r.value).toBe("http://127.0.0.1:45002")
+  })
+
+  it("never exposes a half-applied extension set while a refresh is in flight", async () => {
+    // The three cells swap in ONE synchronous block. Swapping the extension registry before the
+    // provider registry (the shape this replaced) publishes a view where a contribution is
+    // already gone from one cell and still present in the other.
+    const { deps } = makeFakeDeps()
+    const gate = makeGate()
+    // Signals that the refresh has actually entered its second await — without this the read
+    // below would happen before the refresh body ever ran, and observe nothing.
+    const parked = makeGate()
+    let made = 0
+    let held = false
+    ;(deps as { createExtensionRegistry: unknown }).createExtensionRegistry =
+      (() => {
+        made += 1
+        const tag = `r${made}`
+        return {
+          list: async () => ok([extension(tag, false)]),
+          providerDescriptors: async () => {
+            if (held) {
+              parked.open()
+              await gate.wait
+            }
+            return ok([])
+          },
+        }
+      }) as never
+
+    const ctx = createAppContext(deps)
+    await ctx.refreshExtensions()
+    const settled = await ctx.extensionRegistry.list()
+    const tagBefore = settled.ok ? settled.value[0]?.manifest.id : undefined
+
+    held = true
+    const refresh = ctx.refreshExtensions()
+    await parked.wait
+    const mid = await ctx.extensionRegistry.list()
+    gate.open()
+    await refresh
+    const done = await ctx.extensionRegistry.list()
+
+    // Mid-flight the PREVIOUS registry is still the published one; only afterwards does the new
+    // one become visible.
+    const tagMid = mid.ok ? mid.value[0]?.manifest.id : undefined
+    const tagDone = done.ok ? done.value[0]?.manifest.id : undefined
+    expect(tagMid).toBe(tagBefore)
+    expect(tagDone).not.toBe(tagBefore)
+  })
+
+  it("keeps the last good extension set when a later refresh fails", async () => {
+    // Falling back to builtins is right at STARTUP. On a re-refresh a momentary fs error must
+    // not demote a supervised plugin — that is precisely the mis-route the guard above catches.
+    const { deps, calls } = makeFakeDeps()
+    let failing = false
+    ;(deps as { createExtensionRegistry: unknown }).createExtensionRegistry =
+      (() => ({
+        list: async () =>
+          failing
+            ? err({ kind: "read-failed", detail: "transient" })
+            : ok([extension("acme", true)]),
+        providerDescriptors: async () => ok([]),
+      })) as never
+    ;(deps as { createProviderHost: unknown }).createProviderHost = (() => ({
+      ensureRunning: async () =>
+        ok({ baseUrl: "http://127.0.0.1:45003", pid: 3 }),
+      status: () => "running",
+      stop: async () => undefined,
+      stopAllFor: async () => undefined,
+      stopAll: async () => undefined,
+    })) as never
+
+    const ctx = createAppContext(deps)
+    await ctx.refreshExtensions()
+    failing = true
+    await ctx.refreshExtensions()
+
+    const r = await resolveOf(calls)({
+      descriptor: pluginDescriptor("acme"),
+      config: {},
+      secrets: {},
+      instanceKey: "inst-1",
+    })
+
+    expect(r.ok && r.value).toBe("http://127.0.0.1:45003")
   })
 })

@@ -205,6 +205,37 @@ describe("createProviderFactory resolveBaseUrl seam", () => {
     expect(loadSdk).toHaveBeenCalledTimes(2)
     expect(captured.map((c) => c.baseURL)).toEqual(urls)
   })
+
+  it("evicts the superseded instance when a supervised plugin restarts on a new port", async () => {
+    // The resolved url is part of the cache key, so without eviction every restart would
+    // permanently retain another SDK instance keyed on a port nothing can reach again.
+    // Returning to a previously-seen url must therefore MISS, not hit a resurrected entry.
+    const loadSdk = mock(async (_d: ProviderDescriptor) => ({
+      create: () => (id: string) => ({ id }),
+    }))
+    const urls = [
+      "http://127.0.0.1:41111",
+      "http://127.0.0.1:41222",
+      "http://127.0.0.1:41111",
+    ]
+    let call = 0
+    const factory = createProviderFactory({
+      secretStore: createSecretStore({
+        backend: createInMemoryKeychainBackend(),
+        idGen: createSequentialIdGen(),
+      }),
+      loadSdk,
+      getDescriptor: registry.get,
+      resolveBaseUrl: async () => ok(urls[call++]),
+    })
+
+    const p = makeProvider()
+    await factory.getModel(p, "m")
+    await factory.getModel(p, "m")
+    await factory.getModel(p, "m")
+
+    expect(loadSdk).toHaveBeenCalledTimes(3)
+  })
 })
 
 describe("createProviderFactory.getModelFromResolved", () => {
