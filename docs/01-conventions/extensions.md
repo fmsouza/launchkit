@@ -300,10 +300,12 @@ spectrum-cli plugin install /abs/path/to/my-extension
 spectrum-cli plugin install /abs/path/to/my-extension --copy
 ```
 
-`plugin update` only applies to a `git` install — it fetches and checks out the
-tracked ref, then re-validates. It is refused, with a distinct message per case, for
-every other install kind, because there is nothing for Spectrum to fetch
-(`ExtensionInstaller.update`, `packages/extensions/src/installer.ts:343-374`):
+`plugin update` only applies to a `git` install — it fetches the tracked ref,
+validates the incoming manifest while it is still only in `FETCH_HEAD`, and checks it
+out only once it passes. An upstream commit whose manifest is broken is refused with
+your working copy untouched and still loadable. It is refused, with a distinct message
+per case, for every other install kind, because there is nothing for Spectrum to fetch
+(`ExtensionInstaller.update`, `packages/extensions/src/installer.ts`):
 
 - a **linked** path install — nothing to fetch, you already control the source
 - a **copied** path install — "reinstall with `--copy` instead," since updating in
@@ -313,14 +315,14 @@ every other install kind, because there is nothing for Spectrum to fetch
 
 Uninstalling a `linked` or `local` extension **never deletes the source directory** —
 only files Spectrum itself wrote (a git clone or a `--copy` snapshot) are removed
-(`ExtensionInstaller.remove`, `installer.ts:424-460`).
+(`ExtensionInstaller.remove`, `installer.ts`).
 
 ### Installing from a private git repository
 
 **A credentialed `https://` source URL is refused at install time**, before any
 network request: `https://user:token@host/repo.git` and `https://token@host/repo.git`
 both fail with an error pointing at SSH or a git credential helper
-(`plan-install.ts:215-220`). Reason: the install record (including the source URL
+(`plan-install.ts`). Reason: the install record (including the source URL
 verbatim) is persisted to `config.json`, and this repo's rule is that secrets live in
 the OS keychain — config stores only a reference, never a credential.
 
@@ -332,8 +334,9 @@ Use instead:
 - git's own credential helper with a bare `https://host/org/repo.git` URL
 
 An `ssh://` URL is refused too, but only if its userinfo carries a **password**
-(`ssh://user:pass@host/...`) — a bare `ssh://user@host/...` is fine
-(`plan-install.ts:222-227`).
+(`ssh://user:pass@host/...`) — a bare `ssh://user@host/...` is fine. The scp-style
+form follows the same rule: `user:pass@host:path` is refused, `git@host:path` is fine
+(`plan-install.ts`).
 
 ### Known limitation
 
