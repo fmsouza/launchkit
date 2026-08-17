@@ -44,18 +44,49 @@ import { err, ok } from "@spectrum/utils"
 
 const FIXTURE = join(import.meta.dir, "fixtures", "echo-openai-server.ts")
 
-/** A provider contribution manifest, as a plugin author would hand-write it. */
-const manifestFor = (id: string, tokenTemplate: string): unknown => ({
+/** Long enough for a cold `bun <file>` start on a loaded CI machine. */
+const READY_TIMEOUT_MS = 20_000
+
+/**
+ * The wrong-token twin never becomes ready, so its readiness wait IS the case's runtime. It can be
+ * shorter than the happy path's without weakening the assertion, because the case does not infer
+ * the reason for the refusal from the clock: the fixture writes a marker the first time it answers
+ * a health request, so the test proves Spectrum's probe was served before asserting the refusal.
+ */
+const BAD_TOKEN_READY_TIMEOUT_MS = 5000
+
+/**
+ * A provider contribution manifest, as a plugin author would hand-write it.
+ *
+ * `readyTimeoutMs` is an explicit parameter rather than a post-hoc patch: a cast-and-mutate would
+ * silently skip the override if the manifest shape ever drifted, quietly turning the wrong-token
+ * case into a 20 s wait instead of failing loudly.
+ */
+const manifestFor = (input: {
+  readonly id: string
+  readonly tokenTemplate: string
+  readonly readyTimeoutMs: number
+}): unknown => ({
   apiVersion: "spectrum.dev/v1",
-  id,
-  name: `Echo (${id})`,
+  id: input.id,
+  name: `Echo (${input.id})`,
   version: "1.0.0",
   contributes: {
     providers: [
       {
-        id,
+        id: input.id,
         descriptor: {
-          label: `Echo ${id}`,
+          label: `Echo ${input.id}`,
+          // Declared so `{{readyMarker}}` is a legal template token: the host renders template
+          // values from the SECRETS it is handed plus the runtime facts, and this fixture needs a
+          // path to touch. A real plugin would use the same mechanism for an api key.
+          secretFields: [
+            {
+              name: "readyMarker",
+              label: "Ready marker path",
+              required: false,
+            },
+          ],
           reasoning: { shape: "none", supportedTiers: [] },
           discovery: { strategy: "openai-models" },
         },
@@ -65,23 +96,19 @@ const manifestFor = (id: string, tokenTemplate: string): unknown => ({
           launch: {
             command: process.execPath,
             args: [FIXTURE, "--port", "{{port}}"],
-            envTemplate: { SPECTRUM_TOKEN: tokenTemplate },
+            envTemplate: {
+              SPECTRUM_TOKEN: input.tokenTemplate,
+              SPECTRUM_READY_MARKER: "{{readyMarker}}",
+            },
             // Root-relative: the host hands the factory a bare `http://127.0.0.1:<port>`.
             healthPath: "/models",
-            // Long enough for a cold `bun <file>` start on CI; only the happy path waits on it.
-            readyTimeoutMs: 20_000,
+            readyTimeoutMs: input.readyTimeoutMs,
           },
         },
       },
     ],
   },
 })
-
-/**
- * The bad-token twin never becomes ready, so its readiness wait is the test's runtime floor —
- * keep it short enough to stay well inside the case's own timeout.
- */
-const BAD_TOKEN_READY_TIMEOUT_MS = 1500
 
 const writeExtension = async (
   root: string,
@@ -144,19 +171,27 @@ beforeAll(async () => {
   tmpRoot = await mkdtemp(join(tmpdir(), "spectrum-extension-e2e-"))
   pluginRoot = join(tmpRoot, "providers")
 
-  await writeExtension(pluginRoot, "echo", manifestFor("echo", "{{hostToken}}"))
+  await writeExtension(
+    pluginRoot,
+    "echo",
+    manifestFor({
+      id: "echo",
+      tokenTemplate: "{{hostToken}}",
+      readyTimeoutMs: READY_TIMEOUT_MS,
+    }),
+  )
 
   // Same manifest, except the env template maps the token to a LITERAL: the fixture then echoes
   // a token Spectrum never minted, which is exactly the port-squatter shape readiness rejects.
-  const bad = manifestFor("echo-bad", "not-the-host-token") as {
-    contributes: {
-      providers: { transport: { launch: { readyTimeoutMs: number } } }[]
-    }
-  }
-  const badLaunch = bad.contributes.providers[0]?.transport.launch
-  if (badLaunch !== undefined)
-    badLaunch.readyTimeoutMs = BAD_TOKEN_READY_TIMEOUT_MS
-  await writeExtension(pluginRoot, "echo-bad", bad)
+  await writeExtension(
+    pluginRoot,
+    "echo-bad",
+    manifestFor({
+      id: "echo-bad",
+      tokenTemplate: "not-the-host-token",
+      readyTimeoutMs: BAD_TOKEN_READY_TIMEOUT_MS,
+    }),
+  )
 
   const registry = createExtensionRegistry({
     fileSource: createDirExtensionFileSource(pluginRoot, {}),
@@ -276,11 +311,20 @@ describe("extension-contributed provider, end to end", () => {
   }, 30_000)
 
   it("refuses to become ready when the fixture echoes the wrong host token", async () => {
+    // The host returns the SAME `write-failed / failed readiness` error whether the token
+    // mismatched or the process never bound, so the refusal alone proves nothing. The marker is
+    // written by the fixture the first time it ANSWERS a health request: its existence means
+    // Spectrum's probe reached a live server and got a reply, leaving the token as the only
+    // possible reason for the refusal.
+    const marker = join(tmpRoot, "bad-probed.marker")
+
     const running = await host.ensureRunning({
       instanceKey: "bad",
       providerId: "echo-bad",
-      secrets: {},
+      secrets: { readyMarker: marker },
     })
+
+    expect(await Bun.file(marker).exists()).toBe(true)
     expect(running.ok).toBe(false)
     expect(host.status("bad")).toBe("failed")
   }, 30_000)

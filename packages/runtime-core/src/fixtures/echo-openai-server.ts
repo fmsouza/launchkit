@@ -20,6 +20,21 @@ const portIndex = Bun.argv.indexOf("--port")
 const port = Number(Bun.argv[portIndex + 1])
 const token = process.env.SPECTRUM_TOKEN ?? ""
 
+/**
+ * Optional path this fixture touches the FIRST time it answers a health request. Its existence is
+ * proof that Spectrum's readiness probe reached this process and got a reply — which is what lets
+ * the wrong-token case assert that readiness refused because of the TOKEN, not because the server
+ * never bound in time.
+ */
+const readyMarker = process.env.SPECTRUM_READY_MARKER ?? ""
+let markerWritten = false
+
+const noteProbed = (): void => {
+  if (readyMarker === "" || markerWritten) return
+  markerWritten = true
+  void Bun.write(readyMarker, `probed on ${port}\n`)
+}
+
 const withToken = (response: Response): Response => {
   response.headers.set("x-spectrum-host-token", token)
   return response
@@ -68,10 +83,12 @@ Bun.serve({
   fetch(req): Response {
     const path = new URL(req.url).pathname.replace(/^\/v1(?=\/|$)/, "")
 
-    if (path === "/models")
+    if (path === "/models") {
+      noteProbed()
       return withToken(
         Response.json({ data: [{ id: "echo-1", object: "model" }] }),
       )
+    }
 
     if (path === "/responses")
       return withToken(
