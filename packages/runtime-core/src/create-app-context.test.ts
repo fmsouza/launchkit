@@ -12,6 +12,7 @@ import {
   createInMemoryRuntimeState,
   providerInstanceKey,
 } from "@spectrum/proxy"
+import { PluginIdSchema } from "@spectrum/types"
 import type { HarnessId } from "@spectrum/types"
 import { err, ok } from "@spectrum/utils"
 import { createAppContext } from "./create-app-context"
@@ -561,6 +562,51 @@ describe("createAppContext wiring", () => {
     await ctx.shutdown()
 
     expect(stopAllCalls).toBe(1)
+  })
+
+  it("wires the extension installer with the resolved plugin root and the CURRENT config's link map, not an empty one", async () => {
+    // Regression pin for the "empty link map bricks every plugin" bug: an installer built once
+    // at wiring time with `{}` cannot see already-installed LINKED extensions in its own
+    // duplicate-contribution-id gate. `deps.createExtensionInstaller` and
+    // `deps.createDirExtensionFileSource` are already recorded by `makeFakeDeps`; this test is
+    // the first to actually assert on them.
+    const { deps, calls } = makeFakeDeps()
+    const linkedInstall = {
+      id: PluginIdSchema.parse("linked"),
+      source: { kind: "path" as const, path: "/work/linked", linked: true },
+      enabled: true,
+    }
+    ;(deps as { createCachedConfigStore: unknown }).createCachedConfigStore = ((
+      ..._a: unknown[]
+    ) => {
+      calls.createCachedConfigStore = _a
+      return {
+        load: async () =>
+          ok({ ...defaultConfig(), providerPlugins: [linkedInstall] }),
+        save: async () => ok(undefined),
+      }
+    }) as never
+
+    const ctx = createAppContext(deps)
+    await ctx.refreshExtensions()
+    // The installer fake's `install` fails immediately (see `makeFakeDeps`), so `refresh()` is
+    // never reached from inside `install` — `calls.createDirExtensionFileSource` therefore
+    // still holds the args the INSTALLER's own construction used, not a later refresh's.
+    await ctx.extensions.install({ source: "https://e.com/a.git" })
+
+    const installerArgs = calls.createExtensionInstaller?.[0] as {
+      pluginRoot: string
+    }
+    expect(installerArgs.pluginRoot).toBe(
+      "/home/tester/.config/spectrum/providers",
+    )
+
+    const fileSourceArgs = calls.createDirExtensionFileSource as unknown as [
+      string,
+      Record<string, string>,
+    ]
+    expect(fileSourceArgs[0]).toBe("/home/tester/.config/spectrum/providers")
+    expect(fileSourceArgs[1]).toEqual({ linked: "/work/linked" })
   })
 
   it("continues with builtins only when the extension registry fails to list", async () => {

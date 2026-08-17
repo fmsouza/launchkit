@@ -43,6 +43,32 @@ const manifestFor = (label: string): unknown => ({
   },
 })
 
+/** A manifest whose MANIFEST id and CONTRIBUTION id can be set independently — needed to
+ * reproduce a duplicate-contribution-id collision between two DIFFERENT extensions. */
+const manifestWith = (input: {
+  readonly manifestId: string
+  readonly contributionId: string
+  readonly label: string
+}): unknown => ({
+  apiVersion: "spectrum.dev/v1",
+  id: input.manifestId,
+  name: input.manifestId,
+  version: "1.0.0",
+  contributes: {
+    providers: [
+      {
+        id: input.contributionId,
+        descriptor: {
+          label: input.label,
+          reasoning: { shape: "none", supportedTiers: [] },
+          discovery: { strategy: "none" },
+        },
+        transport: { kind: "http", wire: "openai" },
+      },
+    ],
+  },
+})
+
 let tmpRoot = ""
 let workingCopy = ""
 let dataDir = ""
@@ -143,5 +169,54 @@ describe("link-mode live reload", () => {
 
     const after = ctx.providerRegistry.get(key)
     expect(after?.label).toBe("Linked v2")
+  })
+})
+
+describe("duplicate-contribution guard sees already-installed linked extensions", () => {
+  it("refuses a second extension that claims a linked extension's contribution id, and leaves the first one intact", async () => {
+    // plugin-a: LINKED (the working copy set up in beforeEach), contributing "linked-plugin".
+    const installedA = await ctx.extensions.install({
+      source: workingCopy,
+      id: "linked-plugin",
+    })
+    expect(installedA.ok).toBe(true)
+    await ctx.refreshExtensions()
+
+    // plugin-b: a DIFFERENT manifest id, installed in COPY mode, claiming the SAME
+    // contribution id ("linked-plugin") that plugin-a already claims. An installer whose file
+    // source can't see plugin-a (an empty link map at wiring time) would let this through —
+    // the exact bug: `collectClaimedContributionIds` reads through the installer's OWN file
+    // source, so if that source doesn't include plugin-a's link entry, plugin-a's claimed
+    // contribution id is invisible to the duplicate check.
+    const copySource = join(tmpRoot, "copy-source")
+    await mkdir(copySource, { recursive: true })
+    await writeFile(
+      join(copySource, "spectrum-extension.json"),
+      JSON.stringify(
+        manifestWith({
+          manifestId: "copy-plugin",
+          contributionId: "linked-plugin",
+          label: "Copy plugin",
+        }),
+        null,
+        2,
+      ),
+      "utf8",
+    )
+
+    const installedB = await ctx.extensions.install({
+      source: copySource,
+      id: "copy-plugin",
+      mode: "copy",
+    })
+    expect(installedB.ok).toBe(false)
+    if (!installedB.ok) expect(installedB.error.kind).toBe("duplicate-id")
+
+    // The rejected install must not have corrupted the first one: a refresh must still see
+    // plugin-a's contribution rather than every plugin vanishing behind a `duplicate-id`
+    // `registry.list()` failure (the actual failure mode before the file-source fix).
+    await ctx.refreshExtensions()
+    const key = pluginKeyOf(PluginIdSchema.parse("linked-plugin"))
+    expect(ctx.providerRegistry.get(key)?.label).toBe("Linked v1")
   })
 })

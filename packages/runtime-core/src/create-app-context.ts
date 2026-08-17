@@ -24,7 +24,10 @@ import type {
 import { demoScript } from "@spectrum/agent-driver"
 import { ThinkingEffortSchema } from "@spectrum/agent-events"
 import { defaultConfig } from "@spectrum/config"
-import type { ExtensionRegistry } from "@spectrum/extensions"
+import type {
+  ExtensionInstaller,
+  ExtensionRegistry,
+} from "@spectrum/extensions"
 import {
   type LaunchParams,
   builtinHarnesses,
@@ -209,6 +212,27 @@ const createListProviderModelsDraft = (
     })
   }
 }
+
+/**
+ * Contribution id → live source directory, for every installed extension whose install mode is
+ * `path` + `linked` — the only mode read live from its working copy rather than the plugin root.
+ * Pure so it can be shared, byte-for-byte, between `runRefresh`'s registry rebuild and the
+ * extension installer's own file source: an installer built from a DIFFERENT (e.g. empty) link
+ * map cannot see already-installed linked extensions in its duplicate-contribution-id gate
+ * (`collectClaimedContributionIds` in `@spectrum/extensions`'s installer), which would silently
+ * admit a colliding contribution id and — on the next refresh, when `registry.list()` finally
+ * sees both — fail every `list()` call with `duplicate-id`, taking every installed plugin down.
+ */
+const computeLinkMap = (
+  cfg: import("@spectrum/config").Config,
+): Readonly<Record<string, string>> =>
+  Object.fromEntries(
+    cfg.providerPlugins.flatMap((p) =>
+      p.source.kind === "path" && p.source.linked
+        ? [[String(p.id), p.source.path] as const]
+        : [],
+    ),
+  )
 
 /**
  * Construct the real adapters and inject them into the wired `AppContext`. FLAT and logic-free:
@@ -567,15 +591,7 @@ export const createAppContext = (
     try {
       const loaded = await config.load()
       const cfg = loaded.ok ? loaded.value : (liveConfig ?? defaultConfig())
-      // Only a LINKED path install is read live from its source dir; every other install mode
-      // lives under the plugin root and needs no link entry.
-      const linkMap: Record<string, string> = Object.fromEntries(
-        cfg.providerPlugins.flatMap((p) =>
-          p.source.kind === "path" && p.source.linked
-            ? [[String(p.id), p.source.path] as const]
-            : [],
-        ),
-      )
+      const linkMap = computeLinkMap(cfg)
       const nextRegistry = deps.createExtensionRegistry({
         fileSource: deps.createDirExtensionFileSource(
           paths.providerPluginDir,
@@ -678,21 +694,55 @@ export const createAppContext = (
     logger: log.child("provider-host"),
   })
 
-  const extensionInstaller = deps.createExtensionInstaller({
-    git: deps.createProcessGitClient({
-      resolver,
-      spawner: deps.createBunProcessSpawner(),
-      capture: deps.createBunCaptureStdout(),
-    }),
-    copier: deps.createFsDirCopier(),
-    // The SAME file source construction the refresh uses, so `removeExtension` deletes from
-    // the one directory the loader reads. A second root here would silently orphan files.
-    fileSource: deps.createDirExtensionFileSource(paths.providerPluginDir, {}),
-    readManifest: deps.createFsReadManifest(),
-    pluginRoot: paths.providerPluginDir,
-    existingInstalls: () => (liveConfig ?? defaultConfig()).providerPlugins,
-    logger: extensionsLog,
+  // Reusable across calls: side-effect-free constructors, no config dependency.
+  const installerGitClient = deps.createProcessGitClient({
+    resolver,
+    spawner: deps.createBunProcessSpawner(),
+    capture: deps.createBunCaptureStdout(),
   })
+  const installerDirCopier = deps.createFsDirCopier()
+  const installerReadManifest = deps.createFsReadManifest()
+
+  /**
+   * Rebuilt on EVERY call, not once at wiring time — unlike everything else above, the
+   * installer's file source must reflect the CURRENT config's link map, not the empty one
+   * that was true when the app started. `collectClaimedContributionIds` (the installer's
+   * duplicate-contribution-id gate) reads through this same file source: an installer wired
+   * once with an empty link map cannot see already-installed LINKED extensions there, so it
+   * would silently admit a second extension claiming the same contribution id — which
+   * `registry.list()` (the SAME source `runRefresh` reads) then refuses outright on every
+   * subsequent refresh, taking every installed plugin down, not just the colliding one.
+   *
+   * Uses the SAME `paths.providerPluginDir` root the refresh uses, so `removeExtension`
+   * deletes from the one directory the loader reads — a second root here would silently
+   * orphan files. A linked id can never reach `removeExtension`'s delete (it always resolves
+   * `join(root, id)`, ignoring the link map by construction — `adapters.ts`) or `extensionDir`
+   * (reachable only from `update`, which refuses every non-`git` source, including every
+   * linked one, before it gets there — see "refuses to update a linked path install" in
+   * `installer.test.ts`), so handing this installer a live link map cannot turn a stray path
+   * into a delete target.
+   */
+  const buildExtensionInstaller = (): ExtensionInstaller => {
+    const cfg = liveConfig ?? defaultConfig()
+    return deps.createExtensionInstaller({
+      git: installerGitClient,
+      copier: installerDirCopier,
+      fileSource: deps.createDirExtensionFileSource(
+        paths.providerPluginDir,
+        computeLinkMap(cfg),
+      ),
+      readManifest: installerReadManifest,
+      pluginRoot: paths.providerPluginDir,
+      existingInstalls: () => cfg.providerPlugins,
+      logger: extensionsLog,
+    })
+  }
+  const extensionInstaller: ExtensionInstaller = {
+    install: (input) => buildExtensionInstaller().install(input),
+    update: (id, install) => buildExtensionInstaller().update(id, install),
+    remove: (id, install, referencingProviderIds) =>
+      buildExtensionInstaller().remove(id, install, referencingProviderIds),
+  }
 
   const extensions = createExtensionAdmin({
     config,
