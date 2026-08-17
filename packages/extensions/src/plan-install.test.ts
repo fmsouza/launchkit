@@ -115,6 +115,27 @@ describe("planInstall — git", () => {
     expect(r.ok).toBe(true)
   })
 
+  it("refuses an ssh:// url whose userinfo embeds a password", () => {
+    const r = planInstall({
+      ...base,
+      source: "ssh://git:hunter2@example.com/me/acme.git",
+    })
+    expect(r.ok).toBe(false)
+    if (!r.ok) {
+      expect(r.error.kind).toBe("invalid-manifest")
+      if (r.error.kind === "invalid-manifest")
+        expect(r.error.detail).not.toContain("hunter2")
+    }
+  })
+
+  it("accepts an ssh:// url with a bare user@ and no password", () => {
+    const r = planInstall({
+      ...base,
+      source: "ssh://deploy@example.com/me/acme.git",
+    })
+    expect(r.ok).toBe(true)
+  })
+
   it("accepts an scp-style url with a git@ username, which is not a credential", () => {
     const r = planInstall({ ...base, source: "git@example.com:me/acme.git" })
     expect(r.ok).toBe(true)

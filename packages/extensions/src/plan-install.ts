@@ -44,6 +44,23 @@ const HTTPS_CREDENTIALS = /^https:\/\/[^/\s]*@/i
 const hasEmbeddedHttpsCredentials = (source: string): boolean =>
   HTTPS_CREDENTIALS.test(source)
 
+const SSH_PREFIX = "ssh://"
+
+/**
+ * `ssh://user@host` is a bare username — SSH authenticates by key, so that carries no
+ * secret. `ssh://user:pass@host` is different: the `:` before the `@` is a password, and
+ * unlike `https://` (refused outright above), the SSH form is common enough with a plain
+ * username that we don't want to refuse the whole scheme — only the password case.
+ */
+const hasSshPasswordUserinfo = (source: string): boolean => {
+  if (!source.startsWith(SSH_PREFIX)) return false
+  const rest = source.slice(SSH_PREFIX.length)
+  const atIndex = rest.indexOf("@")
+  if (atIndex === -1) return false
+  const userinfo = rest.slice(0, atIndex)
+  return userinfo.includes(":")
+}
+
 /**
  * Splits a source's final path-like segment. For a `scheme://` url or an scp-style
  * `user@host:path`, the host is not a candidate segment — only what follows it is.
@@ -199,6 +216,13 @@ export const planInstall = (
     return err({
       kind: "invalid-manifest",
       detail: `git url must not embed credentials — config stores this url verbatim; use an ssh:// or scp-style url, or git's own credential helper, instead: ${redactUrlCredentials(input.source)}`,
+    })
+  }
+
+  if (hasSshPasswordUserinfo(input.source)) {
+    return err({
+      kind: "invalid-manifest",
+      detail: `ssh url must not embed a password — config stores this url verbatim; use a bare ssh://user@host (key-based auth) instead: ${redactUrlCredentials(input.source)}`,
     })
   }
 
