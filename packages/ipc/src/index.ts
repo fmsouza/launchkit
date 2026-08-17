@@ -1,4 +1,5 @@
 export * from "./provider-view"
+export * from "./extension-view"
 export * from "./methods"
 export * from "./errors"
 export * from "./client"

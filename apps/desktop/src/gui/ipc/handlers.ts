@@ -5,12 +5,20 @@ import {
   PermissionModeSchema,
   ThinkingEffortSchema,
 } from "@spectrum/agent-events"
-import type { IpcHandlers, ProviderView } from "@spectrum/ipc"
+import type { Config, PluginInstall } from "@spectrum/config"
+import type { LoadedExtension, PluginError } from "@spectrum/extensions"
+import type {
+  ContributedProviderView,
+  ExtensionView,
+  IpcHandlers,
+  ProviderView,
+} from "@spectrum/ipc"
 import {
   heuristicAttachments,
   validateProviderConfig,
 } from "@spectrum/providers"
-import { SdkProviderSchema, wireModelFor } from "@spectrum/types"
+import { providerInstanceKey } from "@spectrum/proxy"
+import { SdkProviderSchema, pluginKeyOf, wireModelFor } from "@spectrum/types"
 import type { ModelId, ModelRoute, Provider, SecretRef } from "@spectrum/types"
 import { isOk } from "@spectrum/utils"
 import type { GuiContext } from "../../composition"
@@ -55,6 +63,111 @@ const toDataUrl = (mime: string, base64: string): string =>
   `data:${mime};base64,${base64}`
 
 /**
+ * Human-readable detail for a `PluginError`, exhaustive over the closed union
+ * (`@spectrum/extensions`). Used both for `listExtensions`'s "which extension is broken and
+ * why" surfacing and for every other extension-admin failure passed to `fail()`. Never a
+ * secret — `PluginError` never carries one.
+ */
+const describePluginError = (e: PluginError): string => {
+  switch (e.kind) {
+    case "invalid-manifest":
+      return `invalid extension manifest: ${e.detail}`
+    case "unsupported-api-version":
+      return `extension needs a newer version of Spectrum (apiVersion "${e.apiVersion}")`
+    case "duplicate-id":
+      return `duplicate extension id "${e.id}"`
+    case "read-failed":
+      return `could not read: ${e.detail}`
+    case "write-failed":
+      return `could not write: ${e.detail}`
+    case "not-found":
+      return `extension not found: ${e.id}`
+    case "in-use":
+      return `extension "${e.id}" is in use by ${e.providerIds.join(", ")}`
+    case "git-failed":
+      return `git failed: ${e.detail}`
+    case "source-unavailable":
+      return `source unavailable: ${e.path}`
+  }
+}
+
+/**
+ * Project one extension's provider contributions to the IPC view. SECURITY (spec §3):
+ * `launchCommand`/`launchArgs` are the UNRENDERED manifest templates (never rendered — a
+ * rendered arg list can carry a resolved secret) and there is no `env` field at all. Status is
+ * looked up by INSTANCE KEY, not by contribution id: a contribution with no configured
+ * provider record has no child, so it is `"stopped"`.
+ */
+const toContributedProviderViews = (
+  extension: LoadedExtension,
+  config: Config,
+  providerHost: GuiContext["providerHost"],
+): ContributedProviderView[] =>
+  extension.manifest.contributes.providers.map((contribution) => {
+    const key = pluginKeyOf(contribution.id)
+    const launch = contribution.transport.launch
+    const statuses = config.providers
+      .filter((p) => p.sdkProvider === key)
+      .map((p) =>
+        providerHost.status(
+          providerInstanceKey({
+            sdkProvider: p.sdkProvider,
+            config: p.config,
+            secretRefs: p.secrets,
+          }),
+        ),
+      )
+    return {
+      key,
+      label: contribution.descriptor.label,
+      status: statuses.find((s) => s !== "stopped") ?? "stopped",
+      ...(launch === undefined
+        ? {}
+        : { launchCommand: launch.command, launchArgs: [...launch.args] }),
+      secretFieldNames: contribution.descriptor.secretFields.map((f) => f.name),
+    }
+  })
+
+/** Project a loaded (parsed, on-disk) extension + its install record (if any) to the IPC view.
+ * No install record ⇒ a hand-placed directory: `source: { kind: "local" }`, `enabled: false`
+ * (`adapters.ts` scans every subdirectory of the plugin root, installed or not). */
+const toExtensionView = (
+  extension: LoadedExtension,
+  install: PluginInstall | undefined,
+  config: Config,
+  providerHost: GuiContext["providerHost"],
+): ExtensionView => ({
+  id: String(extension.manifest.id),
+  name: extension.manifest.name,
+  version: extension.manifest.version,
+  ...(extension.manifest.description === undefined
+    ? {}
+    : { description: extension.manifest.description }),
+  enabled: install?.enabled ?? false,
+  source: install?.source ?? { kind: "local" },
+  unavailable: false,
+  ignoredContributions: [...extension.ignoredContributions],
+  providers: toContributedProviderViews(extension, config, providerHost),
+})
+
+/**
+ * Reconstruct the row for a linked install whose source directory has vanished:
+ * `registry.list()` skips it (source-unavailable, logged there) rather than failing the whole
+ * batch, so this is built from the install record ALONE — no manifest to read `name`/`version`
+ * from, and no contributed providers (nothing to spawn from a manifest we can't read).
+ */
+const toUnavailableExtensionView = (install: PluginInstall): ExtensionView => ({
+  id: String(install.id),
+  name: String(install.id),
+  version: "unknown",
+  enabled: install.enabled,
+  source: install.source,
+  unavailable: true,
+  ignoredContributions: [],
+  providers: [],
+})
+
+/**
  * Bind the `@spectrum/ipc` contract to the wired subsystems. Each handler is `async` and either
  * returns the validated result shape or throws (the ipc server turns a throw into a `handler-failed`
  * IpcError; nothing leaks a stack trace because the server stringifies `error.message` only).
@@ -90,6 +203,41 @@ export const createIpcHandlers = (ctx: GuiContext): IpcHandlers => {
     const loaded = await ctx.config.load()
     if (!isOk(loaded)) return fail("could not load config")
     return loaded.value
+  }
+
+  /**
+   * Join `ctx.extensionRegistry.list()` with `config.providerPlugins`: every parsed extension
+   * (installed or hand-placed) plus a reconstructed row for every linked install the registry
+   * skipped as source-unavailable. Shared by `listExtensions` and every mutation, which return
+   * the refreshed list so the page needs no second round trip. A registry failure (an
+   * unsupported api version, a duplicate id, an invalid manifest — a REAL error, not the
+   * source-unavailable case, which the registry itself already skips) fails loudly with the
+   * offending kind and identifying field, never collapsed to a generic message.
+   */
+  const listExtensionViews = async (): Promise<ExtensionView[]> => {
+    const config = await loadConfig()
+    const listed = await ctx.extensionRegistry.list()
+    if (!isOk(listed))
+      return fail(
+        `could not list extensions: ${describePluginError(listed.error)}`,
+      )
+
+    const installs = config.providerPlugins
+    const listedIds = new Set(listed.value.map((e) => String(e.manifest.id)))
+
+    const views = listed.value.map((extension) =>
+      toExtensionView(
+        extension,
+        installs.find((i) => String(i.id) === String(extension.manifest.id)),
+        config,
+        ctx.providerHost,
+      ),
+    )
+    const unavailableViews = installs
+      .filter((i) => !listedIds.has(String(i.id)))
+      .map(toUnavailableExtensionView)
+
+    return [...views, ...unavailableViews]
   }
 
   /**
@@ -851,6 +999,64 @@ export const createIpcHandlers = (ctx: GuiContext): IpcHandlers => {
           `could not list provider models: ${describeError(result.error)}`,
         )
       return { models: [...result.value] }
+    },
+
+    // ── Extensions (provider plugins) ─────────────────────────────────────────
+    // Every mutation delegates to `ctx.extensions` (Task 4), which owns both the config write
+    // AND the `refreshExtensions()` call — handlers here never write `providerPlugins` directly.
+    listExtensions: async () => listExtensionViews(),
+
+    installExtension: async (input) => {
+      const installed = await ctx.extensions.install({
+        source: input.source,
+        ...(input.ref === undefined ? {} : { ref: input.ref }),
+        ...(input.id === undefined ? {} : { id: input.id }),
+        ...(input.mode === undefined ? {} : { mode: input.mode }),
+      })
+      if (!isOk(installed))
+        return fail(
+          `could not install extension: ${describePluginError(installed.error)}`,
+        )
+      return listExtensionViews()
+    },
+
+    setExtensionEnabled: async ({ id, enabled }) => {
+      const result = await ctx.extensions.setEnabled(id, enabled)
+      if (!isOk(result))
+        return fail(
+          `could not update extension: ${describePluginError(result.error)}`,
+        )
+      return listExtensionViews()
+    },
+
+    updateExtension: async ({ id }) => {
+      const result = await ctx.extensions.update(id)
+      if (!isOk(result))
+        return fail(
+          `could not update extension: ${describePluginError(result.error)}`,
+        )
+      return listExtensionViews()
+    },
+
+    // `in-use` is returned as DATA (so the page can name the referencing providers), never as
+    // a transport error; every other failure still goes through `fail()`.
+    removeExtension: async ({ id }) => {
+      const result = await ctx.extensions.remove(id)
+      if (!isOk(result)) {
+        if (result.error.kind === "in-use") {
+          return {
+            refused: {
+              kind: "in-use" as const,
+              id: result.error.id,
+              providerIds: [...result.error.providerIds],
+            },
+          }
+        }
+        return fail(
+          `could not remove extension: ${describePluginError(result.error)}`,
+        )
+      }
+      return listExtensionViews()
     },
 
     // ── Client logging ──────────────────────────────────────────────────────

@@ -1,18 +1,25 @@
 import { describe, expect, it } from "bun:test"
 import type { AttachmentKind, AttachmentRef } from "@spectrum/agent-events"
 import type { StoredEvent } from "@spectrum/agent-events"
-import type { Config } from "@spectrum/config"
+import type { Config, PluginInstall } from "@spectrum/config"
 import { defaultConfig } from "@spectrum/config"
+import {
+  createExtensionRegistry,
+  createInMemoryExtensionFileSource,
+} from "@spectrum/extensions"
+import type { PluginError } from "@spectrum/extensions"
 import { resolveHarnessLaunch } from "@spectrum/harnesses"
 import { type Logger, createNoopLogger } from "@spectrum/logger"
 import { createFakeCommandResolver } from "@spectrum/proc"
 import { createProviderRegistry, getDescriptor } from "@spectrum/providers"
 import type { ProviderDescriptor } from "@spectrum/providers"
+import { providerInstanceKey } from "@spectrum/proxy"
 import type { UploadStore } from "@spectrum/runtime-core"
 import type {
   HarnessId,
   ModelId,
   ModelRoute,
+  PluginId,
   Provider,
   ProviderId,
   Session,
@@ -2970,5 +2977,341 @@ describe("createIpcHandlers.openUploadExternal", () => {
     const r = await handlers.openUploadExternal({ id: "sha_evil" })
 
     expect(r).toEqual({ opened: false })
+  })
+})
+
+// --- extensions (provider plugins) -----------------------------------------------------
+
+/** A raw on-disk manifest for the "acme" fixture extension: one provider contribution
+ * ("acme", key `plugin:acme`) with a launch block and one secret field ("apiKey"). */
+const acmeManifestEntry = {
+  id: "acme",
+  raw: {
+    apiVersion: "spectrum.dev/v1",
+    id: "acme",
+    name: "Acme",
+    version: "1.0.0",
+    contributes: {
+      providers: [
+        {
+          id: "acme",
+          descriptor: {
+            label: "Acme",
+            secretFields: [
+              { name: "apiKey", label: "API Key", required: true },
+            ],
+            reasoning: { shape: "none", supportedTiers: [] },
+            discovery: { strategy: "none" },
+          },
+          transport: {
+            kind: "http",
+            wire: "openai",
+            launch: {
+              command: "/usr/local/bin/acme-server",
+              args: ["--port", "{{port}}"],
+              envTemplate: {},
+            },
+          },
+        },
+      ],
+    },
+  },
+}
+
+const acmeInstall: PluginInstall = {
+  id: "acme" as PluginId,
+  source: {
+    kind: "git",
+    url: "https://e.com/acme.git",
+    ref: "main",
+    commit: "c1",
+  },
+  enabled: true,
+}
+
+const linkedInstall = (id: string, path: string): PluginInstall => ({
+  id: id as PluginId,
+  source: { kind: "path", path, linked: true },
+  enabled: true,
+})
+
+const acmeProvider: Provider = {
+  id: "prv_1" as ProviderId,
+  name: "Acme Provider",
+  sdkProvider: "plugin:acme",
+  config: {},
+  secrets: {},
+  models: [],
+}
+
+const instanceKeyFor = (p: Provider): string =>
+  providerInstanceKey({
+    sdkProvider: p.sdkProvider,
+    config: p.config,
+    secretRefs: p.secrets,
+  })
+
+/**
+ * A dedicated, minimal `GuiContext` fake for the extensions IPC surface — deliberately NOT
+ * `makeCtx` above (which has no `extensions`/`extensionRegistry`/`providerHost` fields).
+ * `extensionRegistry` is the REAL `createExtensionRegistry` over an in-memory file source
+ * seeded from `onDisk` fixture ids, so `listExtensions` exercises the real parse/join path,
+ * not a hand-rolled stand-in for it. `extensions` (the admin) is a small fake that mutates
+ * the same config the `config` fake reads/writes and counts every call as one refresh —
+ * mirroring `ExtensionAdmin`'s real invariant of "mutate then always refresh".
+ */
+const extensionsHarness = (
+  opts: {
+    onDisk?: readonly string[]
+    installs?: readonly PluginInstall[]
+    providers?: readonly Provider[]
+    running?: readonly string[]
+  } = {},
+): {
+  handlers: ReturnType<typeof createIpcHandlers>
+  ctx: { refreshes: number }
+} => {
+  const entries = (opts.onDisk ?? []).map((id) => {
+    if (id !== "acme")
+      throw new Error(`extensionsHarness: no fixture for "${id}"`)
+    return acmeManifestEntry
+  })
+  const extensionRegistry = createExtensionRegistry({
+    fileSource: createInMemoryExtensionFileSource(entries),
+  })
+  const running = new Set(opts.running ?? [])
+  const refreshState = { count: 0 }
+
+  let config: Config = {
+    ...defaultConfig(),
+    providerPlugins: [...(opts.installs ?? [])],
+    providers: [...(opts.providers ?? [])],
+  }
+
+  const findInstall = (id: string): PluginInstall | undefined =>
+    config.providerPlugins.find((p) => String(p.id) === id)
+
+  const ctx = {
+    log: createNoopLogger(),
+    config: {
+      load: async (): Promise<Result<Config, never>> => ok(config),
+      save: async (next: Config): Promise<Result<void, never>> => {
+        config = next
+        return ok(undefined)
+      },
+    },
+    extensionRegistry,
+    providerHost: {
+      status: (instanceKey: string) =>
+        running.has(instanceKey) ? "running" : "stopped",
+      ensureRunning: async () => {
+        throw new Error("extensionsHarness: ensureRunning not implemented")
+      },
+      stop: async () => {},
+      stopAllFor: async () => {},
+      stopAll: async () => {},
+      retainOnly: async () => {},
+    },
+    extensions: {
+      install: async (input: { readonly source: string }) => {
+        const install: PluginInstall = {
+          id: "acme" as PluginId,
+          source: { kind: "path", path: input.source, linked: false },
+          enabled: true,
+        }
+        config = {
+          ...config,
+          providerPlugins: [...config.providerPlugins, install],
+        }
+        refreshState.count += 1
+        return ok({ manifest: {}, install, ignoredContributions: [] })
+      },
+      update: async (id: PluginId) => {
+        const current = findInstall(String(id))
+        if (current === undefined)
+          return err({ kind: "not-found", id: String(id) } as PluginError)
+        refreshState.count += 1
+        return ok({ manifest: {}, install: current, ignoredContributions: [] })
+      },
+      setEnabled: async (id: PluginId, enabled: boolean) => {
+        const current = findInstall(String(id))
+        if (current === undefined)
+          return err({ kind: "not-found", id: String(id) } as PluginError)
+        config = {
+          ...config,
+          providerPlugins: config.providerPlugins.map((p) =>
+            String(p.id) === String(id) ? { ...p, enabled } : p,
+          ),
+        }
+        refreshState.count += 1
+        return ok(undefined)
+      },
+      remove: async (id: PluginId) => {
+        const current = findInstall(String(id))
+        if (current === undefined)
+          return err({ kind: "not-found", id: String(id) } as PluginError)
+        // Only the "acme" fixture's contribution key is known to this harness.
+        const referencingProviderIds = config.providers
+          .filter((p) => p.sdkProvider === "plugin:acme")
+          .map((p) => String(p.id))
+        if (referencingProviderIds.length > 0)
+          return err({
+            kind: "in-use",
+            id: String(id),
+            providerIds: referencingProviderIds,
+          } as PluginError)
+        config = {
+          ...config,
+          providerPlugins: config.providerPlugins.filter(
+            (p) => String(p.id) !== String(id),
+          ),
+        }
+        refreshState.count += 1
+        return ok(undefined)
+      },
+    },
+  } as unknown as GuiContext
+
+  return {
+    handlers: createIpcHandlers(ctx),
+    ctx: {
+      get refreshes(): number {
+        return refreshState.count
+      },
+    },
+  }
+}
+
+describe("createIpcHandlers.listExtensions", () => {
+  it("lists a hand-placed extension with no install record as local and disabled", async () => {
+    const { handlers } = extensionsHarness({ onDisk: ["acme"], installs: [] })
+    const list = await handlers.listExtensions(undefined)
+    expect(list[0]?.source).toEqual({ kind: "local" })
+    expect(list[0]?.enabled).toBe(false)
+  })
+
+  it("lists an installed extension with its install record's source and enabled flag", async () => {
+    const { handlers } = extensionsHarness({
+      onDisk: ["acme"],
+      installs: [acmeInstall],
+    })
+    const list = await handlers.listExtensions(undefined)
+    expect(list[0]?.source).toEqual(acmeInstall.source)
+    expect(list[0]?.enabled).toBe(true)
+    expect(list[0]?.unavailable).toBe(false)
+  })
+
+  it("reports the running status of a configured plugin provider's child", async () => {
+    const { handlers } = extensionsHarness({
+      onDisk: ["acme"],
+      installs: [acmeInstall],
+      providers: [acmeProvider],
+      running: [instanceKeyFor(acmeProvider)],
+    })
+    const list = await handlers.listExtensions(undefined)
+    expect(list[0]?.providers[0]?.status).toBe("running")
+  })
+
+  it("reports stopped when no provider record targets the contribution", async () => {
+    const { handlers } = extensionsHarness({
+      onDisk: ["acme"],
+      installs: [acmeInstall],
+    })
+    const list = await handlers.listExtensions(undefined)
+    expect(list[0]?.providers[0]?.status).toBe("stopped")
+  })
+
+  it("discloses the unrendered launch command and args", async () => {
+    const { handlers } = extensionsHarness({
+      onDisk: ["acme"],
+      installs: [acmeInstall],
+    })
+    const list = await handlers.listExtensions(undefined)
+    expect(list[0]?.providers[0]?.launchCommand).toBe(
+      "/usr/local/bin/acme-server",
+    )
+    expect(list[0]?.providers[0]?.launchArgs).toEqual(["--port", "{{port}}"])
+    expect(list[0]?.providers[0]?.secretFieldNames).toEqual(["apiKey"])
+  })
+
+  it("marks a linked extension unavailable instead of failing the list", async () => {
+    const { handlers } = extensionsHarness({
+      onDisk: [],
+      installs: [linkedInstall("acme", "/src/gone")],
+    })
+    const list = await handlers.listExtensions(undefined)
+    expect(list[0]?.unavailable).toBe(true)
+    expect(list[0]?.providers).toEqual([])
+  })
+
+  it("fails loudly with the offending extension's id when the registry reports a duplicate id", async () => {
+    const fileSource = createInMemoryExtensionFileSource([
+      acmeManifestEntry,
+      { ...acmeManifestEntry, id: "acme2" },
+    ])
+    const extensionRegistry = createExtensionRegistry({ fileSource })
+    const ctx = {
+      log: createNoopLogger(),
+      config: {
+        load: async (): Promise<Result<Config, never>> => ok(defaultConfig()),
+      },
+      extensionRegistry,
+      providerHost: { status: () => "stopped" },
+    } as unknown as GuiContext
+    const handlers = createIpcHandlers(ctx)
+
+    await expect(handlers.listExtensions(undefined)).rejects.toThrow(/acme/)
+  })
+})
+
+describe("createIpcHandlers.removeExtension", () => {
+  it("names the referencing providers when a removal is refused", async () => {
+    const { handlers } = extensionsHarness({
+      onDisk: ["acme"],
+      installs: [acmeInstall],
+      providers: [acmeProvider],
+    })
+    const r = await handlers.removeExtension({ id: "acme" as PluginId })
+    expect(r).toMatchObject({
+      refused: { kind: "in-use", providerIds: ["prv_1"] },
+    })
+  })
+
+  it("returns the refreshed list on a successful removal", async () => {
+    const { handlers } = extensionsHarness({
+      onDisk: ["acme"],
+      installs: [acmeInstall],
+    })
+    const r = await handlers.removeExtension({ id: "acme" as PluginId })
+    expect(Array.isArray(r)).toBe(true)
+  })
+})
+
+describe("createIpcHandlers.installExtension / setExtensionEnabled / updateExtension", () => {
+  it("refreshes the provider catalog after an install so the dropdown updates", async () => {
+    const { handlers, ctx } = extensionsHarness({ onDisk: [], installs: [] })
+    await handlers.installExtension({ source: "/src/acme" })
+    expect(ctx.refreshes).toBe(1)
+  })
+
+  it("delegates setExtensionEnabled to ctx.extensions and never writes providerPlugins directly", async () => {
+    const { handlers, ctx } = extensionsHarness({
+      onDisk: ["acme"],
+      installs: [acmeInstall],
+    })
+    await handlers.setExtensionEnabled({
+      id: "acme" as PluginId,
+      enabled: false,
+    })
+    expect(ctx.refreshes).toBe(1)
+  })
+
+  it("delegates updateExtension to ctx.extensions", async () => {
+    const { handlers, ctx } = extensionsHarness({
+      onDisk: ["acme"],
+      installs: [acmeInstall],
+    })
+    await handlers.updateExtension({ id: "acme" as PluginId })
+    expect(ctx.refreshes).toBe(1)
   })
 })
