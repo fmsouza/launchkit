@@ -4,6 +4,7 @@ import type { PluginId } from "@spectrum/types"
 import { type Result, err, ok } from "@spectrum/utils"
 import type { PluginError } from "./errors"
 import type { ExtensionEntry, ExtensionFileSource } from "./file-source"
+import { type CaptureStdout, gitEnv } from "./git"
 
 const MANIFEST_FILE = "spectrum-extension.json"
 
@@ -158,5 +159,39 @@ export const createDirExtensionFileSource = (
     // `safeId` — `extensionDir` returns a bare `string` and has no `Result` to reject
     // through, so the type itself must be the thing that makes an unsafe id unreachable.
     extensionDir: (id: PluginId): string => resolveDir(id),
+  }
+}
+
+/**
+ * Real `CaptureStdout`: `Bun.spawn` with stdout piped and awaited as text. The only caller
+ * (`GitClient.revParse`) needs the child's stdout, which `ProcessSpawner` deliberately does
+ * not expose — this is that one seam, kept separate rather than widening the spawner.
+ */
+export const createBunCaptureStdout = (): CaptureStdout => {
+  return async (command, args, cwd) => {
+    try {
+      const child = Bun.spawn([command, ...args], {
+        cwd,
+        // Minimal env only — never the whole process env — matching `createProcessGitClient`'s
+        // `run`. `git rev-parse` gets the same restricted environment every other git
+        // invocation does.
+        env: gitEnv(),
+        stdio: ["inherit", "pipe", "inherit"],
+      })
+      const [text, exitCode] = await Promise.all([
+        new Response(child.stdout).text(),
+        child.exited,
+      ])
+      if (exitCode !== 0) {
+        return err({
+          kind: "git-failed",
+          detail: `${command} ${args.join(" ")} exited with code ${exitCode}`,
+        })
+      }
+      return ok(text)
+    } catch (cause) {
+      const detail = cause instanceof Error ? cause.message : String(cause)
+      return err({ kind: "git-failed", detail })
+    }
   }
 }

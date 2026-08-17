@@ -1,4 +1,7 @@
-export { createDirExtensionFileSource } from "./adapters"
+export {
+  createBunCaptureStdout,
+  createDirExtensionFileSource,
+} from "./adapters"
 export {
   SUPPORTED_API_MAJOR,
   isSupportedApiVersion,
@@ -21,6 +24,13 @@ export {
   parseManifest,
 } from "./manifest"
 export type { ExtensionManifest, ParsedManifest } from "./manifest"
+export {
+  createFakeGitClient,
+  createFsDirCopier,
+  createInMemoryDirCopier,
+  createProcessGitClient,
+} from "./git"
+export type { CaptureStdout, DirCopier, GitCall, GitClient } from "./git"
 export { idFromSource, planInstall } from "./plan-install"
 export type {
   InstallMode,
