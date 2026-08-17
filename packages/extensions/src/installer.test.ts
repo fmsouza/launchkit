@@ -220,6 +220,7 @@ describe("install — git", () => {
       source: "https://example.com/beta.git",
     })
     expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.error.kind).toBe("duplicate-id")
     if (!r.ok && r.error.kind === "duplicate-id")
       expect(r.error.id).toBe("acme")
     expect(removed).toEqual(["beta"])
@@ -252,6 +253,7 @@ describe("install — git", () => {
       source: "https://example.com/beta.git",
     })
     expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.error.kind).toBe("duplicate-id")
     if (!r.ok && r.error.kind === "duplicate-id")
       expect(r.error.id).toBe("acme")
     expect(removed).toEqual(["beta"])
@@ -332,6 +334,7 @@ describe("install — path", () => {
     })
     const r = await installer.install({ source: "/src/acme", mode: "copy" })
     expect(r.ok).toBe(true)
+    if (r.ok) expect(r.value.install.source.kind).toBe("path")
     if (r.ok && r.value.install.source.kind === "path")
       expect(r.value.install.source.linked).toBe(false)
     expect(await copier.exists("/data/providers/acme")).toBe(true)
@@ -426,6 +429,7 @@ describe("update", () => {
     })
     const r = await installer.update(pid("acme"), gitInstall("acme"))
     expect(r.ok).toBe(true)
+    if (r.ok) expect(r.value.install.source.kind).toBe("git")
     if (r.ok && r.value.install.source.kind === "git")
       expect(r.value.install.source.commit).toBe("feed01")
     expect(git.calls.map((c) => c.op)).toEqual(["fetchCheckout", "revParse"])
@@ -483,6 +487,7 @@ describe("update", () => {
     const { installer, git } = harness({ installed: [copyInstall] })
     const r = await installer.update(pid("acme"), copyInstall)
     expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.error.kind).toBe("invalid-manifest")
     if (!r.ok && r.error.kind === "invalid-manifest")
       expect(r.error.detail).not.toContain("linked")
     expect(git.calls).toEqual([])
@@ -520,6 +525,7 @@ describe("remove", () => {
       "prv_2",
     ])
     expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.error.kind).toBe("in-use")
     if (!r.ok && r.error.kind === "in-use")
       expect(r.error.providerIds).toEqual(["prv_1", "prv_2"])
     expect(removed).toEqual([])

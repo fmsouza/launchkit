@@ -59,6 +59,7 @@ describe("planInstall — git", () => {
       ref: "v2.0.0",
     })
     expect(r.ok).toBe(true)
+    if (r.ok) expect(r.value.source.kind).toBe("git")
     if (r.ok && r.value.source.kind === "git")
       expect(r.value.source.ref).toBe("v2.0.0")
   })
@@ -66,6 +67,7 @@ describe("planInstall — git", () => {
   it("accepts an scp-style ssh source", () => {
     const r = planInstall({ ...base, source: "git@example.com:me/acme.git" })
     expect(r.ok).toBe(true)
+    if (r.ok) expect(r.value.source.kind).toBe("git")
     if (r.ok && r.value.source.kind === "git")
       expect(r.value.source.url).toBe("git@example.com:me/acme.git")
   })
