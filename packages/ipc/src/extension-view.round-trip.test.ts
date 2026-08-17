@@ -58,10 +58,19 @@ describe("listExtensions round-trip", () => {
   // real server's result validation — not just by a schema unit test in isolation.
   it("rejects a listExtensions result whose contributed provider leaks an instanceKey", async () => {
     const pair = createMemoryTransportPair()
-    const leaking = {
-      ...wellFormedView,
-      providers: [{ ...wellFormedProvider, instanceKey: "s_super_secret_key" }],
-    }
+    // `ListExtensionsResultSchema` is `z.array(ExtensionViewSchema)` — the payload MUST be
+    // array-wrapped to match the real result shape. An unwrapped object fails validation at
+    // the top level ("expected array, received object") without ever reaching
+    // `ContributedProviderViewSchema`'s `.strict()`, which would pass this test for the
+    // wrong reason (a shape mismatch, not the leak under test).
+    const leaking = [
+      {
+        ...wellFormedView,
+        providers: [
+          { ...wellFormedProvider, instanceKey: "s_super_secret_key" },
+        ],
+      },
+    ]
     const handlers: Pick<IpcHandlers, "listExtensions"> = {
       listExtensions: async () => leaking as never,
     }
@@ -83,12 +92,15 @@ describe("listExtensions round-trip", () => {
 
   it("rejects a listExtensions result carrying a resolved env map instead of the unrendered template", async () => {
     const pair = createMemoryTransportPair()
-    const leaking = {
-      ...wellFormedView,
-      providers: [
-        { ...wellFormedProvider, env: { ACME_API_KEY: "sk-live-leak" } },
-      ],
-    }
+    // Array-wrapped — see the comment on the instanceKey test above.
+    const leaking = [
+      {
+        ...wellFormedView,
+        providers: [
+          { ...wellFormedProvider, env: { ACME_API_KEY: "sk-live-leak" } },
+        ],
+      },
+    ]
     const handlers: Pick<IpcHandlers, "listExtensions"> = {
       listExtensions: async () => leaking as never,
     }
@@ -102,7 +114,8 @@ describe("listExtensions round-trip", () => {
 
   it("rejects a listExtensions result whose extension view carries a secrets map", async () => {
     const pair = createMemoryTransportPair()
-    const leaking = { ...wellFormedView, secrets: { apiKey: "sk-live-leak" } }
+    // Array-wrapped — see the comment on the instanceKey test above.
+    const leaking = [{ ...wellFormedView, secrets: { apiKey: "sk-live-leak" } }]
     const handlers: Pick<IpcHandlers, "listExtensions"> = {
       listExtensions: async () => leaking as never,
     }
