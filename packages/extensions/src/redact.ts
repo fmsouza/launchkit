@@ -6,4 +6,9 @@
  * two independent redactors is how one of them silently stops matching.
  */
 export const redactUrlCredentials = (url: string): string =>
-  url.replace(/\/\/[^/@\s]+@/, "//[REDACTED]@")
+  // Greedy up to the LAST `@` before the next `/` (or end of string): a password itself may
+  // contain `@` (`user:p@ssw0rd@host`), and excluding `@` from the character class — as an
+  // earlier version of this regex did — stops at the FIRST `@`, leaving the password tail
+  // unredacted. Requiring a leading `//` means a scp-style source (`git@host:path`, no `//`)
+  // is never touched by this regex at all.
+  url.replace(/\/\/[^/\s]+@/, "//[REDACTED]@")
