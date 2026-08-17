@@ -32,7 +32,11 @@ seam; nothing in this package spawns a process (that is `@spectrum/provider-host
   local child process: `command`, `args`, `envTemplate`, optional `cwd`, `healthPath`
   (default `/models`), `readyTimeoutMs` (default 10 000)
 - `PluginError` — the complete extension error union; declared complete here so no later
-  plan adds variants to it
+  plan adds variants to it. `invalid-manifest` and `unsupported-api-version` each carry an
+  OPTIONAL `id`, attached by whichever caller knows the extension directory (`parseManifest`
+  is pure and never sees one; `ExtensionRegistry.list()` does and attaches it). A field on an
+  existing member is not a new member — and without it, `list()` failing the whole batch on
+  one bad manifest leaves every caller unable to say WHICH extension is broken.
 
 ### Launch templates (pure)
 - `RUNTIME_TOKENS` — the fixed template tokens every launch may use regardless of what the
