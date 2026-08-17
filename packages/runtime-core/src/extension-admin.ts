@@ -48,13 +48,17 @@ export const createExtensionAdmin = (deps: {
   readonly installer: ExtensionInstaller
   /**
    * The CURRENT extension registry, resolved live rather than handed once at wiring time.
-   * `create-app-context.ts` implements this as `async () => { await extensionsReady; return
-   * extensionRegistryCell }` — the same "await the refresh IN FLIGHT" pattern `resolveBaseUrl`
-   * uses. A plain `ExtensionRegistry` handed in once would still point at the wiring-time cell
-   * (built with an empty link map) until the constructor's own initial refresh happens to have
-   * resolved, which is exactly the cold-start bug `remove`'s `in-use` guard had: on a fresh
-   * process, `remove` as the very first call would read an empty registry and silently miss a
-   * referencing provider.
+   * `create-app-context.ts` implements this as `async () => extensionRegistry` — its own live,
+   * good-state-aware façade, which waits for the FIRST refresh to have settled (NOT
+   * `extensionsReady`, which tracks whichever refresh is CURRENTLY in flight and would make a
+   * warm reader block on a later refresh it doesn't control) and returns an ERRORING registry,
+   * never a vacuous `ok([])`, whenever no refresh has ever actually succeeded. A plain
+   * `ExtensionRegistry` handed in once would still point at the wiring-time cell (built with an
+   * empty link map) until the constructor's own initial refresh happens to have resolved, which
+   * is exactly the cold-start bug `remove`'s `in-use` guard had: on a fresh process, `remove` as
+   * the very first call would read an empty registry and silently miss a referencing provider —
+   * and, separately, a registry that returns `ok([])` after a FAILED refresh is indistinguishable
+   * from "nothing installed", which the same guard also fell for warm.
    */
   readonly registry: () => Promise<ExtensionRegistry>
   readonly providerHost: ProviderHost
