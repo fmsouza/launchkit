@@ -1,8 +1,14 @@
-import type { Config, ConfigStore, PluginInstall } from "@spectrum/config"
+import type {
+  Config,
+  ConfigError,
+  ConfigStore,
+  PluginInstall,
+} from "@spectrum/config"
 import type {
   ExtensionInstaller,
   ExtensionRegistry,
   InstallInput,
+  InstalledExtension,
   PluginError,
 } from "@spectrum/extensions"
 import { type Logger, createNoopLogger } from "@spectrum/logger"
@@ -17,11 +23,23 @@ import { type Result, err, isErr, ok } from "@spectrum/utils"
  * refresh on a mutation that did not happen (install failure calls neither).
  */
 export interface ExtensionAdmin {
-  install(input: InstallInput): Promise<Result<void, PluginError>>
-  update(id: PluginId): Promise<Result<void, PluginError>>
+  install(input: InstallInput): Promise<Result<InstalledExtension, PluginError>>
+  update(id: PluginId): Promise<Result<InstalledExtension, PluginError>>
   remove(id: PluginId): Promise<Result<void, PluginError>>
   setEnabled(id: PluginId, enabled: boolean): Promise<Result<void, PluginError>>
 }
+
+/** `ConfigError` has no `detail` field for `not-found`; every other variant does. Preserving
+ * the real detail (rather than collapsing every kind to its own name) is what lets a user tell
+ * "no config on disk yet" apart from "your config file is corrupt" or "permission denied". */
+const configErrorDetail = (e: ConfigError): string =>
+  e.kind === "not-found" ? "not-found" : `${e.kind}: ${e.detail}`
+
+/** Bounds a log line to a fixed length. `registry.list()`'s `invalid-manifest` detail can carry
+ * a multi-line zod validation dump — fine as a `PluginError` returned to a caller that wants the
+ * full detail, but unbounded text has no place in a single structured log line. */
+const summarizeForLog = (detail: string, max = 200): string =>
+  detail.length > max ? `${detail.slice(0, max)}…` : detail
 
 export const createExtensionAdmin = (deps: {
   readonly config: ConfigStore
@@ -36,7 +54,10 @@ export const createExtensionAdmin = (deps: {
   const loadConfig = async (): Promise<Result<Config, PluginError>> => {
     const loaded = await deps.config.load()
     if (isErr(loaded))
-      return err({ kind: "read-failed", detail: loaded.error.kind })
+      return err({
+        kind: "read-failed",
+        detail: configErrorDetail(loaded.error),
+      })
     return ok(loaded.value)
   }
 
@@ -45,13 +66,16 @@ export const createExtensionAdmin = (deps: {
   ): Promise<Result<void, PluginError>> => {
     const saved = await deps.config.save(next)
     if (isErr(saved))
-      return err({ kind: "write-failed", detail: saved.error.kind })
+      return err({
+        kind: "write-failed",
+        detail: configErrorDetail(saved.error),
+      })
     return ok(undefined)
   }
 
   const install = async (
     input: InstallInput,
-  ): Promise<Result<void, PluginError>> => {
+  ): Promise<Result<InstalledExtension, PluginError>> => {
     const installed = await deps.installer.install(input)
     if (isErr(installed)) return installed
 
@@ -63,14 +87,35 @@ export const createExtensionAdmin = (deps: {
       providerPlugins: [...cfg.value.providerPlugins, installed.value.install],
     }
     const saved = await saveConfig(next)
-    if (isErr(saved)) return saved
+    if (isErr(saved)) {
+      // Rollback: `installer.install` already wrote (cloned/copied) the extension, but the
+      // config record that makes it "installed" never landed. Without this, the on-disk
+      // directory is orphaned — invisible to the user, but occupying the id, so a retry hits
+      // `duplicate-id` (copy) or a clone into a non-empty directory (git) with no recovery
+      // short of manually deleting it.
+      const rollback = await deps.installer.remove(
+        installed.value.install.id,
+        installed.value.install,
+        [],
+      )
+      if (isErr(rollback)) {
+        logger.error(
+          "extension install: rollback after config write failure also failed",
+          {
+            id: String(installed.value.install.id),
+            kind: rollback.error.kind,
+          },
+        )
+      }
+      return saved
+    }
 
     logger.info("extension admin mutation", {
       id: String(installed.value.install.id),
       op: "install",
     })
     await deps.refresh()
-    return ok(undefined)
+    return ok(installed.value)
   }
 
   const findInstall = (cfg: Config, id: PluginId): PluginInstall | undefined =>
@@ -111,40 +156,107 @@ export const createExtensionAdmin = (deps: {
     if (current === undefined) return err({ kind: "not-found", id: String(id) })
 
     const listed = await deps.registry.list()
-    if (isErr(listed)) return listed
 
-    const contributedKeys = listed.value
-      .filter((e) => String(e.manifest.id) === String(id))
-      .flatMap((e) =>
+    // `registry.list()` fails the WHOLE batch on any one invalid manifest — including a
+    // manifest belonging to some OTHER extension. Refusing `remove` here would make removal
+    // unavailable exactly when it is the only recovery: the user cannot uninstall the broken
+    // extension (or any extension) without hand-editing `config.json`. Degrade instead: proceed
+    // with the delete, conservatively stopping EVERY supervised child (not just this
+    // extension's contributions, which we can no longer enumerate) rather than none, and skip
+    // the `in-use` computation — we cannot enumerate this extension's contribution ids either,
+    // so there is nothing to check it against. A dangling `sdkProvider` on a provider record is
+    // a visible, recoverable state the app already copes with; an extension that can never be
+    // uninstalled is not.
+    let contributedIds: readonly string[] = []
+    let contributedKeys: readonly string[] = []
+    let degraded = false
+
+    if (isErr(listed)) {
+      degraded = true
+      logger.warn(
+        "extension remove: manifest listing unavailable, degrading to a full stop",
+        {
+          id: String(id),
+          kind: listed.error.kind,
+          detail: summarizeForLog(
+            "detail" in listed.error
+              ? String(listed.error.detail)
+              : listed.error.kind,
+          ),
+        },
+      )
+    } else {
+      const ownEntries = listed.value.filter(
+        (e) => String(e.manifest.id) === String(id),
+      )
+      contributedIds = ownEntries.flatMap((e) =>
+        e.manifest.contributes.providers.map((p) => String(p.id)),
+      )
+      contributedKeys = ownEntries.flatMap((e) =>
         e.manifest.contributes.providers.map((p) => pluginKeyOf(p.id)),
       )
-    const referencingProviderIds = cfg.value.providers
-      .filter((p) => contributedKeys.includes(p.sdkProvider))
-      .map((p) => String(p.id))
-
-    if (referencingProviderIds.length > 0) {
-      const error: PluginError = {
-        kind: "in-use",
-        id: String(id),
-        providerIds: referencingProviderIds,
-      }
-      logger.info("extension admin mutation", { id: String(id), op: "remove" })
-      return err(error)
     }
 
-    const contributedIds = listed.value
-      .filter((e) => String(e.manifest.id) === String(id))
-      .flatMap((e) => e.manifest.contributes.providers.map((p) => String(p.id)))
-    for (const contributionId of contributedIds) {
-      await deps.providerHost.stopAllFor(contributionId)
+    if (!degraded) {
+      const referencingProviderIds = cfg.value.providers
+        .filter((p) => contributedKeys.includes(p.sdkProvider))
+        .map((p) => String(p.id))
+      if (referencingProviderIds.length > 0) {
+        logger.warn("extension admin refusal", {
+          id: String(id),
+          op: "remove",
+          kind: "in-use",
+        })
+        return err({
+          kind: "in-use",
+          id: String(id),
+          providerIds: referencingProviderIds,
+        })
+      }
+    }
+
+    if (degraded) {
+      await deps.providerHost.stopAll()
+    } else {
+      for (const contributionId of contributedIds) {
+        await deps.providerHost.stopAllFor(contributionId)
+      }
     }
 
     const removed = await deps.installer.remove(id, current, [])
     if (isErr(removed)) return removed
 
+    // Re-check immediately before the write: a provider record referencing this extension's
+    // contribution could have been added between the FIRST `in-use` check above and this point.
+    // Reloading + re-filtering against a FRESH config narrows that window; it does not close
+    // it — there is no lock between this re-check and `saveConfig` below, so a write landing in
+    // that gap can still race past it. Only meaningful on the non-degraded path: without
+    // `contributedKeys` there is nothing to re-check against.
+    let cfgForWrite = cfg.value
+    if (!degraded) {
+      const freshCfg = await loadConfig()
+      if (isErr(freshCfg)) return freshCfg
+      const stillReferencing = freshCfg.value.providers
+        .filter((p) => contributedKeys.includes(p.sdkProvider))
+        .map((p) => String(p.id))
+      if (stillReferencing.length > 0) {
+        logger.warn("extension admin refusal", {
+          id: String(id),
+          op: "remove",
+          kind: "in-use",
+        })
+        return err({
+          kind: "in-use",
+          id: String(id),
+          providerIds: stillReferencing,
+        })
+      }
+      cfgForWrite = freshCfg.value
+    }
+
     const next: Config = {
-      ...cfg.value,
-      providerPlugins: cfg.value.providerPlugins.filter(
+      ...cfgForWrite,
+      providerPlugins: cfgForWrite.providerPlugins.filter(
         (p) => String(p.id) !== String(id),
       ),
     }
@@ -156,7 +268,9 @@ export const createExtensionAdmin = (deps: {
     return ok(undefined)
   }
 
-  const update = async (id: PluginId): Promise<Result<void, PluginError>> => {
+  const update = async (
+    id: PluginId,
+  ): Promise<Result<InstalledExtension, PluginError>> => {
     const cfg = await loadConfig()
     if (isErr(cfg)) return cfg
 
@@ -177,7 +291,7 @@ export const createExtensionAdmin = (deps: {
 
     logger.info("extension admin mutation", { id: String(id), op: "update" })
     await deps.refresh()
-    return ok(undefined)
+    return ok(updated.value)
   }
 
   return { install, update, remove, setEnabled }

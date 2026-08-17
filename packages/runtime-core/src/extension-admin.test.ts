@@ -1,12 +1,16 @@
 import { describe, expect, it } from "bun:test"
 import type { Config, PluginInstall } from "@spectrum/config"
 import { defaultConfig } from "@spectrum/config"
+import type { Logger } from "@spectrum/logger"
 import { PluginIdSchema, ProviderIdSchema } from "@spectrum/types"
 import { err, ok } from "@spectrum/utils"
 import { createExtensionAdmin } from "./extension-admin"
 
 const pid = (id: string) => PluginIdSchema.parse(id)
 
+// Manifest id ("acme") and CONTRIBUTION id ("acme-chat") are deliberately DIFFERENT: a fixture
+// where both are the same string cannot tell a caller that swaps one for the other apart, and
+// `stopAllFor`/`in-use` are keyed on the CONTRIBUTION id, never the manifest id.
 const acmeInstall: PluginInstall = {
   id: pid("acme"),
   source: {
@@ -26,7 +30,7 @@ const acmeManifest = {
   contributes: {
     providers: [
       {
-        id: pid("acme"),
+        id: pid("acme-chat"),
         descriptor: {
           label: "Acme",
           configFields: [],
@@ -43,17 +47,53 @@ const acmeManifest = {
   },
 }
 
+type LogEntry = {
+  readonly level: "debug" | "info" | "warn" | "error" | "fatal"
+  readonly msg: string
+  readonly fields?: Record<string, unknown>
+}
+
+/** Captures every call instead of writing anywhere — lets a test assert WHICH line was logged
+ * (mutation vs. refusal vs. warning) without depending on log formatting. */
+const captureLogger = (): { logger: Logger; entries: LogEntry[] } => {
+  const entries: LogEntry[] = []
+  const record =
+    (level: LogEntry["level"]) =>
+    (msg: string, fields?: Record<string, unknown>): void => {
+      entries.push({ level, msg, ...(fields === undefined ? {} : { fields }) })
+    }
+  const logger: Logger = {
+    debug: record("debug"),
+    info: record("info"),
+    warn: record("warn"),
+    error: record("error"),
+    fatal: record("fatal"),
+    child: () => logger,
+  }
+  return { logger, entries }
+}
+
 const harness = (opts?: {
   config?: Config
   installFails?: boolean
+  saveFails?: boolean
+  listFails?: boolean
+  logger?: Logger
 }) => {
   let stored: Config = opts?.config ?? defaultConfig()
   const refreshes: number[] = []
   const stopped: string[] = []
+  const stopAllCalls: number[] = []
+  const installerRemoveCalls: string[] = []
   const admin = createExtensionAdmin({
     config: {
       load: async () => ok(stored),
       save: async (next: Config) => {
+        if (opts?.saveFails === true)
+          return err({
+            kind: "write-failed",
+            detail: "EACCES: permission denied",
+          })
         stored = next
         return ok(undefined)
       },
@@ -76,13 +116,25 @@ const harness = (opts?: {
           },
           ignoredContributions: [],
         }),
-      remove: async () => ok(undefined),
+      remove: async (id) => {
+        installerRemoveCalls.push(String(id))
+        return ok(undefined)
+      },
     },
     registry: {
       list: async () =>
-        ok([
-          { manifest: acmeManifest, ignoredContributions: [], dir: "/d/acme" },
-        ]),
+        opts?.listFails === true
+          ? err({
+              kind: "invalid-manifest",
+              detail: "some other extension's manifest is broken",
+            })
+          : ok([
+              {
+                manifest: acmeManifest,
+                ignoredContributions: [],
+                dir: "/d/acme",
+              },
+            ]),
       providerDescriptors: async () => ok([]),
     },
     providerHost: {
@@ -92,14 +144,24 @@ const harness = (opts?: {
       stopAllFor: async (id: string) => {
         stopped.push(id)
       },
-      stopAll: async () => {},
+      stopAll: async () => {
+        stopAllCalls.push(1)
+      },
       retainOnly: async () => {},
     },
     refresh: async () => {
       refreshes.push(Date.now())
     },
+    ...(opts?.logger === undefined ? {} : { logger: opts.logger }),
   })
-  return { admin, refreshes, stopped, read: (): Config => stored }
+  return {
+    admin,
+    refreshes,
+    stopped,
+    stopAllCalls,
+    installerRemoveCalls,
+    read: (): Config => stored,
+  }
 }
 
 describe("createExtensionAdmin", () => {
@@ -111,6 +173,16 @@ describe("createExtensionAdmin", () => {
     expect(refreshes.length).toBe(1)
   })
 
+  it("resolves with the installed extension's manifest and install record", async () => {
+    const { admin } = harness()
+    const r = await admin.install({ source: "https://e.com/a.git" })
+    expect(r.ok).toBe(true)
+    if (r.ok) {
+      expect(String(r.value.manifest.id)).toBe("acme")
+      expect(String(r.value.install.id)).toBe("acme")
+    }
+  })
+
   it("writes nothing and does not refresh when the install fails", async () => {
     const { admin, refreshes, read } = harness({ installFails: true })
     const r = await admin.install({ source: "https://e.com/a.git" })
@@ -119,13 +191,25 @@ describe("createExtensionAdmin", () => {
     expect(refreshes.length).toBe(0)
   })
 
-  it("flips enabled in config and refreshes when disabling", async () => {
+  it("rolls back the installer's write when the config save fails after a successful install", async () => {
+    const { admin, refreshes, installerRemoveCalls } = harness({
+      saveFails: true,
+    })
+    const r = await admin.install({ source: "https://e.com/a.git" })
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.error.kind).toBe("write-failed")
+    expect(installerRemoveCalls).toEqual(["acme"])
+    expect(refreshes.length).toBe(0)
+  })
+
+  it("flips enabled in config and refreshes when disabling, without stopping any children", async () => {
     const cfg = { ...defaultConfig(), providerPlugins: [acmeInstall] }
-    const { admin, refreshes, read } = harness({ config: cfg })
+    const { admin, refreshes, stopped, read } = harness({ config: cfg })
     const r = await admin.setEnabled(pid("acme"), false)
     expect(r.ok).toBe(true)
     expect(read().providerPlugins[0]?.enabled).toBe(false)
     expect(refreshes.length).toBe(1)
+    expect(stopped).toEqual([])
   })
 
   it("fails with not-found when enabling an id with no install record", async () => {
@@ -143,7 +227,7 @@ describe("createExtensionAdmin", () => {
         {
           id: ProviderIdSchema.parse("prv_1"),
           name: "Acme",
-          sdkProvider: "plugin:acme",
+          sdkProvider: "plugin:acme-chat",
           config: {},
           secrets: {},
           models: [],
@@ -158,12 +242,39 @@ describe("createExtensionAdmin", () => {
     expect(read().providerPlugins.length).toBe(1)
   })
 
-  it("stops every contributed provider's children before deleting the files", async () => {
+  it("logs the in-use refusal as a distinct refusal line, not as a mutation", async () => {
+    const cfg: Config = {
+      ...defaultConfig(),
+      providerPlugins: [acmeInstall],
+      providers: [
+        {
+          id: ProviderIdSchema.parse("prv_1"),
+          name: "Acme",
+          sdkProvider: "plugin:acme-chat",
+          config: {},
+          secrets: {},
+          models: [],
+        },
+      ],
+    }
+    const { logger, entries } = captureLogger()
+    const { admin } = harness({ config: cfg, logger })
+    await admin.remove(pid("acme"))
+    expect(entries.some((e) => e.msg === "extension admin refusal")).toBe(true)
+    expect(
+      entries.some(
+        (e) =>
+          e.msg === "extension admin mutation" && e.fields?.op === "remove",
+      ),
+    ).toBe(false)
+  })
+
+  it("stops the CONTRIBUTED provider's children (not the manifest id) before deleting the files", async () => {
     const cfg = { ...defaultConfig(), providerPlugins: [acmeInstall] }
     const { admin, stopped } = harness({ config: cfg })
     const r = await admin.remove(pid("acme"))
     expect(r.ok).toBe(true)
-    expect(stopped).toEqual(["acme"])
+    expect(stopped).toEqual(["acme-chat"])
   })
 
   it("drops the install record and refreshes when a removal succeeds", async () => {
@@ -174,13 +285,194 @@ describe("createExtensionAdmin", () => {
     expect(refreshes.length).toBe(1)
   })
 
-  it("records the new commit and refreshes when updating", async () => {
+  it("records the new commit, refreshes, and resolves with the updated extension", async () => {
     const cfg = { ...defaultConfig(), providerPlugins: [acmeInstall] }
     const { admin, refreshes, read } = harness({ config: cfg })
     const r = await admin.update(pid("acme"))
     expect(r.ok).toBe(true)
+    if (r.ok) {
+      const source = r.value.install.source
+      if (source.kind === "git") expect(source.commit).toBe("c2")
+    }
     const source = read().providerPlugins[0]?.source
     if (source?.kind === "git") expect(source.commit).toBe("c2")
     expect(refreshes.length).toBe(1)
+  })
+
+  describe("when registry.list() fails (a DIFFERENT extension's manifest is broken)", () => {
+    it("still removes the extension by degrading to a full provider-host stop, instead of refusing", async () => {
+      const cfg = { ...defaultConfig(), providerPlugins: [acmeInstall] }
+      const { admin, stopped, stopAllCalls, refreshes, read } = harness({
+        config: cfg,
+        listFails: true,
+      })
+      const r = await admin.remove(pid("acme"))
+      expect(r.ok).toBe(true)
+      // Cannot enumerate this extension's OWN contributions when the batch listing failed, so
+      // it stops EVERYTHING rather than nothing — conservative, not targeted.
+      expect(stopAllCalls.length).toBe(1)
+      expect(stopped).toEqual([])
+      expect(read().providerPlugins).toEqual([])
+      expect(refreshes.length).toBe(1)
+    })
+
+    it("does not compute or enforce the in-use guard, even if a provider still references the extension", async () => {
+      const cfg: Config = {
+        ...defaultConfig(),
+        providerPlugins: [acmeInstall],
+        providers: [
+          {
+            id: ProviderIdSchema.parse("prv_1"),
+            name: "Acme",
+            sdkProvider: "plugin:acme-chat",
+            config: {},
+            secrets: {},
+            models: [],
+          },
+        ],
+      }
+      const { admin } = harness({ config: cfg, listFails: true })
+      const r = await admin.remove(pid("acme"))
+      expect(r.ok).toBe(true)
+    })
+
+    it("logs a warning naming the listing failure's kind, bounded in length", async () => {
+      const cfg = { ...defaultConfig(), providerPlugins: [acmeInstall] }
+      const { logger, entries } = captureLogger()
+      const { admin } = harness({ config: cfg, listFails: true, logger })
+      await admin.remove(pid("acme"))
+      const warning = entries.find(
+        (e) =>
+          e.level === "warn" &&
+          typeof e.fields?.kind === "string" &&
+          e.fields.kind === "invalid-manifest",
+      )
+      expect(warning).toBeDefined()
+      const detail = warning?.fields?.detail
+      expect(typeof detail).toBe("string")
+      expect((detail as string).length).toBeLessThanOrEqual(201)
+    })
+  })
+
+  it("preserves the underlying config error detail instead of collapsing every kind to its name", async () => {
+    const admin = createExtensionAdmin({
+      config: {
+        load: async () =>
+          err({ kind: "parse-failed", detail: "Unexpected token } in JSON" }),
+        save: async () => ok(undefined),
+      },
+      installer: {
+        install: async () =>
+          ok({
+            manifest: acmeManifest,
+            install: acmeInstall,
+            ignoredContributions: [],
+          }),
+        update: async () => err({ kind: "not-found", id: "acme" }),
+        remove: async () => ok(undefined),
+      },
+      registry: {
+        list: async () => ok([]),
+        providerDescriptors: async () => ok([]),
+      },
+      providerHost: {
+        ensureRunning: async () => err({ kind: "not-found", id: "unused" }),
+        status: () => "stopped",
+        stop: async () => {},
+        stopAllFor: async () => {},
+        stopAll: async () => {},
+        retainOnly: async () => {},
+      },
+      refresh: async () => {},
+    })
+    const r = await admin.install({ source: "https://e.com/a.git" })
+    expect(r.ok).toBe(false)
+    if (!r.ok && r.error.kind === "read-failed") {
+      expect(r.error.detail).toBe("parse-failed: Unexpected token } in JSON")
+    } else {
+      throw new Error("expected a read-failed PluginError")
+    }
+  })
+
+  it("re-checks in-use immediately before the write, refusing a removal a provider record raced in after the first check", async () => {
+    const cfg: Config = {
+      ...defaultConfig(),
+      providerPlugins: [acmeInstall],
+      providers: [],
+    }
+    let loadCount = 0
+    let stored: Config = cfg
+    const admin = createExtensionAdmin({
+      config: {
+        load: async () => {
+          loadCount += 1
+          // The SECOND load is the pre-save re-check. Simulate a concurrent write landing
+          // between the first `in-use` check and this point: a provider referencing the
+          // extension's contribution now exists, even though the first check saw none.
+          if (loadCount === 2) {
+            stored = {
+              ...stored,
+              providers: [
+                {
+                  id: ProviderIdSchema.parse("prv_race"),
+                  name: "Acme",
+                  sdkProvider: "plugin:acme-chat",
+                  config: {},
+                  secrets: {},
+                  models: [],
+                },
+              ],
+            }
+          }
+          return ok(stored)
+        },
+        save: async (next: Config) => {
+          stored = next
+          return ok(undefined)
+        },
+      },
+      installer: {
+        install: async () =>
+          ok({
+            manifest: acmeManifest,
+            install: acmeInstall,
+            ignoredContributions: [],
+          }),
+        update: async () =>
+          ok({
+            manifest: acmeManifest,
+            install: acmeInstall,
+            ignoredContributions: [],
+          }),
+        remove: async () => ok(undefined),
+      },
+      registry: {
+        list: async () =>
+          ok([
+            {
+              manifest: acmeManifest,
+              ignoredContributions: [],
+              dir: "/d/acme",
+            },
+          ]),
+        providerDescriptors: async () => ok([]),
+      },
+      providerHost: {
+        ensureRunning: async () => err({ kind: "not-found", id: "unused" }),
+        status: () => "stopped",
+        stop: async () => {},
+        stopAllFor: async () => {},
+        stopAll: async () => {},
+        retainOnly: async () => {},
+      },
+      refresh: async () => {},
+    })
+
+    const r = await admin.remove(pid("acme"))
+    expect(r.ok).toBe(false)
+    if (!r.ok && r.error.kind === "in-use")
+      expect(r.error.providerIds).toEqual(["prv_race"])
+    // The install record is untouched: the write never happened once the re-check refused.
+    expect(stored.providerPlugins.length).toBe(1)
   })
 })
