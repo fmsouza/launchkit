@@ -29,6 +29,7 @@ export {
   KNOWN_CONTRIBUTION_KEYS,
   parseManifest,
 } from "./manifest"
+export { redactUrlCredentials } from "./redact"
 export type { ExtensionManifest, ParsedManifest } from "./manifest"
 export {
   createFakeGitClient,

@@ -80,6 +80,45 @@ describe("planInstall — git", () => {
     const r = planInstall({ ...base, source: "http://example.com/me/acme.git" })
     expect(r.ok).toBe(false)
   })
+
+  it("refuses an https url embedding a user:pass credential", () => {
+    const r = planInstall({
+      ...base,
+      source: "https://user:pass@example.com/me/acme.git",
+    })
+    expect(r.ok).toBe(false)
+    if (!r.ok) {
+      expect(r.error.kind).toBe("invalid-manifest")
+      if (r.error.kind === "invalid-manifest")
+        expect(r.error.detail).not.toContain("pass")
+    }
+  })
+
+  it("refuses an https url embedding a bare token credential", () => {
+    const r = planInstall({
+      ...base,
+      source: "https://ghp_supersecrettoken@example.com/me/acme.git",
+    })
+    expect(r.ok).toBe(false)
+    if (!r.ok) {
+      expect(r.error.kind).toBe("invalid-manifest")
+      if (r.error.kind === "invalid-manifest")
+        expect(r.error.detail).not.toContain("ghp_supersecrettoken")
+    }
+  })
+
+  it("accepts an ssh:// url with a git@ username, which is not a credential", () => {
+    const r = planInstall({
+      ...base,
+      source: "ssh://git@example.com/me/acme.git",
+    })
+    expect(r.ok).toBe(true)
+  })
+
+  it("accepts an scp-style url with a git@ username, which is not a credential", () => {
+    const r = planInstall({ ...base, source: "git@example.com:me/acme.git" })
+    expect(r.ok).toBe(true)
+  })
 })
 
 describe("planInstall — path", () => {

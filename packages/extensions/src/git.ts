@@ -2,6 +2,7 @@ import { resolve as resolvePath } from "node:path"
 import type { CommandResolver, ProcessSpawner } from "@spectrum/proc"
 import { type Result, err, ok } from "@spectrum/utils"
 import type { PluginError } from "./errors"
+import { redactUrlCredentials } from "./redact"
 
 /** Reads a completed child's stdout as text. `ProcessSpawner` deliberately exposes no stdout —
  * this is the one seam that needs it (`revParse`), injected rather than widening the spawner
@@ -26,11 +27,6 @@ export type GitCall = {
   readonly op: "clone" | "fetchCheckout" | "revParse"
   readonly args: readonly string[]
 }
-
-/** Strips an embedded `user:pass@` credential segment from a url before it ever reaches a log
- * line or an error detail (Global Constraint 10: never log a url without stripping it first). */
-export const redactUrlCredentials = (url: string): string =>
-  url.replace(/\/\/[^/@\s]+@/, "//[REDACTED]@")
 
 /**
  * Overrides for the vars that turn env inheritance into command execution or a stuck

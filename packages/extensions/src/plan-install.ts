@@ -7,6 +7,7 @@ import {
 import { type PluginId, PluginIdSchema } from "@spectrum/types"
 import { type Result, err, ok } from "@spectrum/utils"
 import type { PluginError } from "./errors"
+import { redactUrlCredentials } from "./redact"
 
 export type InstallMode = "link" | "copy"
 
@@ -33,6 +34,15 @@ export type PlanInstallInput = {
 
 const SCP_STYLE = /^[^/\s]+@[^/\s]+:.+$/
 const URL_SCHEME = /^[a-z][a-z0-9+.-]*:\/\//i
+
+/** Matches an `https://` url carrying userinfo (`user:pass@` or a bare `token@`) before the
+ * host. `ssh://git@host/...` and scp-style `git@host:path` are NOT matched — `git@` there is
+ * a username, not a secret, since SSH authenticates by key. Only `https://` carries a secret
+ * in the url itself. */
+const HTTPS_CREDENTIALS = /^https:\/\/[^/\s]*@/i
+
+const hasEmbeddedHttpsCredentials = (source: string): boolean =>
+  HTTPS_CREDENTIALS.test(source)
 
 /**
  * Splits a source's final path-like segment. For a `scheme://` url or an scp-style
@@ -113,7 +123,7 @@ const resolveId = (input: PlanInstallInput): Result<PluginId, PluginError> => {
   if (candidate === undefined) {
     return err({
       kind: "invalid-manifest",
-      detail: `could not derive a plugin id from source: ${input.source}`,
+      detail: `could not derive a plugin id from source: ${redactUrlCredentials(input.source)}`,
     })
   }
   const parsed = PluginIdSchema.safeParse(candidate)
@@ -136,7 +146,7 @@ export const planInstall = (
   if (hasParentSegment(input.source)) {
     return err({
       kind: "invalid-manifest",
-      detail: `source must not contain a parent-directory segment: ${input.source}`,
+      detail: `source must not contain a parent-directory segment: ${redactUrlCredentials(input.source)}`,
     })
   }
 
@@ -166,7 +176,7 @@ export const planInstall = (
     ) {
       return err({
         kind: "invalid-manifest",
-        detail: `link source must not be inside the plugin root: ${input.source}`,
+        detail: `link source must not be inside the plugin root: ${redactUrlCredentials(input.source)}`,
       })
     }
 
@@ -181,7 +191,14 @@ export const planInstall = (
   if (!isGitUrl(input.source)) {
     return err({
       kind: "invalid-manifest",
-      detail: `source must be an absolute path, an https:// or ssh:// url, or an scp-style git source: ${input.source}`,
+      detail: `source must be an absolute path, an https:// or ssh:// url, or an scp-style git source: ${redactUrlCredentials(input.source)}`,
+    })
+  }
+
+  if (hasEmbeddedHttpsCredentials(input.source)) {
+    return err({
+      kind: "invalid-manifest",
+      detail: `git url must not embed credentials — config stores this url verbatim; use an ssh:// or scp-style url, or git's own credential helper, instead: ${redactUrlCredentials(input.source)}`,
     })
   }
 
