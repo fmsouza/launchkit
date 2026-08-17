@@ -110,6 +110,23 @@ seam; nothing in this package spawns a process (that is `@spectrum/provider-host
   manifest never claimed — silently breaking uninstall-by-id.
 - A `source-unavailable` entry (a dead linked path) is logged and SKIPPED; an invalid manifest,
   an unsupported api version, or a duplicate id fails the whole `list()`.
+- **`GitClient.checkoutFetchHead` must never be called on an unvalidated `FETCH_HEAD`.**
+  `ExtensionInstaller.update` fetches, reads the candidate manifest out of `FETCH_HEAD`
+  (`showFetchHead`), validates it, and only then checks it out. This is an ORDERING invariant
+  the seam no longer enforces for you: the three operations used to be one `fetchCheckout`
+  method, which made the wrong order structurally impossible but also made validate-before-
+  adopt impossible, so it was split. Adopting an unvalidated commit is not a local failure —
+  `list()` refuses the whole installed set on an invalid manifest or a duplicate contribution
+  id, so one bad upstream commit left checked out makes every OTHER installed extension
+  disappear, and `update` cannot recover it (the recorded ref is unchanged, so it re-fetches
+  the same commit). There is one caller today, pinned by ordering tests in `installer.test.ts`
+  and `installer.integration.test.ts`; a second caller must reproduce the same order.
+- **`redactUrlCredentials`'s rules mirror `planInstall`'s refusals, per url shape.** Whatever
+  the planner calls a credential (any `https://` userinfo; a PASSWORD in an `ssh://` or
+  scp-style userinfo) the redactor blanks; whatever it calls a bare username (`ssh://git@host`,
+  `git@host:path`) the redactor leaves intact, so an error message stays legible. Both modules
+  share one `SCP_STYLE` (declared in `redact.ts`) rather than each carrying its own shape
+  regex. Changing one side without the other either leaks a secret or blanks a non-secret.
 - `providerDescriptors` filters by `enabledIds`. That filter is NOT the whole enforcement of
   `enabled`: `list()` reports everything installed, so every consumer that can reach a
   contribution's `launch` block must apply `enabled` itself (`@spectrum/provider-host` takes an

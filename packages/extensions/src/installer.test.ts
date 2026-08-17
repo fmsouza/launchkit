@@ -183,6 +183,29 @@ describe("install — git", () => {
     ])
   })
 
+  /** `"HEAD"` is the literal value the install record persists and `plugin list` prints, so
+   * a user copying what they see types it straight back in — and it renders the fatal
+   * `clone --branch HEAD` all over again. An explicit `HEAD` means the same thing as no ref
+   * at all. */
+  it("treats an explicitly requested HEAD ref as the default branch", async () => {
+    const { installer, git } = harness({
+      manifests: { "/data/providers/acme": validManifest("acme") },
+    })
+    const r = await installer.install({
+      source: "https://example.com/acme.git",
+      ref: "HEAD",
+    })
+    expect(r.ok).toBe(true)
+    const clone = git.calls.find((c) => c.op === "clone")
+    expect(clone?.args).toEqual([
+      "https://example.com/acme.git",
+      "/data/providers/acme",
+    ])
+    // The record still says HEAD — `git fetch origin HEAD` accepts it, and `update` needs it.
+    if (r.ok && r.value.install.source.kind === "git")
+      expect(r.value.install.source.ref).toBe("HEAD")
+  })
+
   it("enables the extension on install because installing is the trust decision", async () => {
     const { installer } = harness({
       manifests: { "/data/providers/acme": validManifest("acme") },

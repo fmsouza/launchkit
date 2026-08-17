@@ -21,10 +21,25 @@ describe("redactUrlCredentials", () => {
     expect(redacted).not.toContain("ssw0rd")
   })
 
-  it("redacts an ssh:// git@ username, harmlessly", () => {
-    expect(redactUrlCredentials("ssh://git@example.com/me/x.git")).toBe(
+  /** SSH authenticates by key, so `git@` there is a username and not a secret —
+   * `plan-install.ts` accepts it for exactly that reason. Blanking it makes an otherwise
+   * legible error message useless without protecting anything. */
+  it("leaves a bare ssh:// username untouched", () => {
+    const url = "ssh://git@example.com/me/x.git"
+    expect(redactUrlCredentials(url)).toBe(url)
+  })
+
+  it("redacts an ssh:// userinfo that carries a password", () => {
+    expect(redactUrlCredentials("ssh://git:hunter2@example.com/me/x.git")).toBe(
       "ssh://[REDACTED]@example.com/me/x.git",
     )
+  })
+
+  /** The redactor runs over every git argv element, which includes destination paths.
+   * A Windows path is not a url and has no userinfo to redact. */
+  it("leaves a windows path containing an @ untouched", () => {
+    const path = "C:\\Users\\me\\plug@ins"
+    expect(redactUrlCredentials(path)).toBe(path)
   })
 
   /** A bare scp-style username is not a secret, and blanking it would make an otherwise

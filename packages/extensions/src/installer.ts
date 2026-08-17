@@ -52,6 +52,20 @@ const hasWriteDir = (
 ): plan is InstallPlan & { readonly writeDir: string } =>
   plan.writeDir !== undefined
 
+/**
+ * The ref to CLONE at, which is not the ref the install record stores. `git clone --branch
+ * HEAD` is fatal — `HEAD` is a symref, not a name under `refs/heads`/`refs/tags` — while
+ * `git fetch origin HEAD` (what `update` runs) accepts it, so `"HEAD"` is the right thing to
+ * RECORD and the wrong thing to pass to a clone. Omitting `--branch` is what asks for the
+ * remote's default branch.
+ *
+ * `undefined` and an explicit `"HEAD"` therefore mean the same thing here. The explicit case
+ * is not hypothetical: `"HEAD"` is the literal value the record persists and `plugin list`
+ * prints, so a user copying what they see types it straight back in.
+ */
+const cloneRef = (ref: string | undefined): string | undefined =>
+  ref === undefined || ref === "HEAD" ? undefined : ref
+
 /** `JSON.parse` as a `Result`. The fs read seam does its own parsing; this is the git-side
  * candidate's, which arrives as the raw bytes of `FETCH_HEAD:<manifest>`. */
 const parseJson = (text: string): Result<unknown, PluginError> => {
@@ -216,12 +230,11 @@ export const createExtensionInstaller = (deps: {
         })
         return err(error)
       }
-      // The CALLER's ref, not `p.source.ref`. The plan records `"HEAD"` when no ref was
-      // requested, because that is what `update`'s `git fetch` needs — but `git clone
-      // --branch HEAD` is fatal (`HEAD` is a symref, not a name under `refs/heads`/
-      // `refs/tags`), so forwarding the recorded value would fail every default-branch
-      // install. Omitting `--branch` entirely is what gets the remote's default branch.
-      const cloned = await deps.git.clone(p.source.url, p.writeDir, input.ref)
+      const cloned = await deps.git.clone(
+        p.source.url,
+        p.writeDir,
+        cloneRef(input.ref),
+      )
       if (isErr(cloned)) {
         logger.error("extension install failed", {
           id: String(p.id),

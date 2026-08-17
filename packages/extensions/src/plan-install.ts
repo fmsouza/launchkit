@@ -7,7 +7,7 @@ import {
 import { type PluginId, PluginIdSchema } from "@spectrum/types"
 import { type Result, err, ok } from "@spectrum/utils"
 import type { PluginError } from "./errors"
-import { redactUrlCredentials } from "./redact"
+import { SCP_STYLE, redactUrlCredentials } from "./redact"
 
 export type InstallMode = "link" | "copy"
 
@@ -32,7 +32,6 @@ export type PlanInstallInput = {
   readonly platform?: Platform
 }
 
-const SCP_STYLE = /^[^/\s]+@[^/\s]+:.+$/
 const URL_SCHEME = /^[a-z][a-z0-9+.-]*:\/\//i
 
 /** Matches an `https://` url carrying userinfo (`user:pass@` or a bare `token@`) before the
