@@ -7,8 +7,11 @@ import {
 import { FlowResultViewSchema, FlowStepViewSchema } from "@spectrum/ipc"
 import { createNoopLogger } from "@spectrum/logger"
 import type { FlowClient, ProviderHost } from "@spectrum/provider-host"
-import { createFlowRunner } from "@spectrum/provider-host"
-import { FLOW_IN_FLIGHT_DETAIL, flowErrorMessage } from "./flow-errors"
+import {
+  FLOW_IN_FLIGHT_DETAIL,
+  createFlowRunner,
+} from "@spectrum/provider-host"
+import { flowErrorMessage } from "./flow-errors"
 
 /**
  * `FlowStepViewSchema` (`@spectrum/ipc`) is a deliberate hand-written DUPLICATE of
@@ -259,8 +262,10 @@ describe("flowErrorMessage", () => {
 
 // ── The in-flight sentinel ───────────────────────────────────────────────────
 // `advanceProviderFlow` tells a benign double-submit apart from a real transport failure by
-// the `detail` string alone — both are `read-failed`. That makes the string a CONTRACT with
-// `createFlowRunner`, so it is pinned against the real runner here rather than trusted.
+// the `detail` string alone — both are `read-failed`. The string itself is now STRUCTURAL:
+// `FLOW_IN_FLIGHT_DETAIL` is exported by `@spectrum/provider-host` and imported by both sides,
+// so it cannot drift by a reword. What is still worth pinning is that the runner uses it on
+// THIS path — a second concurrent `advance` — rather than some other inlined detail.
 
 const hangingHost = (): ProviderHost =>
   ({

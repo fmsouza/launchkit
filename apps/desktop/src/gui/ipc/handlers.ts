@@ -21,6 +21,7 @@ import type {
 } from "@spectrum/ipc"
 import { FlowStepViewSchema } from "@spectrum/ipc"
 import type { FlowCompletion, RunnerStep } from "@spectrum/provider-host"
+import { FLOW_IN_FLIGHT_DETAIL } from "@spectrum/provider-host"
 import {
   heuristicAttachments,
   validateProviderConfig,
@@ -37,7 +38,7 @@ import { isOk } from "@spectrum/utils"
 import type { GuiContext } from "../../composition"
 import { buildUpdateState as buildUpdateStateShared } from "../updater/build-update-state"
 import type { Channel } from "../updater/updater-adapter"
-import { FLOW_IN_FLIGHT_DETAIL, flowErrorMessage } from "./flow-errors"
+import { flowErrorMessage } from "./flow-errors"
 import { ingestUploads } from "./ingest-uploads"
 import { resolveTerminalCwd } from "./terminal-cwd"
 
@@ -360,7 +361,12 @@ export const createIpcHandlers = (ctx: GuiContext): IpcHandlers => {
     )
       return "Setup finished, but the provider it was set up for is no longer available."
 
-    // The flow's own values win, but what the user typed before starting it is not discarded.
+    // Precedence, deliberately: stored config < the config the flow was STARTED with < what
+    // `done.config` returned. The flow's own values win, and what the user typed before
+    // starting it is not discarded. On the `provider` path that makes `startProviderFlow` an
+    // alternative config-write path for an existing record — intended, because the modal
+    // passes what the user is currently looking at, and the merged result goes through the
+    // same `validateProviderConfig` gate `updateProvider` applies.
     const merged = {
       ...(existing?.config ?? {}),
       ...origin.config,
@@ -375,9 +381,26 @@ export const createIpcHandlers = (ctx: GuiContext): IpcHandlers => {
     if (!valid.ok)
       return `Setup finished, but Spectrum could not save the provider: the settings it produced were rejected (${valid.error.kind}).`
 
+    // The descriptor is guaranteed to resolve: `validateProviderConfig` above looked the same
+    // key up in the same registry and returned `unsupported-provider` if it did not. The
+    // fallbacks below are therefore type-level only — and both fail CLOSED.
+    const descriptor = ctx.providerRegistry.get(origin.providerKey)
+
+    // Filter against the DECLARED secret fields before touching the keychain. This is the
+    // authoritative list (the manifest's own), so it is stronger than `addProvider`'s filter
+    // over renderer-supplied names — and it BOUNDS THE LOOP: without it the number of keychain
+    // round trips a `done` step can drive is capped only by `FLOW_LIMITS.maxBodyBytes`, so a
+    // buggy or hostile extension could force thousands of them.
+    const declared = new Set(
+      (descriptor?.secretFields ?? []).map((f) => f.name),
+    )
+    const incoming = Object.entries(completion.secrets).filter(([field]) =>
+      declared.has(field),
+    )
+
     // Each secret VALUE goes to the keychain; only the returned ref is ever persisted.
     const secrets: Record<string, SecretRef> = { ...(existing?.secrets ?? {}) }
-    for (const [field, value] of Object.entries(completion.secrets)) {
+    for (const [field, value] of incoming) {
       if (value === "") continue
       const set = await ctx.secrets.set(value)
       if (!isOk(set))
@@ -385,13 +408,15 @@ export const createIpcHandlers = (ctx: GuiContext): IpcHandlers => {
       secrets[field] = set.value
     }
 
-    // Same id minting and name fallback as `addProvider`, so a flow-created record is
-    // indistinguishable from a hand-created one.
+    // Same id minting as `addProvider`. The NAME differs deliberately: `addProvider` falls
+    // back to the raw key because its caller can supply one, while these params carry no
+    // `name` at all — so the descriptor's label is the only chance this record has at being
+    // called "Acme" instead of "plugin:acme".
     const provider: Provider =
       existing === undefined
         ? {
             id: `p_${crypto.randomUUID()}` as Provider["id"],
-            name: origin.providerKey,
+            name: descriptor?.label ?? origin.providerKey,
             sdkProvider: origin.providerKey,
             config: merged,
             secrets,
@@ -449,11 +474,20 @@ export const createIpcHandlers = (ctx: GuiContext): IpcHandlers => {
     if (step.kind === "done") {
       flowOrigins.delete(stepped.sessionId)
       const completion = ctx.flowRunner.takeCompletion(stepped.sessionId)
-      if (completion !== undefined) {
-        const refusal = await persistFlowCompletion(origin, completion)
-        if (refusal !== undefined)
-          return { step: flowErrorStep(refusal), ...toast }
-      }
+      // The runner stashes a completion on EVERY `done`, so `undefined` means this `done` was
+      // delivered twice (or replayed) and the payload was already drained. Reporting the
+      // plugin's "Signed in" here would tell the user setup succeeded while nothing was
+      // saved — a silent wrong-success is worse than a loud unreachable error.
+      if (completion === undefined)
+        return {
+          step: flowErrorStep(
+            "Setup finished, but Spectrum did not receive its result, so nothing was saved. Please run the setup again.",
+          ),
+          ...toast,
+        }
+      const refusal = await persistFlowCompletion(origin, completion)
+      if (refusal !== undefined)
+        return { step: flowErrorStep(refusal), ...toast }
     }
     if (step.kind === "error") flowOrigins.delete(stepped.sessionId)
 
@@ -1379,6 +1413,12 @@ export const createIpcHandlers = (ctx: GuiContext): IpcHandlers => {
     },
 
     cancelProviderFlow: async ({ sessionId }) => {
+      // Symmetric with `advanceProviderFlow`: `flowRunner` is shared on the AppContext while
+      // these origins are per handler set, so a session this handler set did not start is not
+      // its to end either. Cancelling one would be as wrong as finishing one. A session that
+      // already reached a terminal step has had its origin dropped, and the runner's own
+      // `cancel` is a no-op for an unknown session, so nothing is lost by returning early.
+      if (!flowOrigins.has(sessionId)) return null
       flowOrigins.delete(sessionId)
       await ctx.flowRunner.cancel(sessionId)
       return null

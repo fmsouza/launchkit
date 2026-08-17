@@ -12,6 +12,7 @@ export type {
   FlowRunnerDeps,
 } from "./flow-runner"
 export {
+  FLOW_IN_FLIGHT_DETAIL,
   createFlowRunner,
   flowContributionIdOf,
   flowInstanceKey,

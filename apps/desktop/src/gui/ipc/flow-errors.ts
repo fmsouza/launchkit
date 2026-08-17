@@ -1,18 +1,5 @@
 import type { PluginError } from "@spectrum/extensions"
 
-/**
- * The `detail` `createFlowRunner` uses to refuse a SECOND concurrent `advance` on one session.
- *
- * That refusal is deliberately NOT terminal — a double-click, or a poll racing a submit, is a
- * caller mistake and not a reason to kill a live flow — but it arrives as `read-failed`, the
- * same kind a genuinely dead extension produces. The detail string is the only thing that
- * separates them, which makes it a contract with `@spectrum/provider-host` rather than an
- * implementation detail; `flow-contract.test.ts` pins it against the real runner so a reworded
- * detail fails a test instead of silently turning every double-submit into
- * "the extension stopped responding".
- */
-export const FLOW_IN_FLIGHT_DETAIL = "a flow step is already in flight"
-
 /** Name the extension in the message when the error knows which one it was. */
 const naming = (id: string | undefined, message: string): string =>
   id === undefined ? message : `${message} (extension "${id}")`

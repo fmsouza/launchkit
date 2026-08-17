@@ -28,10 +28,15 @@ import { createIpcHandlers } from "./handlers"
 const PLUGIN_KEY = "plugin:acme"
 const SECRET_VALUE = "sk-secret-value"
 
+/** Two DECLARED secret fields, so "declared but empty" and "never declared" stay distinct. */
 const acmeDescriptor: ProviderDescriptor = {
   ...getDescriptor("custom"),
   key: PLUGIN_KEY as ProviderDescriptor["key"],
   label: "Acme",
+  secretFields: [
+    { name: "apiKey", label: "API key", required: false },
+    { name: "refreshToken", label: "Refresh token", required: false },
+  ],
 }
 
 const startParams = {
@@ -91,6 +96,8 @@ const harness = (
     openExternalOk?: boolean
     secretSetFails?: boolean
     saveFails?: boolean
+    /** Simulates a `done` whose payload was already drained (a replay / double delivery). */
+    dropCompletion?: boolean
     secretGet?: Record<string, string>
     /** Registered plugin descriptors; defaults to the acme fixture. */
     plugins?: readonly ProviderDescriptor[]
@@ -156,6 +163,7 @@ const harness = (
     },
     takeCompletion: (sessionId) => {
       takes.push(sessionId)
+      if (opts.dropCompletion === true) return undefined
       const completion = completions.get(sessionId)
       completions.delete(sessionId)
       return completion
@@ -318,11 +326,56 @@ describe("createIpcHandlers.startProviderFlow", () => {
     })
   })
 
-  it("mints a provider id and falls back to the provider key for the name", async () => {
+  it("mints a provider id and names the record after the provider's label", async () => {
+    // These params carry no `name`, so the descriptor's label is the record's only chance at
+    // being called "Acme" instead of "plugin:acme".
     const h = harness({ steps: [doneStepWithSecret] })
     await h.handlers.startProviderFlow(startParams)
     expect(savedProviders(h)[0]?.id).toMatch(/^p_/)
-    expect(savedProviders(h)[0]?.name).toBe(PLUGIN_KEY)
+    expect(savedProviders(h)[0]?.name).toBe("Acme")
+  })
+
+  it("reports a failure rather than success when the done step carries no completion", async () => {
+    // The runner stashes a completion on every `done`, so this is a replayed or twice-delivered
+    // step. Telling the user "Signed in" while nothing was saved is the failure being pinned.
+    const h = harness({ steps: [doneStepWithSecret], dropCompletion: true })
+    const started = await h.handlers.startProviderFlow(startParams)
+    expect(started.step).toMatchObject({ kind: "error" })
+    expect(h.saves).toEqual([])
+    expect(h.secretSets).toEqual([])
+  })
+
+  it("drops a secret the provider never declared", async () => {
+    const h = harness({
+      steps: [
+        {
+          kind: "done",
+          secrets: { apiKey: SECRET_VALUE, sessionCookie: "sc-1" },
+        },
+      ],
+    })
+    await h.handlers.startProviderFlow(startParams)
+    expect(h.secretSets).toEqual([SECRET_VALUE])
+    expect(Object.keys(savedProviders(h)[0]?.secrets ?? {})).toEqual(["apiKey"])
+  })
+
+  it("cannot be driven past one keychain write per declared secret field", async () => {
+    // Without the declared-field filter the write loop is bounded only by the flow response
+    // size cap, so a buggy or hostile extension can drive thousands of keychain round trips.
+    const flood = Object.fromEntries(
+      Array.from({ length: 500 }, (_, i) => [`field_${i}`, `v-${i}`]),
+    )
+    const h = harness({
+      steps: [
+        {
+          kind: "done",
+          secrets: { ...flood, apiKey: SECRET_VALUE, refreshToken: "rt-1" },
+        },
+      ],
+    })
+    await h.handlers.startProviderFlow(startParams)
+    expect(h.secretSets).toHaveLength(acmeDescriptor.secretFields.length)
+    expect(h.secretSets.sort()).toEqual([SECRET_VALUE, "rt-1"].sort())
   })
 
   it("refuses to save a flow-produced record the add-provider handler would reject", async () => {
@@ -726,6 +779,16 @@ describe("createIpcHandlers.cancelProviderFlow", () => {
     })
     expect(h.cancelled).toEqual([sessionOf(started)])
     expect(r).toBeNull()
+  })
+
+  // Symmetric with the advance guard above: ending someone else's flow is as wrong as
+  // finishing it, and `flowRunner` is shared on the AppContext.
+  it("does not cancel a session another handler set started", async () => {
+    const h = harness({ steps: [formStep] })
+    const started = await h.handlers.startProviderFlow(startParams)
+    const other = createIpcHandlers(h.ctx)
+    await other.cancelProviderFlow({ sessionId: sessionOf(started) })
+    expect(h.cancelled).toEqual([])
   })
 
   it("saves nothing when a cancelled flow is later advanced", async () => {

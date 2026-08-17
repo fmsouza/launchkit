@@ -140,6 +140,16 @@ const ABANDON_MESSAGE: Record<FlowAbandonReason, string> = {
 
 const TIMEOUT_DETAIL = `flow exceeded its ${FLOW_LIMITS.totalTimeoutMs} ms total timeout`
 
+/**
+ * The `detail` carried by the `read-failed` that refuses a SECOND concurrent `advance`.
+ *
+ * Exported because that refusal is deliberately NOT terminal while every other `read-failed`
+ * is, and `kind` alone cannot tell them apart: a caller that surfaces failures to a user has
+ * to distinguish "you clicked twice" from "the extension died", and must not have to hand-copy
+ * this string to do it.
+ */
+export const FLOW_IN_FLIGHT_DETAIL = "a flow step is already in flight"
+
 type Session = {
   readonly instanceKey: string
   readonly providerId: string
@@ -459,10 +469,7 @@ export const createFlowRunner = (deps: FlowRunnerDeps): FlowRunner => {
     // reason to kill the flow. Refusing here is also what keeps the completion map's
     // "drained by exactly one take" true — two deliveries could otherwise refill it.
     if (session.inFlight)
-      return err({
-        kind: "read-failed",
-        detail: "a flow step is already in flight",
-      })
+      return err({ kind: "read-failed", detail: FLOW_IN_FLIGHT_DETAIL })
 
     const elapsed = deps.now() - session.startedAt
     if (elapsed > FLOW_LIMITS.totalTimeoutMs) {

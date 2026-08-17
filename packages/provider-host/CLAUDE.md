@@ -47,6 +47,11 @@ and stopping it on demand.
   should depend on whether the host's timer returns a number or a `Timeout` object
 - `FetchLike` — the slice of `fetch` `createFetchFlowHttp` uses, injectable so the per-call
   abort deadline is testable (Bun's test runner does not deliver a fetch abort)
+- `FLOW_IN_FLIGHT_DETAIL` — the `detail` on the `read-failed` that refuses a SECOND concurrent
+  `advance`. Exported because that refusal alone is non-terminal while every other
+  `read-failed` ends the flow, and `kind` cannot tell them apart: a caller that surfaces
+  failures to a user must distinguish "you clicked twice" from "the extension died", and must
+  not hand-copy the string to do it
 
 ## Local invariants
 - `waitForReady` takes `probe`, `sleep`, and `now` as injected dependencies — no real
