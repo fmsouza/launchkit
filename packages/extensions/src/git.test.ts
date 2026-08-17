@@ -254,6 +254,34 @@ describe("createFsDirCopier", () => {
     if (!r.ok) expect(r.error.kind).toBe("read-failed")
   })
 
+  // The test above cannot tell OUR guard from `fs.cp`'s own `ERR_FS_CP_EINVAL`, which
+  // rejects the same case on POSIX — so it passed on macOS/Linux while the guard was dead
+  // on Windows (it compared against a hardcoded `/` and `path.resolve` yields `\` there),
+  // and `fs.cp` then recursed into its own destination until Bun panicked with a stack
+  // overflow. This one never reaches `fs.cp`: the directories do not exist, so only the
+  // guard can produce the containment message. It is separator-agnostic — `join` builds a
+  // native descendant path on whichever platform runs it.
+  it("rejects a descendant destination from the guard, before fs.cp is ever reached", async () => {
+    const absent = join(await makeTmpDir(), "never-created")
+    const child = join(absent, "child")
+
+    const r = await createFsDirCopier().copy(absent, child)
+
+    expect(r.ok).toBe(false)
+    if (!r.ok) {
+      // Both assertions are unconditional; the `if` below is a type narrow (only some
+      // `PluginError` members carry `detail`), not a conditional assertion — the `kind`
+      // check above already fails the test if the narrow would not hold.
+      expect(r.error.kind).toBe("read-failed")
+      // Asserting the DETAIL is the whole point: an ENOENT from `fs.cp` is also
+      // `read-failed`, so only the message distinguishes "the guard fired" from "the guard
+      // was dead and the filesystem happened to complain".
+      if (r.error.kind === "read-failed") {
+        expect(r.error.detail).toContain("itself or a descendant")
+      }
+    }
+  })
+
   it("fails with read-failed when the self-copy is disguised with a .. segment", async () => {
     const root = await makeTmpDir()
     const sub = join(root, "sub")

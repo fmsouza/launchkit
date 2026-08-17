@@ -1,4 +1,4 @@
-import { resolve as resolvePath } from "node:path"
+import { sep as pathSep, resolve as resolvePath } from "node:path"
 import type { CommandResolver, ProcessSpawner } from "@spectrum/proc"
 import { type Result, err, ok } from "@spectrum/utils"
 import type { PluginError } from "./errors"
@@ -209,11 +209,21 @@ export type DirCopier = {
  * `path.resolve` (against `process.cwd()`) before comparing — a lexical prefix check on the
  * raw strings is defeated by a `from` containing `..` (e.g. `copy("/a/b/..", "/a/b")` is
  * really a self-copy but does not lexically match) or by a missing/differing trailing
- * separator. Copying a directory into itself or into its own descendant is destructive. */
+ * separator. Copying a directory into itself or into its own descendant is destructive.
+ *
+ * The descendant test uses `path.sep`, NOT a hardcoded `/`. `path.resolve` returns
+ * backslash-separated paths on Windows, so a `/` here made this branch dead on Windows —
+ * and the consequence was not a failed assertion but `fs.cp` recursing into its own
+ * destination until Bun panicked with a stack overflow. It went unnoticed locally because
+ * on POSIX `fs.cp` ALSO rejects that case natively (`ERR_FS_CP_EINVAL`), so this guard was
+ * never the thing under test there. */
 const isSelfOrDescendant = (candidate: string, root: string): boolean => {
   const normCandidate = resolvePath(candidate)
   const normRoot = resolvePath(root)
-  return normCandidate === normRoot || normCandidate.startsWith(`${normRoot}/`)
+  return (
+    normCandidate === normRoot ||
+    normCandidate.startsWith(`${normRoot}${pathSep}`)
+  )
 }
 
 /** Real copier: recursive `fs.cp` behind the `DirCopier` seam. */
