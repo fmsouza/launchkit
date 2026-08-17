@@ -1,11 +1,17 @@
 import type { Config, ConfigStore } from "@spectrum/config"
+import type {
+  InstallInput,
+  InstalledExtension,
+  LoadedExtension,
+  PluginError,
+} from "@spectrum/extensions"
 import type { LaunchParams } from "@spectrum/harnesses"
 import type { Logger } from "@spectrum/logger"
 import type { ProjectStore } from "@spectrum/projects"
 import type { RunningProxy, RuntimeState } from "@spectrum/proxy"
 import type { SecretStore } from "@spectrum/secrets"
 import type { SessionStore } from "@spectrum/sessions"
-import type { HarnessDefinition } from "@spectrum/types"
+import type { HarnessDefinition, PluginId } from "@spectrum/types"
 import type { Result } from "@spectrum/utils"
 import type { Writer } from "./writer"
 
@@ -22,6 +28,11 @@ export type StartProxyDeps = {
  * package (or a tiny function seam), so commands stay pure and fully fakeable.
  *
  * - `registry.list()` mirrors `HarnessRegistry.list()` from `@spectrum/harnesses`.
+ * - `extensions`/`extensionRegistry` mirror `ExtensionAdmin`/`ExtensionRegistry` from
+ *   `@spectrum/runtime-core`/`@spectrum/extensions` STRUCTURALLY — `packages/cli` sits
+ *   below `runtime-core` in the layering, so importing `ExtensionAdmin` itself would
+ *   invert it. Only the methods `plugin-command.ts` actually calls are declared, same as
+ *   `registry` above.
  * - `launch` is `launchHarness(deps)` already partially applied by the app shell — a
  *   single call `(params) => Result<{ pid }, unknown>`.
  * - `proxy.start` returns the `RunningProxy` from `@spectrum/proxy`; `proxy.isRunning`
@@ -34,6 +45,20 @@ export type CliDeps = {
   readonly secrets: SecretStore
   readonly registry: {
     list(): Promise<Result<readonly HarnessDefinition[], unknown>>
+  }
+  readonly extensions: {
+    install(
+      input: InstallInput,
+    ): Promise<Result<InstalledExtension, PluginError>>
+    update(id: PluginId): Promise<Result<InstalledExtension, PluginError>>
+    remove(id: PluginId): Promise<Result<void, PluginError>>
+    setEnabled(
+      id: PluginId,
+      enabled: boolean,
+    ): Promise<Result<void, PluginError>>
+  }
+  readonly extensionRegistry: {
+    list(): Promise<Result<readonly LoadedExtension[], PluginError>>
   }
   readonly launch: (
     params: LaunchParams,

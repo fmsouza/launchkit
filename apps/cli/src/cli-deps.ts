@@ -9,6 +9,8 @@ export const cliDepsFrom = (ctx: AppContext): CliDeps => ({
   projects: ctx.projects,
   runtime: ctx.runtime,
   registry: ctx.registry,
+  extensions: ctx.extensions,
+  extensionRegistry: ctx.extensionRegistry,
   launch: ctx.launch,
   proxy: {
     isRunning: ctx.proxy.isRunning,

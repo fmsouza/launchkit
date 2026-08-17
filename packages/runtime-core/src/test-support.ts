@@ -12,8 +12,13 @@ import { createDataAdmin } from "@spectrum/data-admin"
 import { createSqliteClient, runMigrations } from "@spectrum/db"
 import { createAcpDriver } from "@spectrum/driver-acp"
 import {
+  createBunCaptureStdout,
   createDirExtensionFileSource,
+  createExtensionInstaller,
   createExtensionRegistry,
+  createFsDirCopier,
+  createFsReadManifest,
+  createProcessGitClient,
 } from "@spectrum/extensions"
 import { createRegistry, launchHarness } from "@spectrum/harnesses"
 import { detectPlatform, resolveAppPaths } from "@spectrum/platform"
@@ -229,6 +234,27 @@ export const buildFakeAppContextDeps = (
           retainOnly: async () => undefined,
         }
       }) as never),
+    createProcessGitClient:
+      overrides.createProcessGitClient ??
+      (record("createProcessGitClient") as never),
+    createFsDirCopier:
+      overrides.createFsDirCopier ?? (record("createFsDirCopier") as never),
+    createFsReadManifest:
+      overrides.createFsReadManifest ??
+      (record("createFsReadManifest") as never),
+    createBunCaptureStdout:
+      overrides.createBunCaptureStdout ??
+      (record("createBunCaptureStdout") as never),
+    createExtensionInstaller:
+      overrides.createExtensionInstaller ??
+      (((...a: unknown[]) => {
+        calls.createExtensionInstaller = a
+        return {
+          install: async () => err({ kind: "not-found", id: "none" }),
+          update: async () => err({ kind: "not-found", id: "none" }),
+          remove: async () => ok(undefined),
+        }
+      }) as never),
     createLoopbackPortAllocator:
       overrides.createLoopbackPortAllocator ??
       (record("createLoopbackPortAllocator") as never),
@@ -294,6 +320,11 @@ export const realAdapterDefaults: Readonly<Record<string, unknown>> = {
   createDirExtensionFileSource,
   createExtensionRegistry,
   createProviderHost,
+  createProcessGitClient,
+  createFsDirCopier,
+  createFsReadManifest,
+  createBunCaptureStdout,
+  createExtensionInstaller,
   createLoopbackPortAllocator,
   createFetchHealthProbe,
   createCryptoTokenGen,

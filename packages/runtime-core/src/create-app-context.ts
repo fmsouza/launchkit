@@ -24,7 +24,11 @@ import type {
 import { demoScript } from "@spectrum/agent-driver"
 import { ThinkingEffortSchema } from "@spectrum/agent-events"
 import { defaultConfig } from "@spectrum/config"
-import type { ExtensionRegistry } from "@spectrum/extensions"
+import type {
+  ExtensionInstaller,
+  ExtensionRegistry,
+  PluginError,
+} from "@spectrum/extensions"
 import {
   type LaunchParams,
   builtinHarnesses,
@@ -60,6 +64,7 @@ import {
   resolveTimeouts,
   startProxy,
 } from "@spectrum/proxy"
+import type { Result } from "@spectrum/utils"
 import { err, ok, redactSecrets } from "@spectrum/utils"
 import type { AppContext } from "./app-context"
 import { withDemoHarness } from "./demo-harness"
@@ -69,6 +74,7 @@ import {
   type DriverRegistry,
   createDriverRegistry,
 } from "./driver-registry"
+import { configErrorDetail, createExtensionAdmin } from "./extension-admin"
 import {
   createSecretRegistry,
   withRuntimeKeyRegistration,
@@ -208,6 +214,27 @@ const createListProviderModelsDraft = (
     })
   }
 }
+
+/**
+ * Contribution id → live source directory, for every installed extension whose install mode is
+ * `path` + `linked` — the only mode read live from its working copy rather than the plugin root.
+ * Pure so it can be shared, byte-for-byte, between `runRefresh`'s registry rebuild and the
+ * extension installer's own file source: an installer built from a DIFFERENT (e.g. empty) link
+ * map cannot see already-installed linked extensions in its duplicate-contribution-id gate
+ * (`collectClaimedContributionIds` in `@spectrum/extensions`'s installer), which would silently
+ * admit a colliding contribution id and — on the next refresh, when `registry.list()` finally
+ * sees both — fail every `list()` call with `duplicate-id`, taking every installed plugin down.
+ */
+const computeLinkMap = (
+  cfg: import("@spectrum/config").Config,
+): Readonly<Record<string, string>> =>
+  Object.fromEntries(
+    cfg.providerPlugins.flatMap((p) =>
+      p.source.kind === "path" && p.source.linked
+        ? [[String(p.id), p.source.path] as const]
+        : [],
+    ),
+  )
 
 /**
  * Construct the real adapters and inject them into the wired `AppContext`. FLAT and logic-free:
@@ -524,7 +551,16 @@ export const createAppContext = (
     list: () => providerRegistryCell.list(),
     catalog: () => providerRegistryCell.catalog(),
   }
-  const extensionRegistry: ExtensionRegistry = {
+  /**
+   * Raw, NON-awaiting delegator straight to the cell — used ONLY by `providerHost` below.
+   * `providerHost.retainOnly` is invoked FROM INSIDE `runRefresh` (via
+   * `retainConfiguredInstances`, after the atomic swap but before `runRefresh`'s own promise
+   * resolves), so a registry that awaits `extensionsReady` here would deadlock: `extensionsReady`
+   * cannot resolve until this very `runRefresh` call returns, and `runRefresh` cannot return
+   * until whatever `providerHost` awaits resolves. The public `extensionRegistry` below (which
+   * DOES await readiness) must never be handed to `providerHost`.
+   */
+  const rawExtensionRegistry: ExtensionRegistry = {
     list: () => extensionRegistryCell.list(),
     providerDescriptors: (enabledIds) =>
       extensionRegistryCell.providerDescriptors(enabledIds),
@@ -536,13 +572,42 @@ export const createAppContext = (
   let haveGoodExtensionState = false
 
   /**
+   * Resolves once (never rejects) after the FIRST `runRefresh()` call settles, success or
+   * failure — set in a `finally` below, so it resolves even if `abandonRefresh` itself throws.
+   * Deliberately DISTINCT from `extensionsReady` (declared further down, reassigned on every
+   * `refreshExtensions()` call to track whichever refresh is CURRENTLY in flight): a cold-start
+   * reader of the extension registry needs to wait for the app to have tried at least once, but
+   * a WARM reader must NOT block on a LATER refresh that happens to be in flight — the registry
+   * is a stable façade over the last COMMITTED cell (proven by
+   * "never exposes a half-applied extension set while a refresh is in flight"), not a promise a
+   * request-in-progress waits out. Awaiting `extensionsReady` here would make every call block
+   * until the CURRENT refresh finishes, deadlocking a test (and, in production, a caller) that
+   * reads the registry while a refresh it does not control is intentionally slow.
+   */
+  let resolveFirstRefreshSettled: () => void = () => {}
+  const firstRefreshSettled: Promise<void> = new Promise((resolve) => {
+    resolveFirstRefreshSettled = resolve
+  })
+
+  /**
+   * The full error from the MOST RECENT abandoned refresh — not just its `kind`. Consulted by
+   * `noGoodStateRegistry` (below) so a caller reading through it when there is no good state
+   * sees WHICH extension is broken and why (`unsupported-api-version` with the version,
+   * `duplicate-id` with the colliding id, `invalid-manifest` with the zod detail), not a
+   * constant "something is wrong". The LOG line still records only `{ kind }` — unchanged —
+   * this is purely about not discarding the rest of the error after logging it.
+   */
+  let lastAbandonError: PluginError | undefined
+
+  /**
    * Give up on this refresh. At startup (no good state yet) that means falling back to builtins
    * only; on a LATER refresh the last known-good view is KEPT — a momentary fs error must not
    * silently demote a supervised plugin to "not supervised", which is how plugin traffic would
    * end up resolved against an SDK's cloud default.
    */
-  const abandonRefresh = (msg: string, kind: string): void => {
-    extensionsLog.error(msg, { kind })
+  const abandonRefresh = (msg: string, error: PluginError): void => {
+    extensionsLog.error(msg, { kind: error.kind })
+    lastAbandonError = error
     if (haveGoodExtensionState) return
     supervisedIds = new Set<string>()
     enabledExtensionIds = new Set<string>()
@@ -566,15 +631,7 @@ export const createAppContext = (
     try {
       const loaded = await config.load()
       const cfg = loaded.ok ? loaded.value : (liveConfig ?? defaultConfig())
-      // Only a LINKED path install is read live from its source dir; every other install mode
-      // lives under the plugin root and needs no link entry.
-      const linkMap: Record<string, string> = Object.fromEntries(
-        cfg.providerPlugins.flatMap((p) =>
-          p.source.kind === "path" && p.source.linked
-            ? [[String(p.id), p.source.path] as const]
-            : [],
-        ),
-      )
+      const linkMap = computeLinkMap(cfg)
       const nextRegistry = deps.createExtensionRegistry({
         fileSource: deps.createDirExtensionFileSource(
           paths.providerPluginDir,
@@ -585,7 +642,7 @@ export const createAppContext = (
 
       const listed = await nextRegistry.list()
       if (!listed.ok) {
-        abandonRefresh("extension load failed", listed.error.kind)
+        abandonRefresh("extension load failed", listed.error)
         return
       }
       const enabledIds = cfg.providerPlugins
@@ -616,10 +673,7 @@ export const createAppContext = (
 
       const descriptors = await nextRegistry.providerDescriptors(enabledIds)
       if (!descriptors.ok) {
-        abandonRefresh(
-          "extension descriptors unavailable",
-          descriptors.error.kind,
-        )
+        abandonRefresh("extension descriptors unavailable", descriptors.error)
         return
       }
       const nextProviders = deps.createProviderRegistry(descriptors.value)
@@ -638,11 +692,19 @@ export const createAppContext = (
     } catch (cause) {
       // Defensive: every adapter above returns a Result, so this is unreachable by design.
       // It exists so an unexpected throw degrades gracefully instead of rejecting
-      // `extensionsReady` — which the proxy's routing path awaits on every request.
-      abandonRefresh(
-        "extension refresh failed",
-        cause instanceof Error ? cause.name : "unknown",
-      )
+      // `extensionsReady` — which the proxy's routing path awaits on every request. No real
+      // `PluginError` exists for an unexpected throw, so one is synthesized here.
+      abandonRefresh("extension refresh failed", {
+        kind: "read-failed",
+        detail:
+          cause instanceof Error
+            ? `${cause.name}: ${cause.message}`
+            : String(cause),
+      })
+    } finally {
+      // Runs on every path — success, an early `abandonRefresh` + return, or the catch above —
+      // and even if `abandonRefresh` itself throws, so `firstRefreshSettled` can never hang.
+      resolveFirstRefreshSettled()
     }
   }
 
@@ -656,15 +718,120 @@ export const createAppContext = (
   /** Refreshes are SERIALIZED: two overlapping calls must not interleave their reads. */
   const refreshExtensions = (): Promise<void> => {
     const next = extensionsReady.then(runRefresh)
-    extensionsReady = next
+    // `extensionsReady` itself is never allowed to become (permanently) rejected: if `next`
+    // ever DID reject, `.then` on a rejected promise skips its callback and just propagates the
+    // rejection, so every LATER `refreshExtensions()` call would inherit it forever — poisoning
+    // `resolveBaseUrl` (which awaits `extensionsReady` on every proxy request) and
+    // `ExtensionAdmin` (whose `await deps.refresh()` would throw out of a `Promise<Result<…>>`,
+    // breaking its no-throw contract). Currently unreachable — `runRefresh`'s only way to reject
+    // is `abandonRefresh` throwing, and its only fallible call is the logger, which never throws
+    // by construction — but the blast radius earns the guard. The CALLER of `refreshExtensions`
+    // still gets `next` (and its real rejection, if any) unmodified.
+    extensionsReady = next.catch(() => {})
     return next
   }
 
   /** The initial load, started at construction and awaited by the routing path below. */
   refreshExtensions()
 
+  /**
+   * Returned by `liveExtensionRegistry` whenever there is no good extension state — either no
+   * refresh has EVER succeeded (`!haveGoodExtensionState`) or `firstRefreshSettled` itself is
+   * somehow a rejected promise (it should never be — see its own doc comment — but a consumer
+   * calling through here must never inherit a rejection). Returning an ERRORING registry rather
+   * than an empty-but-`ok` one matters: `extensionRegistryCell` in the "no good state" case is
+   * still the wiring-time cell built with an EMPTY link map, so an `ok([])` here would be read
+   * as "nothing is installed" rather than "the real answer is unavailable" — `remove`'s `in-use`
+   * guard, reading `ok([])`, would compute zero contributed keys and refuse nothing, silently
+   * deleting an install record a provider still references.
+   *
+   * Surfaces `lastAbandonError` — the ACTUAL cause (`unsupported-api-version` with the version,
+   * `duplicate-id` with the colliding id, `invalid-manifest` with the zod detail) — rather than a
+   * constant placeholder, so a caller built on this (a "list installed extensions" IPC handler or
+   * CLI command) can tell the user WHICH extension is broken and why, not just "something is
+   * wrong". Falls back to the constant only in the — currently unreached — case where this is
+   * consulted before any refresh has run at all.
+   */
+  const noGoodStateRegistry: ExtensionRegistry = {
+    list: async () =>
+      err(
+        lastAbandonError ?? {
+          kind: "read-failed",
+          detail: "no good extension state",
+        },
+      ),
+    providerDescriptors: async () =>
+      err(
+        lastAbandonError ?? {
+          kind: "read-failed",
+          detail: "no good extension state",
+        },
+      ),
+  }
+
+  /**
+   * `firstRefreshSettled` only resolves in `runRefresh`'s `finally`, which sits AFTER
+   * `await retainConfiguredInstances(cfg)` — so a stalled `config.load()` or a stalled sweep
+   * would hang `liveExtensionRegistry` (and therefore `ctx.extensionRegistry.list()`) forever.
+   * An IPC handler that never returns is a spinning GUI with no error, worse than a wrong
+   * answer, so this bounds the wait. 5s: generous for real fs IO (a `readdir` + per-manifest
+   * `JSON.parse`, not a network call) while still being a human-noticeable-but-not-infinite
+   * wait for a caller that DOES get a `noGoodStateRegistry` timeout error back instead of
+   * hanging.
+   */
+  const FIRST_REFRESH_TIMEOUT_MS = 5000
+
+  /** Registers whichever of `promise` / a `ms`-bounded timer settles first, WITHOUT leaving a
+   * dangling timer behind when `promise` wins (unlike a bare `Promise.race`, which never
+   * cancels the loser). */
+  const raceWithTimeout = <T>(
+    promise: Promise<T>,
+    ms: number,
+  ): Promise<T | "timeout"> =>
+    new Promise((resolve) => {
+      const timer = setTimeout(() => resolve("timeout"), ms)
+      promise.then(
+        (value) => {
+          clearTimeout(timer)
+          resolve(value)
+        },
+        () => {
+          clearTimeout(timer)
+          resolve("timeout")
+        },
+      )
+    })
+
+  /**
+   * The registry every EXTERNAL consumer (the public `AppContext.extensionRegistry` and
+   * `ExtensionAdmin`'s `registry` accessor) reads through: waits for the FIRST refresh to have
+   * settled (cold-start protection — see `firstRefreshSettled`'s doc comment for why this is
+   * NOT `extensionsReady`), bounded so a stalled refresh can't hang a caller forever, then
+   * returns the live cell ONLY if some refresh has ever actually succeeded. Never
+   * `providerHost`'s dependency (see `rawExtensionRegistry` above) and never called from inside
+   * `runRefresh` itself.
+   */
+  const liveExtensionRegistry = async (): Promise<ExtensionRegistry> => {
+    // `firstRefreshSettled` should never actually reject — it is resolved directly by its own
+    // resolver in a `finally`, never chained off another promise's rejection — but
+    // `raceWithTimeout` treats a rejection the same as a timeout regardless, so a consumer
+    // calling through here always gets a `Result`, never an uncaught throw or an indefinite hang.
+    const outcome = await raceWithTimeout(
+      firstRefreshSettled,
+      FIRST_REFRESH_TIMEOUT_MS,
+    )
+    if (outcome === "timeout") return noGoodStateRegistry
+    return haveGoodExtensionState ? extensionRegistryCell : noGoodStateRegistry
+  }
+
+  const extensionRegistry: ExtensionRegistry = {
+    list: async () => (await liveExtensionRegistry()).list(),
+    providerDescriptors: async (enabledIds) =>
+      (await liveExtensionRegistry()).providerDescriptors(enabledIds),
+  }
+
   const providerHost = deps.createProviderHost({
-    registry: extensionRegistry,
+    registry: rawExtensionRegistry,
     // Reads the CELL, not a snapshot: the host is built once and must see every later refresh.
     isEnabled: (extensionId: string) => enabledExtensionIds.has(extensionId),
     resolver,
@@ -675,6 +842,108 @@ export const createAppContext = (
     now: () => Date.now(),
     tokenGen: deps.createCryptoTokenGen(),
     logger: log.child("provider-host"),
+  })
+
+  // Reusable across calls: side-effect-free constructors, no config dependency.
+  const installerGitClient = deps.createProcessGitClient({
+    resolver,
+    spawner: deps.createBunProcessSpawner(),
+    capture: deps.createBunCaptureStdout(),
+  })
+  const installerDirCopier = deps.createFsDirCopier()
+  const installerReadManifest = deps.createFsReadManifest()
+
+  /**
+   * Rebuilt on EVERY call, not once at wiring time — unlike everything else above, the
+   * installer's file source must reflect the CURRENT config's link map, not the empty one
+   * that was true when the app started. `collectClaimedContributionIds` (the installer's
+   * duplicate-contribution-id gate) reads through this same file source: an installer wired
+   * once with an empty link map cannot see already-installed LINKED extensions there, so it
+   * would silently admit a second extension claiming the same contribution id — which
+   * `registry.list()` (the SAME source `runRefresh` reads) then refuses outright on every
+   * subsequent refresh, taking every installed plugin down, not just the colliding one.
+   *
+   * Uses the SAME `paths.providerPluginDir` root the refresh uses, so `removeExtension`
+   * deletes from the one directory the loader reads — a second root here would silently
+   * orphan files. A linked id can never reach `removeExtension`'s delete (it always resolves
+   * `join(root, id)`, ignoring the link map by construction — `adapters.ts`) or `extensionDir`
+   * (reachable only from `update`, which refuses every non-`git` source, including every
+   * linked one, before it gets there — see "refuses to update a linked path install" in
+   * `installer.test.ts`), so handing this installer a live link map cannot turn a stray path
+   * into a delete target.
+   */
+  const buildExtensionInstaller = async (): Promise<
+    Result<ExtensionInstaller, PluginError>
+  > => {
+    // AWAIT the config load rather than reading `liveConfig` synchronously: on a cold start
+    // `liveConfig` is still `undefined` until the constructor's own initial `refreshExtensions()`
+    // resolves, which is real fs IO several ticks away. `ExtensionAdmin.install` calls this
+    // BEFORE its own `loadConfig()`, so reading `liveConfig` here would reproduce the exact bug
+    // this function exists to fix, just moved earlier: the first install of a process (with a
+    // linked extension already on disk from a previous session) would still see an empty link
+    // map. `config.load()` goes through `createCachedConfigStore`, so every call after the very
+    // first is a cache hit, not a second fs read.
+    //
+    // A FAILED load is NOT papered over with `liveConfig ?? defaultConfig()`: that fallback
+    // would give the duplicate-contribution-id gate an empty link map AND an empty
+    // `existingInstalls()` — silently disabling it rather than refusing. `createCachedConfigStore`
+    // does not cache failures, so a transient read error here does not imply the admin's own
+    // (separate) `loadConfig()` call will also fail; two independent reads can disagree. A gate
+    // that silently disables itself on a bad read is worse than one that refuses the operation.
+    const loaded = await config.load()
+    if (!loaded.ok)
+      return err({
+        kind: "read-failed",
+        detail: configErrorDetail(loaded.error),
+      })
+    const cfg = loaded.value
+    return ok(
+      deps.createExtensionInstaller({
+        git: installerGitClient,
+        copier: installerDirCopier,
+        fileSource: deps.createDirExtensionFileSource(
+          paths.providerPluginDir,
+          computeLinkMap(cfg),
+        ),
+        readManifest: installerReadManifest,
+        pluginRoot: paths.providerPluginDir,
+        existingInstalls: () => cfg.providerPlugins,
+        logger: extensionsLog,
+        platform: deps.platform,
+      }),
+    )
+  }
+  const extensionInstaller: ExtensionInstaller = {
+    install: async (input) => {
+      const built = await buildExtensionInstaller()
+      if (!built.ok) return built
+      return built.value.install(input)
+    },
+    update: async (id, install) => {
+      const built = await buildExtensionInstaller()
+      if (!built.ok) return built
+      return built.value.update(id, install)
+    },
+    remove: async (id, install, referencingProviderIds) => {
+      const built = await buildExtensionInstaller()
+      if (!built.ok) return built
+      return built.value.remove(id, install, referencingProviderIds)
+    },
+  }
+
+  const extensions = createExtensionAdmin({
+    config,
+    installer: extensionInstaller,
+    // The SAME live, good-state-aware façade `AppContext.extensionRegistry` uses — not the
+    // wiring-time `extensionRegistryCell` (empty link map) and not merely "await readiness":
+    // `liveExtensionRegistry` also refuses to hand back the cell after a FAILED refresh (see its
+    // doc comment), which an `await extensionsReady`-only accessor cannot tell apart from "no
+    // extensions installed". `remove`'s `in-use` guard depends on that distinction — an `ok([])`
+    // read after a failed refresh would compute zero contributed keys and refuse nothing.
+    registry: async () => extensionRegistry,
+    providerHost,
+    refresh: refreshExtensions,
+    logger: extensionsLog,
   })
 
   /**
@@ -1041,6 +1310,7 @@ export const createAppContext = (
     extensionRegistry,
     providerHost,
     refreshExtensions,
+    extensions,
     runtime,
     testProvider: createTestProvider(config, factory, gateway, () =>
       deps.createSystemClock(),

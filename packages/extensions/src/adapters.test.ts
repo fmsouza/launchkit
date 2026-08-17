@@ -62,6 +62,57 @@ describe("createDirExtensionFileSource (real)", () => {
     expect(r).toEqual({ ok: true, value: [] })
   })
 
+  it("lists a linked extension even when the plugin root does not exist", async () => {
+    // A `link`-mode install never writes under `root` — a linked id is the ONE way `root` can
+    // stay absent forever while an extension is still installed. `readdir(root)` throwing
+    // ENOENT must not short-circuit before `linkMap` is consulted, or every link-only install
+    // would be silently invisible until some unrelated git/copy install happened to create
+    // `root` first.
+    const missingRoot = join(makeTempDir(), "missing-root")
+    const linkedDir = makeTempDir()
+    writeManifest(linkedDir, "linked", { name: "Linked Ext" })
+
+    const r = await createDirExtensionFileSource(missingRoot, {
+      linked: linkedDir,
+    }).listExtensions()
+    expect(r.ok).toBe(true)
+    if (r.ok) {
+      expect(r.value).toEqual([
+        {
+          id: "linked",
+          raw: {
+            apiVersion: "spectrum.dev/v1",
+            id: "linked",
+            name: "Linked Ext",
+            version: "1.0.0",
+          },
+        },
+      ])
+    }
+  })
+
+  it("reports source-unavailable for a dead link even when the plugin root does not exist", async () => {
+    const missingRoot = join(makeTempDir(), "missing-root")
+    const missingLinkPath = join(makeTempDir(), "does-not-exist")
+
+    const r = await createDirExtensionFileSource(missingRoot, {
+      dead: missingLinkPath,
+    }).listExtensions()
+    expect(r).toEqual({
+      ok: true,
+      value: [
+        {
+          id: "dead",
+          error: {
+            kind: "source-unavailable",
+            id: "dead",
+            path: missingLinkPath,
+          },
+        },
+      ],
+    })
+  })
+
   it("skips a stray directory with no manifest instead of failing", async () => {
     const root = makeTempDir()
     writeManifest(join(root, "a"), "a")

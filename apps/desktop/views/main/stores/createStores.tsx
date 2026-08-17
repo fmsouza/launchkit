@@ -8,6 +8,7 @@ import {
 } from "react"
 import type { StoreApi } from "zustand/vanilla"
 import type { UpdateClient } from "../update/updateClient"
+import { type ExtensionsStore, createExtensionsStore } from "./extensionsStore"
 import { type HarnessesStore, createHarnessesStore } from "./harnessesStore"
 import { type ModelsStore, createModelsStore } from "./modelsStore"
 import type { NotificationInput } from "./notifications-model"
@@ -31,6 +32,7 @@ export type Stores = {
   readonly models: StoreApi<ModelsStore>
   readonly notifications: StoreApi<NotificationsStore>
   readonly harnesses: StoreApi<HarnessesStore>
+  readonly extensions: StoreApi<ExtensionsStore>
   readonly projects: StoreApi<ProjectsStore>
   readonly ui: StoreApi<UiStore>
   readonly runView: StoreApi<RunViewStore>
@@ -69,6 +71,7 @@ export const createStores = ({
     models: createModelsStore({ ...deps, providerNameResolver }),
     notifications,
     harnesses: createHarnessesStore(deps),
+    extensions: createExtensionsStore(deps),
     projects: createProjectsStore(deps),
     ui: createUiStore(initialView),
     runView: createRunViewStore(deps),

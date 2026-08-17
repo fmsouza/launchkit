@@ -13,6 +13,7 @@ import {
   HarnessIdSchema,
   ModelIdSchema,
   ModelRouteSchema,
+  PluginIdSchema,
   ProjectIdSchema,
   ProviderIdSchema,
   ProviderKeySchema,
@@ -20,6 +21,7 @@ import {
   SessionSchema,
 } from "@spectrum/types"
 import { z } from "zod"
+import { ExtensionViewSchema } from "./extension-view"
 import { ProviderViewSchema } from "./provider-view"
 
 /** `void` over the wire is encoded as `null` (JSON has no `undefined`). */
@@ -616,6 +618,56 @@ export const SetUpdateChannelParamsSchema = z
   .strict()
 export const SetUpdateChannelResultSchema = UpdateStateSchema
 
+// ── Extensions (provider plugins) ───────────────────────────────────────────
+
+export const ListExtensionsParamsSchema = z.undefined()
+export const ListExtensionsResultSchema = z.array(ExtensionViewSchema)
+
+export const InstallExtensionParamsSchema = z
+  .object({
+    source: z.string().min(1),
+    ref: z.string().min(1).optional(),
+    id: z.string().min(1).optional(),
+    mode: z.enum(["link", "copy"]).optional(),
+  })
+  .strict()
+export const InstallExtensionResultSchema = ListExtensionsResultSchema
+
+export const SetExtensionEnabledParamsSchema = z
+  .object({ id: PluginIdSchema, enabled: z.boolean() })
+  .strict()
+export const SetExtensionEnabledResultSchema = ListExtensionsResultSchema
+
+export const UpdateExtensionParamsSchema = z
+  .object({ id: PluginIdSchema })
+  .strict()
+export const UpdateExtensionResultSchema = ListExtensionsResultSchema
+
+export const RemoveExtensionParamsSchema = z
+  .object({ id: PluginIdSchema })
+  .strict()
+/**
+ * `remove` refuses when a provider record still references one of the extension's
+ * contributions — surfaced as DATA (so the page can name the referencing providers), never as
+ * a transport error. Every other failure (not-found, write-failed, …) goes through the normal
+ * thrown-handler-failed path instead; this refusal is the one exception.
+ */
+export const RemoveExtensionRefusalSchema = z
+  .object({
+    refused: z
+      .object({
+        kind: z.literal("in-use"),
+        id: z.string(),
+        providerIds: z.array(z.string()),
+      })
+      .strict(),
+  })
+  .strict()
+export const RemoveExtensionResultSchema = z.union([
+  ListExtensionsResultSchema,
+  RemoveExtensionRefusalSchema,
+])
+
 // ── Client logging (webview → main) ─────────────────────────────────────────
 // The webview forwards error/fatal records here so they persist to the main log file.
 // Inbound-only; redacted main-side. `level` is restricted to the two forwarded severities.
@@ -825,6 +877,26 @@ export const IpcMethodSchemas = {
   logClientError: {
     params: LogClientErrorParamsSchema,
     result: LogClientErrorResultSchema,
+  },
+  listExtensions: {
+    params: ListExtensionsParamsSchema,
+    result: ListExtensionsResultSchema,
+  },
+  installExtension: {
+    params: InstallExtensionParamsSchema,
+    result: InstallExtensionResultSchema,
+  },
+  setExtensionEnabled: {
+    params: SetExtensionEnabledParamsSchema,
+    result: SetExtensionEnabledResultSchema,
+  },
+  updateExtension: {
+    params: UpdateExtensionParamsSchema,
+    result: UpdateExtensionResultSchema,
+  },
+  removeExtension: {
+    params: RemoveExtensionParamsSchema,
+    result: RemoveExtensionResultSchema,
   },
 } as const
 

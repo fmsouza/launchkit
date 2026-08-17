@@ -161,7 +161,15 @@ describe("createExtensionRegistry", () => {
       }
     })
 
-    it("fails with duplicate-id when one extension contributes the same provider id twice", async () => {
+    it("fails to even parse when one extension contributes the same provider id twice", async () => {
+      // A manifest that collides with ITSELF is now rejected by the manifest schema
+      // (`ContributesSchema`'s `superRefine`), before `list()`'s own cross-manifest
+      // `seenContributionIds` dedupe ever runs — so this reports `invalid-manifest` from
+      // `parseManifest`, not the `duplicate-id` `list()` reports for two DIFFERENT
+      // extensions colliding (see the test above). Catching it at parse time means a
+      // self-colliding manifest is rejected for every source it could arrive from — git
+      // clone, copy, link, AND a hand-placed directory the installer never touches —
+      // not just the ones that pass through the installer.
       const registry = createExtensionRegistry({
         fileSource: createInMemoryExtensionFileSource([
           ext("alpha", { providers: [provider("acme"), provider("acme")] }),
@@ -170,7 +178,7 @@ describe("createExtensionRegistry", () => {
       const result = await registry.list()
       expect(result.ok).toBe(false)
       if (!result.ok) {
-        expect(result.error).toEqual({ kind: "duplicate-id", id: "acme" })
+        expect(result.error.kind).toBe("invalid-manifest")
       }
     })
 
@@ -196,6 +204,7 @@ describe("createExtensionRegistry", () => {
         if (result.error.kind === "invalid-manifest") {
           expect(result.error.detail).toContain("myext")
           expect(result.error.detail).toContain("different")
+          expect(result.error.id).toBe("myext")
         }
       }
     })
@@ -217,6 +226,73 @@ describe("createExtensionRegistry", () => {
       const result = await registry.list()
       expect(result.ok).toBe(false)
       if (!result.ok) expect(result.error.kind).toBe("unsupported-api-version")
+    })
+
+    it("attaches the offending extension's directory id to unsupported-api-version so a caller can name which extension broke the batch", async () => {
+      const registry = createExtensionRegistry({
+        fileSource: createInMemoryExtensionFileSource([
+          ext("fine"),
+          {
+            id: "too-new",
+            raw: {
+              apiVersion: "spectrum.dev/v99",
+              id: "too-new",
+              name: "Too New",
+              version: "1.0.0",
+            },
+          },
+        ]),
+      })
+      const result = await registry.list()
+      expect(result.ok).toBe(false)
+      if (!result.ok) {
+        expect(result.error).toEqual({
+          kind: "unsupported-api-version",
+          apiVersion: "spectrum.dev/v99",
+          id: "too-new",
+        })
+      }
+    })
+
+    it("attaches the offending extension's directory id to invalid-manifest when the schema itself rejects it", async () => {
+      const registry = createExtensionRegistry({
+        fileSource: createInMemoryExtensionFileSource([
+          {
+            id: "broken",
+            raw: { apiVersion: "spectrum.dev/v1", id: "broken" },
+          }, // missing name/version
+        ]),
+      })
+      const result = await registry.list()
+      expect(result.ok).toBe(false)
+      if (!result.ok) {
+        expect(result.error.kind).toBe("invalid-manifest")
+        if (result.error.kind === "invalid-manifest") {
+          expect(result.error.id).toBe("broken")
+        }
+      }
+    })
+
+    it("attaches the offending extension's directory id to invalid-manifest when a launch template uses an undeclared token", async () => {
+      const registry = createExtensionRegistry({
+        fileSource: createInMemoryExtensionFileSource([
+          ext("bad-template", {
+            providers: [
+              provider("bad-template", {
+                launchArgs: ["--secret", "{{nope}}"],
+              }),
+            ],
+          }),
+        ]),
+      })
+      const result = await registry.list()
+      expect(result.ok).toBe(false)
+      if (!result.ok) {
+        expect(result.error.kind).toBe("invalid-manifest")
+        if (result.error.kind === "invalid-manifest") {
+          expect(result.error.id).toBe("bad-template")
+        }
+      }
     })
 
     it("fails with invalid-manifest when a launch template uses an undeclared token", async () => {

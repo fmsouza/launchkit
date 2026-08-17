@@ -6,6 +6,7 @@ import {
   defaultConfig,
 } from "@spectrum/config"
 import { createSqliteClient, runMigrations } from "@spectrum/db"
+import type { LoadedExtension, PluginError } from "@spectrum/extensions"
 import type { LaunchParams } from "@spectrum/harnesses"
 import type { Logger } from "@spectrum/logger"
 import { createProjectStore } from "@spectrum/projects"
@@ -24,6 +25,7 @@ import {
   type Result,
   createFixedClock,
   createSequentialIdGen,
+  err,
   ok,
 } from "@spectrum/utils"
 import type { CliDeps, StartProxyDeps } from "./deps"
@@ -102,6 +104,22 @@ export const makeFakeDeps = (over: FakeDepsOverrides = {}): CliDeps => {
         over.registryError !== undefined
           ? { ok: false, error: over.registryError }
           : ok(over.harnesses ?? []),
+    },
+    // No test in this package's suite (other than `plugin-command.test.ts`, which builds
+    // its own harness) exercises the plugin command group — these are unused, no-op fakes
+    // present only to satisfy `CliDeps`.
+    extensions: {
+      install: async (): Promise<Result<never, PluginError>> =>
+        err({ kind: "write-failed", detail: "not implemented in fake" }),
+      update: async (): Promise<Result<never, PluginError>> =>
+        err({ kind: "write-failed", detail: "not implemented in fake" }),
+      remove: async (): Promise<Result<void, PluginError>> => ok(undefined),
+      setEnabled: async (): Promise<Result<void, PluginError>> => ok(undefined),
+    },
+    extensionRegistry: {
+      list: async (): Promise<
+        Result<readonly LoadedExtension[], PluginError>
+      > => ok([]),
     },
     launch: (params: LaunchParams): Result<LaunchValue, unknown> => {
       over.launchSpy?.(params)

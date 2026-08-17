@@ -9,6 +9,16 @@ const valid = {
   contributes: { providers: [] },
 }
 
+const contribution = (id: string): unknown => ({
+  id,
+  descriptor: {
+    label: `Acme ${id}`,
+    reasoning: { shape: "none", supportedTiers: [] },
+    discovery: { strategy: "openai-models" },
+  },
+  transport: { kind: "http", wire: "openai" },
+})
+
 describe("ExtensionManifestSchema", () => {
   it("accepts a manifest declaring a supported api version", () => {
     expect(ExtensionManifestSchema.safeParse(valid).success).toBe(true)
@@ -30,6 +40,37 @@ describe("ExtensionManifestSchema", () => {
     const parsed = ExtensionManifestSchema.safeParse({
       ...valid,
       contributes: {},
+    })
+    expect(parsed.success).toBe(true)
+  })
+
+  it("rejects a manifest whose own contributions collide on id", () => {
+    const parsed = ExtensionManifestSchema.safeParse({
+      ...valid,
+      contributes: { providers: [contribution("dup"), contribution("dup")] },
+    })
+    expect(parsed.success).toBe(false)
+  })
+
+  it("reports exactly one issue when many contributions collide, not one per duplicate", () => {
+    const providers = Array.from({ length: 200 }, () => contribution("dup"))
+    const parsed = ExtensionManifestSchema.safeParse({
+      ...valid,
+      contributes: { providers },
+    })
+    expect(parsed.success).toBe(false)
+    if (!parsed.success) {
+      const duplicateIssues = parsed.error.issues.filter((issue) =>
+        issue.message.includes("more than once"),
+      )
+      expect(duplicateIssues.length).toBe(1)
+    }
+  })
+
+  it("accepts a manifest whose contributions all have distinct ids", () => {
+    const parsed = ExtensionManifestSchema.safeParse({
+      ...valid,
+      contributes: { providers: [contribution("a"), contribution("b")] },
     })
     expect(parsed.success).toBe(true)
   })
@@ -62,5 +103,14 @@ describe("parseManifest", () => {
     const result = parseManifest({ ...valid, apiVersion: "example.com/v1" })
     expect(result.ok).toBe(false)
     if (!result.ok) expect(result.error.kind).toBe("unsupported-api-version")
+  })
+
+  it("rejects as invalid-manifest a manifest whose own contributions collide on id", () => {
+    const result = parseManifest({
+      ...valid,
+      contributes: { providers: [contribution("dup"), contribution("dup")] },
+    })
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.error.kind).toBe("invalid-manifest")
   })
 })

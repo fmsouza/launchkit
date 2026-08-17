@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test"
+import type { Config } from "@spectrum/config"
 import { defaultConfig } from "@spectrum/config"
 import {
   claude,
@@ -12,6 +13,7 @@ import {
   createInMemoryRuntimeState,
   providerInstanceKey,
 } from "@spectrum/proxy"
+import { PluginIdSchema, ProviderIdSchema } from "@spectrum/types"
 import type { HarnessId } from "@spectrum/types"
 import { err, ok } from "@spectrum/utils"
 import { createAppContext } from "./create-app-context"
@@ -128,6 +130,22 @@ const makeFakeDeps = (): {
         stopAllFor: async () => undefined,
         stopAll: async () => undefined,
         retainOnly: async () => undefined,
+      }
+    }) as never,
+    // Extension installer layer: shaped stubs — the composition root constructs the installer
+    // (and the git client it takes) during wiring, calling `createProcessGitClient` and
+    // `createExtensionInstaller` synchronously, so `record(...)`'s `{ __stub }` would not do
+    // for the installer (it must be a real-shaped `ExtensionInstaller`).
+    createProcessGitClient: record("createProcessGitClient") as never,
+    createFsDirCopier: record("createFsDirCopier") as never,
+    createFsReadManifest: record("createFsReadManifest") as never,
+    createBunCaptureStdout: record("createBunCaptureStdout") as never,
+    createExtensionInstaller: ((..._a: unknown[]) => {
+      calls.createExtensionInstaller = _a
+      return {
+        install: async () => err({ kind: "not-found", id: "none" }),
+        update: async () => err({ kind: "not-found", id: "none" }),
+        remove: async () => ok(undefined),
       }
     }) as never,
     createLoopbackPortAllocator: record("createLoopbackPortAllocator") as never,
@@ -545,6 +563,376 @@ describe("createAppContext wiring", () => {
     await ctx.shutdown()
 
     expect(stopAllCalls).toBe(1)
+  })
+
+  it("wires the extension installer with the resolved plugin root and the CURRENT config's link map, not an empty one", async () => {
+    // Regression pin for the "empty link map bricks every plugin" bug: an installer built once
+    // at wiring time with `{}` cannot see already-installed LINKED extensions in its own
+    // duplicate-contribution-id gate. `deps.createExtensionInstaller` and
+    // `deps.createDirExtensionFileSource` are already recorded by `makeFakeDeps`; this test is
+    // the first to actually assert on them.
+    const { deps, calls } = makeFakeDeps()
+    const linkedInstall = {
+      id: PluginIdSchema.parse("linked"),
+      source: { kind: "path" as const, path: "/work/linked", linked: true },
+      enabled: true,
+    }
+    ;(deps as { createCachedConfigStore: unknown }).createCachedConfigStore = ((
+      ..._a: unknown[]
+    ) => {
+      calls.createCachedConfigStore = _a
+      return {
+        load: async () =>
+          ok({ ...defaultConfig(), providerPlugins: [linkedInstall] }),
+        save: async () => ok(undefined),
+      }
+    }) as never
+
+    const ctx = createAppContext(deps)
+    await ctx.refreshExtensions()
+    // The installer fake's `install` fails immediately (see `makeFakeDeps`), so `refresh()` is
+    // never reached from inside `install` — `calls.createDirExtensionFileSource` therefore
+    // still holds the args the INSTALLER's own construction used, not a later refresh's.
+    await ctx.extensions.install({ source: "https://e.com/a.git" })
+
+    const installerArgs = calls.createExtensionInstaller?.[0] as {
+      pluginRoot: string
+    }
+    expect(installerArgs.pluginRoot).toBe(
+      "/home/tester/.config/spectrum/providers",
+    )
+
+    const fileSourceArgs = calls.createDirExtensionFileSource as unknown as [
+      string,
+      Record<string, string>,
+    ]
+    expect(fileSourceArgs[0]).toBe("/home/tester/.config/spectrum/providers")
+    expect(fileSourceArgs[1]).toEqual({ linked: "/work/linked" })
+  })
+
+  it("propagates a config-load failure out of the extension installer instead of silently falling back to defaultConfig()", async () => {
+    // A silent fallback would hand the duplicate-contribution-id gate an EMPTY link map and an
+    // empty `existingInstalls()` on a transient read failure — the gate disabling itself rather
+    // than refusing. `createCachedConfigStore` does not cache failures, so this read failing
+    // does not imply every other config read in the process also fails.
+    const { deps, calls } = makeFakeDeps()
+    ;(deps as { createCachedConfigStore: unknown }).createCachedConfigStore =
+      (() => ({
+        load: async () => err({ kind: "parse-failed", detail: "bad json" }),
+        save: async () => ok(undefined),
+      })) as never
+
+    const ctx = createAppContext(deps)
+    const r = await ctx.extensions.install({ source: "https://e.com/a.git" })
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.error.kind).toBe("read-failed")
+    // The installer must never even be CONSTRUCTED from a config that failed to load.
+    expect(calls.createExtensionInstaller).toBeUndefined()
+  })
+
+  it("degrades remove's in-use guard instead of silently succeeding, WARM, after an awaited refresh whose listing never succeeded", async () => {
+    // Two LINKED extensions: `bad-plugin`'s manifest fails validation, so `registry.list()`
+    // fails the WHOLE batch when it's built from the REAL, config-derived link map (a
+    // documented behavior — one broken manifest takes every OTHER extension's `list()` down
+    // with it). `good-plugin` is referenced by a configured provider. Before the fix, `remove`'s
+    // `in-use` guard read the WIRING-TIME registry instead — built from an EMPTY link map, never
+    // swapped because `haveGoodExtensionState` stayed false — whose `list()` sees no directories
+    // to iterate (both extensions are linked, so neither lives under the plugin root) and
+    // returns a VACUOUS `ok([])`, indistinguishable from "nothing installed". `degraded` came
+    // out `false`, the in-use check saw zero contributed keys, and the extension was deleted
+    // with `stopAllFor` never called: its children kept running with their secrets.
+    const { deps } = makeFakeDeps()
+    const cfg: Config = {
+      ...defaultConfig(),
+      providerPlugins: [
+        {
+          id: PluginIdSchema.parse("good-plugin"),
+          source: { kind: "path", path: "/work/good", linked: true },
+          enabled: true,
+        },
+        {
+          id: PluginIdSchema.parse("bad-plugin"),
+          source: { kind: "path", path: "/work/bad", linked: true },
+          enabled: true,
+        },
+      ],
+      providers: [
+        {
+          id: ProviderIdSchema.parse("prv_1"),
+          name: "Good",
+          sdkProvider: "plugin:good-plugin",
+          config: {},
+          secrets: {},
+          models: [],
+        },
+      ],
+    }
+    ;(deps as { createCachedConfigStore: unknown }).createCachedConfigStore =
+      (() => ({
+        load: async () => ok(cfg),
+        save: async () => ok(undefined),
+      })) as never
+    // Tags its return with the link map it was built from, so the registry fake below can tell
+    // the WIRING-TIME construction (`{}`) apart from a config-derived one (non-empty) without
+    // re-implementing manifest parsing.
+    ;(
+      deps as { createDirExtensionFileSource: unknown }
+    ).createDirExtensionFileSource = ((
+      root: string,
+      linkMap: Readonly<Record<string, string>>,
+    ) => ({
+      listExtensions: async () => ok([]),
+      readExtension: async () => err({ kind: "not-found", id: "none" }),
+      removeExtension: async () => ok(undefined),
+      extensionDir: (id: string) => linkMap[id] ?? `${root}/${id}`,
+      __linkMap: linkMap,
+    })) as never
+    ;(deps as { createExtensionRegistry: unknown }).createExtensionRegistry =
+      ((registryDeps: {
+        fileSource: { __linkMap?: Readonly<Record<string, string>> }
+      }) => {
+        const isWiringTime =
+          Object.keys(registryDeps.fileSource.__linkMap ?? {}).length === 0
+        return {
+          list: async () =>
+            isWiringTime
+              ? ok([])
+              : err({
+                  kind: "unsupported-api-version",
+                  apiVersion: "spectrum.dev/v99",
+                }),
+          providerDescriptors: async () =>
+            isWiringTime
+              ? ok([])
+              : err({
+                  kind: "unsupported-api-version",
+                  apiVersion: "spectrum.dev/v99",
+                }),
+        }
+      }) as never
+    let stopAllCalls = 0
+    const stoppedFor: string[] = []
+    ;(deps as { createProviderHost: unknown }).createProviderHost = (() => ({
+      ensureRunning: async () => err({ kind: "not-found", id: "unused" }),
+      status: () => "stopped",
+      stop: async () => {},
+      stopAllFor: async (id: string) => {
+        stoppedFor.push(id)
+      },
+      stopAll: async () => {
+        stopAllCalls += 1
+      },
+      retainOnly: async () => {},
+    })) as never
+
+    const ctx = createAppContext(deps)
+    await ctx.refreshExtensions() // WARM: the refresh is awaited, and it FAILS.
+
+    const r = await ctx.extensions.remove(PluginIdSchema.parse("good-plugin"))
+    // Removal still SUCCEEDS on the degraded path (matches the documented degrade-instead-of-
+    // refuse behavior) — the bug was never in whether it succeeds, but in whether it stops the
+    // right thing on the way.
+    expect(r.ok).toBe(true)
+    // The fix: a vacuous `ok([])` never distinguishes "nothing installed" from "the real answer
+    // is unavailable", so `stopAllFor` (which needs a real contribution list) must NOT be the
+    // path taken — the conservative `stopAll()` must fire instead.
+    expect(stopAllCalls).toBe(1)
+    expect(stoppedFor).toEqual([])
+  })
+
+  it("cold-starts ctx.extensionRegistry.list() with the config-derived link map, seeing a linked extension on the very first call", async () => {
+    // The public mirror of the installer's cold-start bug: `AppContext.extensionRegistry`
+    // delegated straight to `extensionRegistryCell` with no wait, so the FIRST call of a
+    // process (before the constructor's own initial refresh resolves) returned the wiring-time
+    // registry — `[]`, even with a linked extension installed. Tasks 5/6 (a "list installed
+    // extensions" IPC handler and CLI command) would render an empty list on every process's
+    // first call.
+    const { deps } = makeFakeDeps()
+    const cfg: Config = {
+      ...defaultConfig(),
+      providerPlugins: [
+        {
+          id: PluginIdSchema.parse("linked"),
+          source: { kind: "path", path: "/work/linked", linked: true },
+          enabled: true,
+        },
+      ],
+    }
+    ;(deps as { createCachedConfigStore: unknown }).createCachedConfigStore =
+      (() => ({
+        load: async () => ok(cfg),
+        save: async () => ok(undefined),
+      })) as never
+    // The file source fake tags its return value with the link map it was built from, so the
+    // registry fake below can tell — without re-implementing manifest parsing — whether IT was
+    // built from the config-derived link map (has "linked") or the empty wiring-time one.
+    ;(
+      deps as { createDirExtensionFileSource: unknown }
+    ).createDirExtensionFileSource = ((
+      root: string,
+      linkMap: Readonly<Record<string, string>>,
+    ) => ({
+      listExtensions: async () => ok([]),
+      readExtension: async () => err({ kind: "not-found", id: "none" }),
+      removeExtension: async () => ok(undefined),
+      extensionDir: (id: string) => linkMap[id] ?? `${root}/${id}`,
+      __linkMap: linkMap,
+    })) as never
+    ;(deps as { createExtensionRegistry: unknown }).createExtensionRegistry =
+      ((registryDeps: {
+        fileSource: { __linkMap?: Readonly<Record<string, string>> }
+      }) => ({
+        list: async () =>
+          ok(
+            Object.entries(registryDeps.fileSource.__linkMap ?? {}).map(
+              ([id, dir]) => ({
+                manifest: {
+                  apiVersion: "spectrum.dev/v1",
+                  id,
+                  name: id,
+                  version: "1.0.0",
+                  contributes: { providers: [] },
+                },
+                ignoredContributions: [],
+                dir,
+              }),
+            ),
+          ),
+        providerDescriptors: async () => ok([]),
+      })) as never
+
+    const ctx = createAppContext(deps)
+    // Deliberately NO `await ctx.refreshExtensions()` — the whole point is the FIRST call.
+    const listed = await ctx.extensionRegistry.list()
+    expect(listed.ok).toBe(true)
+    if (listed.ok)
+      expect(listed.value.map((e) => String(e.manifest.id))).toEqual(["linked"])
+  })
+
+  it("surfaces the actual PluginError through ctx.extensionRegistry.list(), not a constant placeholder, when no refresh has ever succeeded", async () => {
+    // "no good extension state" alone tells a user nothing. `unsupported-api-version` names the
+    // extension's actual problem (a manifest written for a newer Spectrum) and carries the
+    // version it declared — exactly what a "list installed extensions" surface needs to say
+    // WHICH extension is broken and why, not just "something is wrong".
+    const { deps } = makeFakeDeps()
+    const cfg: Config = {
+      ...defaultConfig(),
+      providerPlugins: [
+        {
+          id: PluginIdSchema.parse("bad-plugin"),
+          source: { kind: "path", path: "/work/bad", linked: true },
+          enabled: true,
+        },
+      ],
+    }
+    ;(deps as { createCachedConfigStore: unknown }).createCachedConfigStore =
+      (() => ({
+        load: async () => ok(cfg),
+        save: async () => ok(undefined),
+      })) as never
+    ;(
+      deps as { createDirExtensionFileSource: unknown }
+    ).createDirExtensionFileSource = ((
+      root: string,
+      linkMap: Readonly<Record<string, string>>,
+    ) => ({
+      listExtensions: async () => ok([]),
+      readExtension: async () => err({ kind: "not-found", id: "none" }),
+      removeExtension: async () => ok(undefined),
+      extensionDir: (id: string) => linkMap[id] ?? `${root}/${id}`,
+      __linkMap: linkMap,
+    })) as never
+    ;(deps as { createExtensionRegistry: unknown }).createExtensionRegistry =
+      ((registryDeps: {
+        fileSource: { __linkMap?: Readonly<Record<string, string>> }
+      }) => {
+        const isWiringTime =
+          Object.keys(registryDeps.fileSource.__linkMap ?? {}).length === 0
+        return {
+          list: async () =>
+            isWiringTime
+              ? ok([])
+              : err({
+                  kind: "unsupported-api-version",
+                  apiVersion: "spectrum.dev/v99",
+                }),
+          providerDescriptors: async () =>
+            isWiringTime
+              ? ok([])
+              : err({
+                  kind: "unsupported-api-version",
+                  apiVersion: "spectrum.dev/v99",
+                }),
+        }
+      }) as never
+
+    const ctx = createAppContext(deps)
+    await ctx.refreshExtensions()
+
+    const listed = await ctx.extensionRegistry.list()
+    expect(listed.ok).toBe(false)
+    if (!listed.ok) expect(listed.error.kind).toBe("unsupported-api-version")
+    if (!listed.ok && listed.error.kind === "unsupported-api-version")
+      expect(listed.error.apiVersion).toBe("spectrum.dev/v99")
+  })
+
+  it("bounds the wait for a stalled refresh instead of hanging ctx.extensionRegistry.list() forever", async () => {
+    // Simulates a stalled `config.load()` — the refresh this starts will never settle, so
+    // `firstRefreshSettled` never resolves either. Without a bounded wait, EVERY later call
+    // to `ctx.extensionRegistry.list()` would hang indefinitely: an IPC handler that never
+    // returns, a spinning GUI with no error.
+    const { deps } = makeFakeDeps()
+    ;(deps as { createCachedConfigStore: unknown }).createCachedConfigStore =
+      (() => ({
+        load: () => new Promise<never>(() => {}),
+        save: async () => ok(undefined),
+      })) as never
+
+    const ctx = createAppContext(deps)
+    // Deliberately NOT awaiting `refreshExtensions()` — it will never settle.
+    const listed = await ctx.extensionRegistry.list()
+    expect(listed.ok).toBe(false)
+  }, 8000)
+
+  it("keeps extensionsReady usable even after a refresh's own promise rejects, instead of poisoning it forever", async () => {
+    // `.then` on a rejected promise skips its callback and just propagates the rejection, so
+    // without a guard, ONE rejected `runRefresh()` would make every LATER `refreshExtensions()`
+    // call inherit that same rejection forever — poisoning `resolveBaseUrl` (which awaits
+    // `extensionsReady` on every proxy request) and breaking `ExtensionAdmin`'s no-throw
+    // contract. Forces `runRefresh()` itself to reject (via `abandonRefresh` throwing, called
+    // from both the try body and the catch clause on this fixture — the same shape as round 4's
+    // hardening scenario), then proves a SUBSEQUENT refresh still actually RUNS rather than
+    // being skipped by an inherited rejection.
+    const { deps } = makeFakeDeps()
+    ;(deps as { createExtensionRegistry: unknown }).createExtensionRegistry =
+      (() => ({
+        list: async () => err({ kind: "invalid-manifest", detail: "bad" }),
+        providerDescriptors: async () =>
+          err({ kind: "invalid-manifest", detail: "bad" }),
+      })) as never
+    let createProviderRegistryCalls = 0
+    ;(deps as { createProviderRegistry: unknown }).createProviderRegistry = ((
+      ..._a: unknown[]
+    ) => {
+      createProviderRegistryCalls += 1
+      // Call 1 is the synchronous wiring-time construction. Calls 2 and 3 are the FIRST
+      // refresh's two `abandonRefresh` invocations (try body, then catch clause) — both throw,
+      // rejecting that `runRefresh()`. Call 4 onward (a LATER refresh's first `abandonRefresh`
+      // call) succeeds, so that refresh can complete normally IF it actually runs at all.
+      if (createProviderRegistryCalls > 1 && createProviderRegistryCalls <= 3)
+        throw new Error("boom")
+      return { get: () => undefined, list: () => [], catalog: () => [] }
+    }) as never
+
+    const ctx = createAppContext(deps)
+    // The constructor's own initial refresh rejects. Swallow it here so the test's own await
+    // doesn't throw — the point under test is what happens to `extensionsReady` AFTER this.
+    await ctx.refreshExtensions().catch(() => {})
+
+    // If `extensionsReady` were permanently poisoned, this `.then(runRefresh)` would be skipped
+    // entirely (the rejection just propagates) and `createProviderRegistry` would never reach
+    // call 4 — this call would reject too, for the SAME inherited reason. It must resolve.
+    await expect(ctx.refreshExtensions()).resolves.toBeUndefined()
   })
 
   it("continues with builtins only when the extension registry fails to list", async () => {

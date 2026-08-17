@@ -12,8 +12,13 @@ import { createDataAdmin } from "@spectrum/data-admin"
 import { createSqliteClient, runMigrations } from "@spectrum/db"
 import { createAcpDriver } from "@spectrum/driver-acp"
 import {
+  createBunCaptureStdout,
   createDirExtensionFileSource,
+  createExtensionInstaller,
   createExtensionRegistry,
+  createFsDirCopier,
+  createFsReadManifest,
+  createProcessGitClient,
 } from "@spectrum/extensions"
 import { createRegistry, launchHarness } from "@spectrum/harnesses"
 import { detectPlatform, resolveAppPaths } from "@spectrum/platform"
@@ -105,6 +110,16 @@ export interface CreateAppContextDeps {
   readonly createDirExtensionFileSource: typeof createDirExtensionFileSource
   readonly createExtensionRegistry: typeof createExtensionRegistry
   readonly createProviderHost: typeof createProviderHost
+  /**
+   * The extension INSTALLER's own dep chain (git/copy/manifest-read/stdout-capture) plus the
+   * installer constructor itself — mirroring the file source / registry / host declared above.
+   * `createAppContext` wires these once, after `providerHost`, into `AppContext.extensions`.
+   */
+  readonly createProcessGitClient: typeof createProcessGitClient
+  readonly createFsDirCopier: typeof createFsDirCopier
+  readonly createFsReadManifest: typeof createFsReadManifest
+  readonly createBunCaptureStdout: typeof createBunCaptureStdout
+  readonly createExtensionInstaller: typeof createExtensionInstaller
   readonly createLoopbackPortAllocator: typeof createLoopbackPortAllocator
   readonly createFetchHealthProbe: typeof createFetchHealthProbe
   readonly createCryptoTokenGen: typeof createCryptoTokenGen
@@ -199,6 +214,11 @@ export const realDeps: CreateAppContextDeps = {
   createDirExtensionFileSource,
   createExtensionRegistry,
   createProviderHost,
+  createProcessGitClient,
+  createFsDirCopier,
+  createFsReadManifest,
+  createBunCaptureStdout,
+  createExtensionInstaller,
   createLoopbackPortAllocator,
   createFetchHealthProbe,
   createCryptoTokenGen,

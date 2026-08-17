@@ -24,6 +24,7 @@
     "@spectrum/config": "workspace:*",
     "@spectrum/data-admin": "workspace:*",
     "@spectrum/db": "workspace:*",
+    "@spectrum/extensions": "workspace:*",
     "@spectrum/harnesses": "workspace:*",
     "@spectrum/ipc": "workspace:*",
     "@spectrum/logger": "workspace:*",

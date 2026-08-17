@@ -51,6 +51,7 @@
         "@spectrum/data-admin": "workspace:*",
         "@spectrum/db": "workspace:*",
         "@spectrum/driver-acp": "workspace:*",
+        "@spectrum/extensions": "workspace:*",
         "@spectrum/harnesses": "workspace:*",
         "@spectrum/ipc": "workspace:*",
         "@spectrum/logger": "workspace:*",
@@ -114,6 +115,7 @@
       "dependencies": {
         "@spectrum/config": "workspace:*",
         "@spectrum/db": "workspace:*",
+        "@spectrum/extensions": "workspace:*",
         "@spectrum/harnesses": "workspace:*",
         "@spectrum/logger": "workspace:*",
         "@spectrum/projects": "workspace:*",
@@ -188,7 +190,10 @@
       "name": "@spectrum/extensions",
       "version": "1.9.0",
       "dependencies": {
+        "@spectrum/config": "workspace:*",
         "@spectrum/logger": "workspace:*",
+        "@spectrum/platform": "workspace:*",
+        "@spectrum/proc": "workspace:*",
         "@spectrum/providers": "workspace:*",
         "@spectrum/types": "workspace:*",
         "@spectrum/utils": "workspace:*",

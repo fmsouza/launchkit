@@ -445,6 +445,11 @@ describe("IpcMethodSchemas", () => {
       "dismissUpdate",
       "setUpdateChannel",
       "logClientError",
+      "listExtensions",
+      "installExtension",
+      "setExtensionEnabled",
+      "updateExtension",
+      "removeExtension",
     ] as const
     for (const name of expected) {
       expect(IpcMethodSchemas[name]).toBeDefined()

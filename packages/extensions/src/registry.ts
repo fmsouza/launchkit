@@ -36,6 +36,22 @@ export const createExtensionRegistry = (deps: {
 }): ExtensionRegistry => {
   const logger = deps.logger ?? createNoopLogger()
 
+  /**
+   * Attach the extension directory id `list()` is currently walking to an
+   * `invalid-manifest`/`unsupported-api-version` error that doesn't already carry one.
+   * `parseManifest` and `validateContributionTemplates` are pure and never see a directory,
+   * so they can't attribute their own failures — `list()` is the one place that knows WHICH
+   * entry produced them, and without this a single bad manifest failing the whole batch gives
+   * the caller no way to say which extension is broken (Global Constraint 2 forbids a new
+   * `PluginError` variant, not a field on an existing one — this only ever fills a field that
+   * was already optional).
+   */
+  const withEntryId = (error: PluginError, id: string): PluginError =>
+    error.kind === "invalid-manifest" ||
+    error.kind === "unsupported-api-version"
+      ? { ...error, id: error.id ?? id }
+      : error
+
   const list = async (): Promise<
     Result<readonly LoadedExtension[], PluginError>
   > => {
@@ -58,7 +74,7 @@ export const createExtensionRegistry = (deps: {
       const parsed: Result<ParsedManifest, PluginError> = parseManifest(
         entry.raw,
       )
-      if (isErr(parsed)) return parsed
+      if (isErr(parsed)) return err(withEntryId(parsed.error, entry.id))
       const { manifest, ignoredContributions } = parsed.value
 
       // The directory an extension was read from (entry.id) and the identity it declares
@@ -69,6 +85,7 @@ export const createExtensionRegistry = (deps: {
         return err({
           kind: "invalid-manifest",
           detail: `extension directory id "${entry.id}" does not match manifest id "${manifest.id}"`,
+          id: entry.id,
         })
       }
 
@@ -79,7 +96,7 @@ export const createExtensionRegistry = (deps: {
 
       for (const contribution of manifest.contributes.providers) {
         const templates = validateContributionTemplates(contribution)
-        if (isErr(templates)) return templates
+        if (isErr(templates)) return err(withEntryId(templates.error, entry.id))
 
         // SECURITY: the contribution id — not the manifest id — is what becomes `plugin:<id>`
         // and what the supervisor keys on when it spawns a launch block. Two extensions
