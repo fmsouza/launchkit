@@ -18,6 +18,12 @@ export {
 export type { PluginError } from "./errors"
 export { createInMemoryExtensionFileSource } from "./file-source"
 export type { ExtensionEntry, ExtensionFileSource } from "./file-source"
+export { createExtensionInstaller } from "./installer"
+export type {
+  ExtensionInstaller,
+  InstallInput,
+  InstalledExtension,
+} from "./installer"
 export {
   ExtensionManifestSchema,
   KNOWN_CONTRIBUTION_KEYS,

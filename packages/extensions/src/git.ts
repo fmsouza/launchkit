@@ -29,7 +29,7 @@ export type GitCall = {
 
 /** Strips an embedded `user:pass@` credential segment from a url before it ever reaches a log
  * line or an error detail (Global Constraint 10: never log a url without stripping it first). */
-const redactUrlCredentials = (url: string): string =>
+export const redactUrlCredentials = (url: string): string =>
   url.replace(/\/\/[^/@\s]+@/, "//[REDACTED]@")
 
 /**

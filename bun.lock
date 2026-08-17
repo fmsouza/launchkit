@@ -188,6 +188,7 @@
       "name": "@spectrum/extensions",
       "version": "1.9.0",
       "dependencies": {
+        "@spectrum/config": "workspace:*",
         "@spectrum/logger": "workspace:*",
         "@spectrum/platform": "workspace:*",
         "@spectrum/proc": "workspace:*",

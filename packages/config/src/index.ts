@@ -1,8 +1,9 @@
-export type { Settings, Config, HarnessPrefs } from "./schema"
+export type { Settings, Config, HarnessPrefs, PluginInstall } from "./schema"
 export {
   SettingsSchema,
   HarnessPrefsSchema,
   ConfigSchema,
+  PluginInstallSchema,
   CURRENT_CONFIG_VERSION,
   defaultConfig,
 } from "./schema"
