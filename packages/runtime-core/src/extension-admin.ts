@@ -186,13 +186,17 @@ export const createExtensionAdmin = (deps: {
 
   /**
    * Ordered so nothing DESTRUCTIVE (stopping a child, deleting a file, writing config) happens
-   * until every refusal has had its chance to fire: (1) load config, (2) `registry.list()` →
-   * this extension's contributed ids/keys (degrading per the comment below if listing fails),
-   * (3) the FIRST `in-use` check against that config, (4) a re-load + re-check against a FRESH
-   * config, THEN (5) stop, (6) delete, (7) drop the record from the step-4 config and save, (8)
-   * refresh. An earlier version deleted the files and stopped the children BEFORE the re-check
-   * could refuse, which left config still claiming the extension installed while its files were
-   * already gone — worse than the race it was meant to narrow.
+   * until every refusal has had its chance to fire, and so the write is built from a config read
+   * as LATE as possible: (1) load config, (2) `registry.list()` → this extension's contributed
+   * ids/keys (degrading per the comment below if listing fails), (3) the FIRST `in-use` check
+   * against that config, (4) a re-load + re-check against a FRESH config — THEN, only once both
+   * refusals have passed, (5) stop, (6) delete, (7) a THIRD load, immediately before the write
+   * (distinct from step 4's — reusing that snapshot would widen the very race this narrows, since
+   * a `config.save` landing during the stop/delete in steps 5–6 would be silently overwritten),
+   * (8) drop the record from THAT config and save, (9) refresh. An earlier version deleted the
+   * files and stopped the children BEFORE the re-check could refuse, which left config still
+   * claiming the extension installed while its files were already gone — worse than the race it
+   * was meant to narrow.
    */
   const remove = async (id: PluginId): Promise<Result<void, PluginError>> => {
     const cfg = await loadConfig()

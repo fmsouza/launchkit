@@ -237,6 +237,7 @@ describe("createExtensionAdmin", () => {
     const { admin, read } = harness({ config: cfg })
     const r = await admin.remove(pid("acme"))
     expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.error.kind).toBe("in-use")
     if (!r.ok && r.error.kind === "in-use")
       expect(r.error.providerIds).toEqual(["prv_1"])
     expect(read().providerPlugins.length).toBe(1)
@@ -363,6 +364,87 @@ describe("createExtensionAdmin", () => {
     ])
   })
 
+  it("writes from the load taken AFTER the delete, not the earlier pre-delete re-check load — a concurrent edit during the delete survives", async () => {
+    // Sabotage-proof for the round-2 fix: asserting that a THIRD `load` call HAPPENS (the
+    // ordering test above) does not prove the write uses ITS value rather than the second
+    // (pre-delete) load's. Building `next` from `freshCfg` while still taking a third load
+    // would leave this fully green — only asserting on the WRITTEN content catches it.
+    let stored: Config = {
+      ...defaultConfig(),
+      providerPlugins: [acmeInstall],
+      providers: [],
+    }
+    const admin = createExtensionAdmin({
+      config: {
+        load: async () => ok(stored),
+        save: async (next: Config) => {
+          stored = next
+          return ok(undefined)
+        },
+      },
+      installer: {
+        install: async () =>
+          ok({
+            manifest: acmeManifest,
+            install: acmeInstall,
+            ignoredContributions: [],
+          }),
+        update: async () =>
+          ok({
+            manifest: acmeManifest,
+            install: acmeInstall,
+            ignoredContributions: [],
+          }),
+        remove: async () => {
+          // Simulate a concurrent, UNRELATED config write landing WHILE the delete is in
+          // progress — after the pre-delete re-check load, before the post-delete write load.
+          stored = {
+            ...stored,
+            providers: [
+              {
+                id: ProviderIdSchema.parse("prv_other"),
+                name: "Other",
+                sdkProvider: "openai",
+                config: {},
+                secrets: {},
+                models: [],
+              },
+            ],
+          }
+          return ok(undefined)
+        },
+      },
+      registry: async () => ({
+        list: async () =>
+          ok([
+            {
+              manifest: acmeManifest,
+              ignoredContributions: [],
+              dir: "/d/acme",
+            },
+          ]),
+        providerDescriptors: async () => ok([]),
+      }),
+      providerHost: {
+        ensureRunning: async () => err({ kind: "not-found", id: "unused" }),
+        status: () => "stopped",
+        stop: async () => {},
+        stopAllFor: async () => {},
+        stopAll: async () => {},
+        retainOnly: async () => {},
+      },
+      refresh: async () => {},
+    })
+
+    const r = await admin.remove(pid("acme"))
+    expect(r.ok).toBe(true)
+    expect(stored.providerPlugins).toEqual([])
+    // The concurrently-added, UNRELATED provider record — added DURING the delete — must
+    // survive the write. It would be erased if the write were built from the earlier
+    // pre-delete `freshCfg` instead of a load taken after `installer.remove` returns.
+    expect(stored.providers.map((p) => String(p.id))).toEqual(["prv_other"])
+  })
+
   it("records the new commit, refreshes, and resolves with the updated extension", async () => {
     const cfg = { ...defaultConfig(), providerPlugins: [acmeInstall] }
     const { admin, refreshes, read } = harness({ config: cfg })
@@ -370,9 +452,11 @@ describe("createExtensionAdmin", () => {
     expect(r.ok).toBe(true)
     if (r.ok) {
       const source = r.value.install.source
+      expect(source.kind).toBe("git")
       if (source.kind === "git") expect(source.commit).toBe("c2")
     }
     const source = read().providerPlugins[0]?.source
+    expect(source?.kind).toBe("git")
     if (source?.kind === "git") expect(source.commit).toBe("c2")
     expect(refreshes.length).toBe(1)
   })
@@ -448,6 +532,7 @@ describe("createExtensionAdmin", () => {
     const r = await admin.update(pid("acme"))
     expect(r.ok).toBe(true)
     const source = stored.providerPlugins[0]?.source
+    expect(source?.kind).toBe("git")
     if (source?.kind === "git") expect(source.commit).toBe("c2")
     // The concurrently-added, UNRELATED provider record must survive the write.
     expect(stored.providers.map((p) => String(p.id))).toEqual(["prv_other"])
@@ -638,6 +723,7 @@ describe("createExtensionAdmin", () => {
 
     const r = await admin.remove(pid("acme"))
     expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.error.kind).toBe("in-use")
     if (!r.ok && r.error.kind === "in-use")
       expect(r.error.providerIds).toEqual(["prv_race"])
     // The re-check must fire BEFORE anything destructive: nothing was stopped, nothing was
