@@ -609,6 +609,26 @@ describe("createAppContext wiring", () => {
     expect(fileSourceArgs[1]).toEqual({ linked: "/work/linked" })
   })
 
+  it("propagates a config-load failure out of the extension installer instead of silently falling back to defaultConfig()", async () => {
+    // A silent fallback would hand the duplicate-contribution-id gate an EMPTY link map and an
+    // empty `existingInstalls()` on a transient read failure — the gate disabling itself rather
+    // than refusing. `createCachedConfigStore` does not cache failures, so this read failing
+    // does not imply every other config read in the process also fails.
+    const { deps, calls } = makeFakeDeps()
+    ;(deps as { createCachedConfigStore: unknown }).createCachedConfigStore =
+      (() => ({
+        load: async () => err({ kind: "parse-failed", detail: "bad json" }),
+        save: async () => ok(undefined),
+      })) as never
+
+    const ctx = createAppContext(deps)
+    const r = await ctx.extensions.install({ source: "https://e.com/a.git" })
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.error.kind).toBe("read-failed")
+    // The installer must never even be CONSTRUCTED from a config that failed to load.
+    expect(calls.createExtensionInstaller).toBeUndefined()
+  })
+
   it("continues with builtins only when the extension registry fails to list", async () => {
     // A broken manifest must not take startup down: the refresh logs and falls back.
     const { deps } = makeFakeDeps()

@@ -27,6 +27,7 @@ import { defaultConfig } from "@spectrum/config"
 import type {
   ExtensionInstaller,
   ExtensionRegistry,
+  PluginError,
 } from "@spectrum/extensions"
 import {
   type LaunchParams,
@@ -63,6 +64,7 @@ import {
   resolveTimeouts,
   startProxy,
 } from "@spectrum/proxy"
+import type { Result } from "@spectrum/utils"
 import { err, ok, redactSecrets } from "@spectrum/utils"
 import type { AppContext } from "./app-context"
 import { withDemoHarness } from "./demo-harness"
@@ -72,7 +74,7 @@ import {
   type DriverRegistry,
   createDriverRegistry,
 } from "./driver-registry"
-import { createExtensionAdmin } from "./extension-admin"
+import { configErrorDetail, createExtensionAdmin } from "./extension-admin"
 import {
   createSecretRegistry,
   withRuntimeKeyRegistration,
@@ -722,7 +724,9 @@ export const createAppContext = (
    * `installer.test.ts`), so handing this installer a live link map cannot turn a stray path
    * into a delete target.
    */
-  const buildExtensionInstaller = async (): Promise<ExtensionInstaller> => {
+  const buildExtensionInstaller = async (): Promise<
+    Result<ExtensionInstaller, PluginError>
+  > => {
     // AWAIT the config load rather than reading `liveConfig` synchronously: on a cold start
     // `liveConfig` is still `undefined` until the constructor's own initial `refreshExtensions()`
     // resolves, which is real fs IO several ticks away. `ExtensionAdmin.install` calls this
@@ -730,39 +734,66 @@ export const createAppContext = (
     // this function exists to fix, just moved earlier: the first install of a process (with a
     // linked extension already on disk from a previous session) would still see an empty link
     // map. `config.load()` goes through `createCachedConfigStore`, so every call after the very
-    // first is a cache hit, not a second fs read. Only fall back to `liveConfig` if THIS load
-    // itself fails — matching `runRefresh`'s own fallback.
+    // first is a cache hit, not a second fs read.
+    //
+    // A FAILED load is NOT papered over with `liveConfig ?? defaultConfig()`: that fallback
+    // would give the duplicate-contribution-id gate an empty link map AND an empty
+    // `existingInstalls()` — silently disabling it rather than refusing. `createCachedConfigStore`
+    // does not cache failures, so a transient read error here does not imply the admin's own
+    // (separate) `loadConfig()` call will also fail; two independent reads can disagree. A gate
+    // that silently disables itself on a bad read is worse than one that refuses the operation.
     const loaded = await config.load()
-    const cfg = loaded.ok ? loaded.value : (liveConfig ?? defaultConfig())
-    return deps.createExtensionInstaller({
-      git: installerGitClient,
-      copier: installerDirCopier,
-      fileSource: deps.createDirExtensionFileSource(
-        paths.providerPluginDir,
-        computeLinkMap(cfg),
-      ),
-      readManifest: installerReadManifest,
-      pluginRoot: paths.providerPluginDir,
-      existingInstalls: () => cfg.providerPlugins,
-      logger: extensionsLog,
-    })
+    if (!loaded.ok)
+      return err({
+        kind: "read-failed",
+        detail: configErrorDetail(loaded.error),
+      })
+    const cfg = loaded.value
+    return ok(
+      deps.createExtensionInstaller({
+        git: installerGitClient,
+        copier: installerDirCopier,
+        fileSource: deps.createDirExtensionFileSource(
+          paths.providerPluginDir,
+          computeLinkMap(cfg),
+        ),
+        readManifest: installerReadManifest,
+        pluginRoot: paths.providerPluginDir,
+        existingInstalls: () => cfg.providerPlugins,
+        logger: extensionsLog,
+      }),
+    )
   }
   const extensionInstaller: ExtensionInstaller = {
-    install: async (input) => (await buildExtensionInstaller()).install(input),
-    update: async (id, install) =>
-      (await buildExtensionInstaller()).update(id, install),
-    remove: async (id, install, referencingProviderIds) =>
-      (await buildExtensionInstaller()).remove(
-        id,
-        install,
-        referencingProviderIds,
-      ),
+    install: async (input) => {
+      const built = await buildExtensionInstaller()
+      if (!built.ok) return built
+      return built.value.install(input)
+    },
+    update: async (id, install) => {
+      const built = await buildExtensionInstaller()
+      if (!built.ok) return built
+      return built.value.update(id, install)
+    },
+    remove: async (id, install, referencingProviderIds) => {
+      const built = await buildExtensionInstaller()
+      if (!built.ok) return built
+      return built.value.remove(id, install, referencingProviderIds)
+    },
   }
 
   const extensions = createExtensionAdmin({
     config,
     installer: extensionInstaller,
-    registry: extensionRegistry,
+    // Live, not the wiring-time `extensionRegistryCell` (built with an empty link map): await
+    // whichever refresh is IN FLIGHT — the same pattern `resolveBaseUrl` uses — then read the
+    // cell. On a cold start (this is the FIRST call of the process, before the constructor's own
+    // initial refresh has resolved) a plain snapshot would leave `remove`'s `in-use` guard
+    // reading an empty registry, unable to see any contribution at all.
+    registry: async () => {
+      await extensionsReady
+      return extensionRegistryCell
+    },
     providerHost,
     refresh: refreshExtensions,
     logger: extensionsLog,

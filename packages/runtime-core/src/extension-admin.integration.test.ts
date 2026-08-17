@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { defaultConfig } from "@spectrum/config"
-import { PluginIdSchema, pluginKeyOf } from "@spectrum/types"
+import { PluginIdSchema, ProviderIdSchema, pluginKeyOf } from "@spectrum/types"
 import type { AppContext } from "./app-context"
 import { createAppContext } from "./create-app-context"
 import type { CreateAppContextDeps } from "./deps"
@@ -312,6 +312,95 @@ describe("cold start (no refresh awaited before the first extensions call)", () 
       await coldCtx.refreshExtensions()
       const key = pluginKeyOf(PluginIdSchema.parse("linked-plugin"))
       expect(coldCtx.providerRegistry.get(key)?.label).toBe("Linked v1")
+    } finally {
+      await rm(coldRoot, { recursive: true, force: true })
+    }
+  })
+
+  it("refuses a cold-start `remove` that would leave a referencing provider record dangling", async () => {
+    // The mirror of the install scenario above: `remove`'s `in-use` guard reads through the
+    // extension REGISTRY, not the installer, so it needs the SAME cold-start protection —
+    // reading through whatever refresh is in flight rather than a wiring-time snapshot built
+    // with an empty link map.
+    const coldRoot = await mkdtemp(
+      join(tmpdir(), "spectrum-extension-admin-cold-remove-"),
+    )
+    try {
+      const coldWorkingCopy = join(coldRoot, "working-copy")
+      const coldDataDir = join(coldRoot, "data")
+      await mkdir(coldWorkingCopy, { recursive: true })
+      await writeFile(
+        join(coldWorkingCopy, "spectrum-extension.json"),
+        JSON.stringify(
+          manifestWith({
+            manifestId: "shared-plugin",
+            contributionId: "shared",
+            label: "Shared v1",
+          }),
+          null,
+          2,
+        ),
+        "utf8",
+      )
+
+      const coldPaths = buildTestPaths(coldDataDir)
+      // Simulate a PREVIOUS session: the linked plugin is installed AND a provider record
+      // already references its contribution — the exact precondition `in-use` exists to catch.
+      await mkdir(coldDataDir, { recursive: true })
+      await writeFile(
+        coldPaths.configFile,
+        JSON.stringify(
+          {
+            ...defaultConfig(),
+            providerPlugins: [
+              {
+                id: "shared-plugin",
+                source: {
+                  kind: "path",
+                  path: coldWorkingCopy,
+                  linked: true,
+                },
+                enabled: true,
+              },
+            ],
+            providers: [
+              {
+                id: ProviderIdSchema.parse("prv_1"),
+                name: "Shared",
+                sdkProvider: "plugin:shared",
+                config: {},
+                secrets: {},
+                models: [],
+              },
+            ],
+          },
+          null,
+          2,
+        ),
+        "utf8",
+      )
+
+      // No `await` of any kind between construction and the `extensions.remove` call below —
+      // same discipline as the cold-start install test: the constructor's own fire-and-forget
+      // initial refresh must not get a chance to resolve `extensionRegistryCell` on this test's
+      // behalf.
+      const coldCtx = createAppContext(realDepsFor(coldPaths))
+      const removed = await coldCtx.extensions.remove(
+        PluginIdSchema.parse("shared-plugin"),
+      )
+      expect(removed.ok).toBe(false)
+      if (!removed.ok && removed.error.kind === "in-use")
+        expect(removed.error.providerIds).toEqual(["prv_1"])
+
+      // Config must be untouched: a bypassed guard would have dropped the install record while
+      // the referencing provider record survived, leaving `providers` pointing at nothing.
+      const cfg = await coldCtx.config.load()
+      expect(cfg.ok).toBe(true)
+      if (cfg.ok) {
+        expect(cfg.value.providerPlugins.map((p) => String(p.id))).toEqual([
+          "shared-plugin",
+        ])
+      }
     } finally {
       await rm(coldRoot, { recursive: true, force: true })
     }
