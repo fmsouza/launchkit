@@ -3076,9 +3076,13 @@ const extensionsHarness = (
       throw new Error(`extensionsHarness: no fixture for "${id}"`)
     return acmeManifestEntry
   })
-  const extensionRegistry = createExtensionRegistry({
-    fileSource: createInMemoryExtensionFileSource(entries),
-  })
+  // Captured (not just handed to the registry) so `extensions.remove` below can mirror the
+  // real `ExtensionInstaller.remove`'s effect on disk — without this, a removed extension
+  // would still be re-listed afterward as a hand-placed "local" directory (the manifest file
+  // never actually went away), which is real registry behavior, just not what a "removal
+  // actually removes it" test should be exercising.
+  const fileSource = createInMemoryExtensionFileSource(entries)
+  const extensionRegistry = createExtensionRegistry({ fileSource })
   const running = new Set(opts.running ?? [])
   const refreshState = { count: 0 }
 
@@ -3166,6 +3170,9 @@ const extensionsHarness = (
             (p) => String(p.id) !== String(id),
           ),
         }
+        // Mirrors the real `ExtensionInstaller.remove`'s effect for a git/copy install
+        // (`wroteIntoRoot`): the directory is actually gone, not just the config record.
+        await fileSource.removeExtension(String(id))
         refreshState.count += 1
         return ok(undefined)
       },
@@ -3262,6 +3269,35 @@ describe("createIpcHandlers.listExtensions", () => {
 
     await expect(handlers.listExtensions(undefined)).rejects.toThrow(/acme/)
   })
+
+  it("names WHICH extension needs a newer Spectrum, not just the apiVersion it declared", async () => {
+    // Regression: `unsupported-api-version` used to carry only `apiVersion`, so a user whose
+    // plugins all vanished because ONE manifest declares a too-new apiVersion could see WHY
+    // but not WHICH. `registry.list()` now attaches the offending directory id.
+    const fileSource = createInMemoryExtensionFileSource([
+      {
+        id: "too-new",
+        raw: {
+          apiVersion: "spectrum.dev/v99",
+          id: "too-new",
+          name: "Too New",
+          version: "1.0.0",
+        },
+      },
+    ])
+    const extensionRegistry = createExtensionRegistry({ fileSource })
+    const ctx = {
+      log: createNoopLogger(),
+      config: {
+        load: async (): Promise<Result<Config, never>> => ok(defaultConfig()),
+      },
+      extensionRegistry,
+      providerHost: { status: () => "stopped" },
+    } as unknown as GuiContext
+    const handlers = createIpcHandlers(ctx)
+
+    await expect(handlers.listExtensions(undefined)).rejects.toThrow(/too-new/)
+  })
 })
 
 describe("createIpcHandlers.removeExtension", () => {
@@ -3277,13 +3313,15 @@ describe("createIpcHandlers.removeExtension", () => {
     })
   })
 
-  it("returns the refreshed list on a successful removal", async () => {
+  it("returns the refreshed list, with the removed extension actually absent, on a successful removal", async () => {
     const { handlers } = extensionsHarness({
       onDisk: ["acme"],
       installs: [acmeInstall],
     })
     const r = await handlers.removeExtension({ id: "acme" as PluginId })
     expect(Array.isArray(r)).toBe(true)
+    if (!Array.isArray(r)) throw new Error("expected an array, not a refusal")
+    expect(r.find((v) => v.id === "acme")).toBeUndefined()
   })
 })
 

@@ -71,9 +71,13 @@ const toDataUrl = (mime: string, base64: string): string =>
 const describePluginError = (e: PluginError): string => {
   switch (e.kind) {
     case "invalid-manifest":
-      return `invalid extension manifest: ${e.detail}`
+      return e.id === undefined
+        ? `invalid extension manifest: ${e.detail}`
+        : `invalid extension manifest for "${e.id}": ${e.detail}`
     case "unsupported-api-version":
-      return `extension needs a newer version of Spectrum (apiVersion "${e.apiVersion}")`
+      return e.id === undefined
+        ? `extension needs a newer version of Spectrum (apiVersion "${e.apiVersion}")`
+        : `extension "${e.id}" needs a newer version of Spectrum (apiVersion "${e.apiVersion}")`
     case "duplicate-id":
       return `duplicate extension id "${e.id}"`
     case "read-failed":
@@ -103,30 +107,40 @@ const toContributedProviderViews = (
   config: Config,
   providerHost: GuiContext["providerHost"],
 ): ContributedProviderView[] =>
-  extension.manifest.contributes.providers.map((contribution) => {
-    const key = pluginKeyOf(contribution.id)
-    const launch = contribution.transport.launch
-    const statuses = config.providers
-      .filter((p) => p.sdkProvider === key)
-      .map((p) =>
-        providerHost.status(
-          providerInstanceKey({
-            sdkProvider: p.sdkProvider,
-            config: p.config,
-            secretRefs: p.secrets,
-          }),
+  // The explicit `: ContributedProviderView` return-type annotation is load-bearing, not
+  // decorative: a plain inferred-return arrow inside `.map()` loses object-literal
+  // "freshness", so TypeScript's excess-property check silently stops applying and an
+  // accidental extra field (an `instanceKey`, a stray `env`) compiles clean. Annotating the
+  // callback restores the same excess-property check `toExtensionView` gets for free from
+  // being a directly-typed expression body.
+  extension.manifest.contributes.providers.map(
+    (contribution): ContributedProviderView => {
+      const key = pluginKeyOf(contribution.id)
+      const launch = contribution.transport.launch
+      const statuses = config.providers
+        .filter((p) => p.sdkProvider === key)
+        .map((p) =>
+          providerHost.status(
+            providerInstanceKey({
+              sdkProvider: p.sdkProvider,
+              config: p.config,
+              secretRefs: p.secrets,
+            }),
+          ),
+        )
+      return {
+        key,
+        label: contribution.descriptor.label,
+        status: statuses.find((s) => s !== "stopped") ?? "stopped",
+        ...(launch === undefined
+          ? {}
+          : { launchCommand: launch.command, launchArgs: [...launch.args] }),
+        secretFieldNames: contribution.descriptor.secretFields.map(
+          (f) => f.name,
         ),
-      )
-    return {
-      key,
-      label: contribution.descriptor.label,
-      status: statuses.find((s) => s !== "stopped") ?? "stopped",
-      ...(launch === undefined
-        ? {}
-        : { launchCommand: launch.command, launchArgs: [...launch.args] }),
-      secretFieldNames: contribution.descriptor.secretFields.map((f) => f.name),
-    }
-  })
+      }
+    },
+  )
 
 /** Project a loaded (parsed, on-disk) extension + its install record (if any) to the IPC view.
  * No install record ⇒ a hand-placed directory: `source: { kind: "local" }`, `enabled: false`

@@ -204,6 +204,7 @@ describe("createExtensionRegistry", () => {
         if (result.error.kind === "invalid-manifest") {
           expect(result.error.detail).toContain("myext")
           expect(result.error.detail).toContain("different")
+          expect(result.error.id).toBe("myext")
         }
       }
     })
@@ -225,6 +226,73 @@ describe("createExtensionRegistry", () => {
       const result = await registry.list()
       expect(result.ok).toBe(false)
       if (!result.ok) expect(result.error.kind).toBe("unsupported-api-version")
+    })
+
+    it("attaches the offending extension's directory id to unsupported-api-version so a caller can name which extension broke the batch", async () => {
+      const registry = createExtensionRegistry({
+        fileSource: createInMemoryExtensionFileSource([
+          ext("fine"),
+          {
+            id: "too-new",
+            raw: {
+              apiVersion: "spectrum.dev/v99",
+              id: "too-new",
+              name: "Too New",
+              version: "1.0.0",
+            },
+          },
+        ]),
+      })
+      const result = await registry.list()
+      expect(result.ok).toBe(false)
+      if (!result.ok) {
+        expect(result.error).toEqual({
+          kind: "unsupported-api-version",
+          apiVersion: "spectrum.dev/v99",
+          id: "too-new",
+        })
+      }
+    })
+
+    it("attaches the offending extension's directory id to invalid-manifest when the schema itself rejects it", async () => {
+      const registry = createExtensionRegistry({
+        fileSource: createInMemoryExtensionFileSource([
+          {
+            id: "broken",
+            raw: { apiVersion: "spectrum.dev/v1", id: "broken" },
+          }, // missing name/version
+        ]),
+      })
+      const result = await registry.list()
+      expect(result.ok).toBe(false)
+      if (!result.ok) {
+        expect(result.error.kind).toBe("invalid-manifest")
+        if (result.error.kind === "invalid-manifest") {
+          expect(result.error.id).toBe("broken")
+        }
+      }
+    })
+
+    it("attaches the offending extension's directory id to invalid-manifest when a launch template uses an undeclared token", async () => {
+      const registry = createExtensionRegistry({
+        fileSource: createInMemoryExtensionFileSource([
+          ext("bad-template", {
+            providers: [
+              provider("bad-template", {
+                launchArgs: ["--secret", "{{nope}}"],
+              }),
+            ],
+          }),
+        ]),
+      })
+      const result = await registry.list()
+      expect(result.ok).toBe(false)
+      if (!result.ok) {
+        expect(result.error.kind).toBe("invalid-manifest")
+        if (result.error.kind === "invalid-manifest") {
+          expect(result.error.id).toBe("bad-template")
+        }
+      }
     })
 
     it("fails with invalid-manifest when a launch template uses an undeclared token", async () => {
