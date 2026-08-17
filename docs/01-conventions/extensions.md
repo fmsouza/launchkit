@@ -239,9 +239,14 @@ declares a `flow` action, because the CLI cannot run one — only the GUI can
 
 ## The trust posture
 
-Installing an extension **is** the trust decision — there is no separate confirmation
-gate. `spectrum-cli plugin install` and `plugin update` enable the extension as part
-of installing, and instead of a prompt they **disclose**: the resolved commit (git)
+Spectrum does not vet, sandbox, or adjudicate the trust of extension code. Its job is
+to give you the autonomy to run an extension you chose — not to decide on your behalf
+whether that extension deserves your trust. **Installing an extension is the trust
+decision, and it is yours to make.**
+
+Concretely: there is no separate confirmation gate. `spectrum-cli plugin install` and
+`plugin update` enable the extension as part of installing, and instead of a prompt
+they **disclose**: the resolved commit (git)
 or the linked/copied path, the exact (unrendered) spawn command and args, and the
 declared secret field *names* (`discloseInstall`,
 `packages/cli/src/plugin-command.ts:90-120`). The GUI discloses the same facts for the
