@@ -21,6 +21,13 @@ export {
   parseManifest,
 } from "./manifest"
 export type { ExtensionManifest, ParsedManifest } from "./manifest"
+export { idFromSource, planInstall } from "./plan-install"
+export type {
+  InstallMode,
+  InstallPlan,
+  PlanInstallInput,
+  PlannedSource,
+} from "./plan-install"
 export {
   PluginLaunchSchema,
   ProviderContributionSchema,

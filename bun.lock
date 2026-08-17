@@ -189,6 +189,7 @@
       "version": "1.9.0",
       "dependencies": {
         "@spectrum/logger": "workspace:*",
+        "@spectrum/platform": "workspace:*",
         "@spectrum/providers": "workspace:*",
         "@spectrum/types": "workspace:*",
         "@spectrum/utils": "workspace:*",

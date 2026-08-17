@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@spectrum/logger": "workspace:*",
+    "@spectrum/platform": "workspace:*",
     "@spectrum/providers": "workspace:*",
     "@spectrum/types": "workspace:*",
     "@spectrum/utils": "workspace:*",
