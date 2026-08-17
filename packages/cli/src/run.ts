@@ -6,8 +6,9 @@ import { launchCommand } from "./launch-command"
 import { list } from "./list"
 import { add, remove } from "./mutate-command"
 import { parseArgs } from "./parse-args"
+import { pluginCommand } from "./plugin-command"
 
-const KNOWN_COMMANDS = ["launch", "list", "add", "remove"] as const
+const KNOWN_COMMANDS = ["launch", "list", "add", "remove", "plugin"] as const
 
 const usage = (): Result<void, CliError> =>
   err({
@@ -52,6 +53,8 @@ const dispatch = (
       return runAdd(deps, rest, flags)
     case "remove":
       return runRemove(deps, rest)
+    case "plugin":
+      return runPlugin(deps, rest, flags)
     default:
       return Promise.resolve(err({ kind: "unknown-command", command }))
   }
@@ -81,3 +84,9 @@ const runRemove = (
   deps: CliDeps,
   rest: readonly string[],
 ): Promise<Result<void, CliError>> => remove(deps, rest)
+
+const runPlugin = (
+  deps: CliDeps,
+  rest: readonly string[],
+  flags: Readonly<Record<string, string | boolean>>,
+): Promise<Result<void, CliError>> => pluginCommand(deps, rest, flags)

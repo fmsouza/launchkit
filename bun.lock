@@ -115,6 +115,7 @@
       "dependencies": {
         "@spectrum/config": "workspace:*",
         "@spectrum/db": "workspace:*",
+        "@spectrum/extensions": "workspace:*",
         "@spectrum/harnesses": "workspace:*",
         "@spectrum/logger": "workspace:*",
         "@spectrum/projects": "workspace:*",

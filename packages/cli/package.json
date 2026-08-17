@@ -15,6 +15,7 @@
     "@spectrum/utils": "workspace:*",
     "@spectrum/db": "workspace:*",
     "@spectrum/config": "workspace:*",
+    "@spectrum/extensions": "workspace:*",
     "@spectrum/secrets": "workspace:*",
     "@spectrum/proxy": "workspace:*",
     "@spectrum/harnesses": "workspace:*",
