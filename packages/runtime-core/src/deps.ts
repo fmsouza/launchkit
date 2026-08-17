@@ -29,7 +29,10 @@ import {
 import { createProjectStore } from "@spectrum/projects"
 import {
   createCryptoTokenGen,
+  createFetchFlowHttp,
   createFetchHealthProbe,
+  createFlowClient,
+  createFlowRunner,
   createLoopbackPortAllocator,
   createProviderHost,
 } from "@spectrum/provider-host"
@@ -123,6 +126,16 @@ export interface CreateAppContextDeps {
   readonly createLoopbackPortAllocator: typeof createLoopbackPortAllocator
   readonly createFetchHealthProbe: typeof createFetchHealthProbe
   readonly createCryptoTokenGen: typeof createCryptoTokenGen
+  /**
+   * Setup-flow layer, wired in the same order it composes: the HTTP adapter, the protocol
+   * client over it, and the session runner that drives one multi-step provider setup exchange
+   * on its OWN supervised child. Injectable for the same reason `createProviderHost` is — the
+   * composition root's retention sweep asks the runner which flow instances are live, and a
+   * test must be able to answer.
+   */
+  readonly createFetchFlowHttp: typeof createFetchFlowHttp
+  readonly createFlowClient: typeof createFlowClient
+  readonly createFlowRunner: typeof createFlowRunner
   readonly createProviderFactory: typeof createProviderFactory
   readonly loadSdk: typeof loadSdk
   readonly createRealGateway: typeof createRealGateway
@@ -222,6 +235,9 @@ export const realDeps: CreateAppContextDeps = {
   createLoopbackPortAllocator,
   createFetchHealthProbe,
   createCryptoTokenGen,
+  createFetchFlowHttp,
+  createFlowClient,
+  createFlowRunner,
   createProviderFactory,
   loadSdk,
   createRealGateway,

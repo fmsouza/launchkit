@@ -9,6 +9,7 @@ import {
 import { resolveAppPaths } from "@spectrum/platform"
 import { createFakeCommandResolver } from "@spectrum/proc"
 import { createProjectStore } from "@spectrum/projects"
+import { flowInstanceKey } from "@spectrum/provider-host"
 import {
   createInMemoryRuntimeState,
   providerInstanceKey,
@@ -151,6 +152,21 @@ const makeFakeDeps = (): {
     createLoopbackPortAllocator: record("createLoopbackPortAllocator") as never,
     createFetchHealthProbe: record("createFetchHealthProbe") as never,
     createCryptoTokenGen: record("createCryptoTokenGen") as never,
+    createFetchFlowHttp: record("createFetchFlowHttp") as never,
+    createFlowClient: record("createFlowClient") as never,
+    // Shaped, not `record(...)`: the retention sweep calls `activeInstanceKeys` and `abandon`
+    // on the returned runner during the constructor's own initial refresh.
+    createFlowRunner: ((..._a: unknown[]) => {
+      calls.createFlowRunner = _a
+      return {
+        start: async () => err({ kind: "not-found", id: "none" }),
+        advance: async () => err({ kind: "not-found", id: "none" }),
+        takeCompletion: () => undefined,
+        cancel: async () => undefined,
+        activeInstanceKeys: () => new Set<string>(),
+        abandon: () => undefined,
+      }
+    }) as never,
     createProviderFactory: record("createProviderFactory") as never,
     loadSdk: (async () => ({ create: () => ({}) })) as never,
     createRealGateway: record("createRealGateway") as never,
@@ -1195,6 +1211,93 @@ describe("createAppContext GUI runner extension points", () => {
   })
 })
 
+describe("createAppContext setup flow runner wiring", () => {
+  /** Capture the deps the composition root hands `createFlowRunner`, and pin its return. */
+  const wireRunner = (
+    deps: CreateAppContextDeps,
+  ): {
+    runner: object
+    seen: () => Record<string, unknown>
+  } => {
+    const runner = {
+      start: async () => err({ kind: "not-found", id: "none" }),
+      advance: async () => err({ kind: "not-found", id: "none" }),
+      takeCompletion: () => undefined,
+      cancel: async () => undefined,
+      activeInstanceKeys: () => new Set<string>(),
+      abandon: () => undefined,
+    }
+    let captured: Record<string, unknown> = {}
+    ;(deps as { createFlowRunner: unknown }).createFlowRunner = ((
+      ...a: unknown[]
+    ) => {
+      captured = a[0] as Record<string, unknown>
+      return runner
+    }) as never
+    return { runner, seen: () => captured }
+  }
+
+  it("exposes the runner the injected createFlowRunner returned", () => {
+    const { deps } = makeFakeDeps()
+    const { runner } = wireRunner(deps)
+    const ctx = createAppContext(deps)
+    expect(ctx.flowRunner).toBe(runner as never)
+  })
+
+  it("builds the runner over the shared provider host and a client wrapping the flow http adapter", () => {
+    const { deps, calls } = makeFakeDeps()
+    const { seen } = wireRunner(deps)
+    const ctx = createAppContext(deps)
+
+    // The SAME host the proxy and the retention sweep use — a second host would supervise a
+    // flow's child in a map nothing else sweeps.
+    expect(seen().host).toBe(ctx.providerHost as never)
+    expect(seen().client).toEqual({ __stub: "createFlowClient" })
+    expect(calls.createFlowClient).toEqual([
+      { http: { __stub: "createFetchFlowHttp" } },
+    ])
+  })
+
+  it("gives the runner an idGen that mints a fresh value on every call", () => {
+    // One unguessable source for BOTH the instance-key nonce and the Spectrum session id; a
+    // constant would collide two concurrent flows onto one child and one capability handle.
+    const { deps } = makeFakeDeps()
+    const { seen } = wireRunner(deps)
+    createAppContext(deps)
+
+    const idGen = seen().idGen as () => string
+    expect(idGen()).not.toBe(idGen())
+    expect(idGen().length).toBeGreaterThan(8)
+  })
+
+  it("arms the runner's deadline with a real timer that clearTimer cancels", async () => {
+    // The 10-minute budget is an ARMED deadline, not only a check: `now` is read when a call
+    // arrives, so a user who closes the setup window without cancelling would otherwise leave
+    // the child running forever.
+    const { deps } = makeFakeDeps()
+    const { seen } = wireRunner(deps)
+    createAppContext(deps)
+
+    const setTimer = seen().setTimer as (ms: number, f: () => void) => unknown
+    const clearTimer = seen().clearTimer as (handle: unknown) => void
+
+    let firedArmed = false
+    setTimer(1, () => {
+      firedArmed = true
+    })
+    let firedCleared = false
+    clearTimer(
+      setTimer(1, () => {
+        firedCleared = true
+      }),
+    )
+
+    await new Promise((resolve) => setTimeout(resolve, 25))
+    expect(firedArmed).toBe(true)
+    expect(firedCleared).toBe(false)
+  })
+})
+
 describe("createAppContext native run path wiring", () => {
   it("builds the run store from the shared db client + a clock", () => {
     const { deps, calls } = makeFakeDeps()
@@ -2084,11 +2187,27 @@ describe("createAppContext supervised instance retention", () => {
       secretRefs: { apiKey: { ref: "kc_1" } },
     })
 
-  /** Wires a config store over a mutable cell and a provider host that records retention. */
+  /** What one sweep told the flow runner to give up on. */
+  type AbandonCall = {
+    readonly keys: readonly string[]
+    readonly reason: string
+  }
+
+  /**
+   * Wires a config store over a mutable cell, a provider host that records retention, and a
+   * flow runner whose live instance keys the test controls. `order` records the interleaving
+   * of `abandon` and `retainOnly`: the runner must be told BEFORE its children are stopped,
+   * because `retainOnly` stops and forgets with no callback and no reason code.
+   */
   const wire = (
     deps: CreateAppContextDeps,
     initial: Record<string, string>,
-  ): { retained: Array<readonly string[]> } => {
+    liveFlowKeys: () => ReadonlySet<string> = () => new Set<string>(),
+  ): {
+    retained: Array<readonly string[]>
+    abandoned: AbandonCall[]
+    order: string[]
+  } => {
     let current = configWith(initial)
     ;(deps as { createCachedConfigStore: unknown }).createCachedConfigStore =
       (() => ({
@@ -2104,6 +2223,8 @@ describe("createAppContext supervised instance retention", () => {
         providerDescriptors: async () => ok([]),
       })) as never
     const retained: Array<readonly string[]> = []
+    const abandoned: AbandonCall[] = []
+    const order: string[] = []
     ;(deps as { createProviderHost: unknown }).createProviderHost = (() => ({
       ensureRunning: async () => err({ kind: "not-found", id: "acme" }),
       status: () => "stopped",
@@ -2111,10 +2232,22 @@ describe("createAppContext supervised instance retention", () => {
       stopAllFor: async () => undefined,
       stopAll: async () => undefined,
       retainOnly: async (keys: ReadonlySet<string>) => {
+        order.push("retainOnly")
         retained.push([...keys])
       },
     })) as never
-    return { retained }
+    ;(deps as { createFlowRunner: unknown }).createFlowRunner = (() => ({
+      start: async () => err({ kind: "not-found", id: "flow" }),
+      advance: async () => err({ kind: "not-found", id: "flow" }),
+      takeCompletion: () => undefined,
+      cancel: async () => undefined,
+      activeInstanceKeys: liveFlowKeys,
+      abandon: (keys: readonly string[], reason: string) => {
+        order.push("abandon")
+        abandoned.push({ keys: [...keys], reason })
+      },
+    })) as never
+    return { retained, abandoned, order }
   }
 
   it("retains exactly the instance key of the configured supervised provider on refresh", async () => {
@@ -2184,5 +2317,178 @@ describe("createAppContext supervised instance retention", () => {
     await ctx.refreshExtensions()
 
     expect(retained.at(-1)).toEqual([])
+  })
+
+  // -------------------------------------------------------------------------------------
+  // Live setup flows.
+  //
+  // A flow runs on its OWN supervised child, keyed `flow:<contribution id>:<nonce>` — a key
+  // that belongs to no provider record. The configured-provider set alone therefore sweeps it
+  // away, including on the very `config.save` that persists the flow's own output and on any
+  // unrelated provider edit in another window.
+  // -------------------------------------------------------------------------------------
+  const ACME_FLOW_KEY = flowInstanceKey("acme", "n0")
+  const always = (...keys: readonly string[]) => {
+    const set = new Set(keys)
+    return (): ReadonlySet<string> => set
+  }
+
+  it("retains a live flow's instance key alongside the provider keys when a provider is saved", async () => {
+    const { deps } = makeFakeDeps()
+    const { retained } = wire(deps, { region: "eu" }, always(ACME_FLOW_KEY))
+
+    const ctx = createAppContext(deps)
+    await ctx.refreshExtensions()
+
+    const saved = await ctx.config.save(configWith({ region: "us" }) as never)
+    expect(saved.ok).toBe(true)
+
+    // The UNION, not a replacement: the edited provider's new key must survive too.
+    expect(retained.at(-1)).toContain(ACME_FLOW_KEY)
+    expect(retained.at(-1)).toContain(keyFor({ region: "us" }))
+  })
+
+  it("retains a live flow's instance key across an extension refresh", async () => {
+    const { deps } = makeFakeDeps()
+    const { retained } = wire(deps, { region: "eu" }, always(ACME_FLOW_KEY))
+
+    const ctx = createAppContext(deps)
+    await ctx.refreshExtensions()
+
+    expect(retained.at(-1)).toContain(ACME_FLOW_KEY)
+    expect(retained.at(-1)).toContain(keyFor({ region: "eu" }))
+  })
+
+  it("stops a flow instance that stopped being live between two sweeps", async () => {
+    // The retain-set is read at sweep time, never snapshotted at wiring time: a flow that
+    // finished since the last sweep must be swept, not kept alive by a stale set.
+    const { deps } = makeFakeDeps()
+    let live: ReadonlySet<string> = new Set([ACME_FLOW_KEY])
+    const { retained } = wire(deps, { region: "eu" }, () => live)
+
+    const ctx = createAppContext(deps)
+    await ctx.refreshExtensions()
+    expect(retained.at(-1)).toContain(ACME_FLOW_KEY)
+
+    live = new Set<string>()
+    const saved = await ctx.config.save(configWith({ region: "eu" }) as never)
+    expect(saved.ok).toBe(true)
+
+    expect(retained.at(-1)).not.toContain(ACME_FLOW_KEY)
+    expect(retained.at(-1)).toEqual([keyFor({ region: "eu" })])
+  })
+
+  it("stops and abandons a live flow when its own extension is disabled by a config save", async () => {
+    // "Disabled is inert" is a security invariant: a user disabling an extension mid-flow is
+    // withdrawing consent from that extension's process, and an in-flight flow is exactly the
+    // case where it is still holding a half-finished credential exchange.
+    const { deps } = makeFakeDeps()
+    const { retained, abandoned } = wire(
+      deps,
+      { region: "eu" },
+      always(ACME_FLOW_KEY),
+    )
+
+    const ctx = createAppContext(deps)
+    await ctx.refreshExtensions()
+    expect(retained.at(-1)).toContain(ACME_FLOW_KEY)
+
+    const saved = await ctx.config.save(
+      configWith({ region: "eu" }, false) as never,
+    )
+    expect(saved.ok).toBe(true)
+
+    expect(retained.at(-1)).toEqual([])
+    expect(abandoned.at(-1)).toEqual({
+      keys: [ACME_FLOW_KEY],
+      reason: "extension-disabled",
+    })
+  })
+
+  it("keeps a live flow of one extension when a DIFFERENT extension is disabled", async () => {
+    // Without the per-flow owner lookup, "drop every flow key whenever anything is disabled"
+    // would pass the disable test above while breaking every unrelated flow.
+    const { deps } = makeFakeDeps()
+    const { retained, abandoned } = wire(
+      deps,
+      { region: "eu" },
+      always(ACME_FLOW_KEY),
+    )
+    ;(deps as { createExtensionRegistry: unknown }).createExtensionRegistry =
+      (() => ({
+        list: async () =>
+          ok([supervisedExtension("acme"), supervisedExtension("other")]),
+        providerDescriptors: async () => ok([]),
+      })) as never
+
+    const withOtherDisabled = {
+      ...(configWith({ region: "eu" }) as Record<string, unknown>),
+      providerPlugins: [
+        { id: "acme", source: { kind: "local" }, enabled: true },
+        { id: "other", source: { kind: "local" }, enabled: false },
+      ],
+    }
+
+    const ctx = createAppContext(deps)
+    await ctx.refreshExtensions()
+
+    const saved = await ctx.config.save(withOtherDisabled as never)
+    expect(saved.ok).toBe(true)
+
+    expect(retained.at(-1)).toContain(ACME_FLOW_KEY)
+    expect(abandoned.at(-1)).toEqual({ keys: [], reason: "extension-disabled" })
+  })
+
+  it("stops and abandons a live flow whose contribution belongs to no installed extension", async () => {
+    const { deps } = makeFakeDeps()
+    const ghostKey = flowInstanceKey("ghost", "n0")
+    const { retained, abandoned } = wire(
+      deps,
+      { region: "eu" },
+      always(ghostKey),
+    )
+
+    const ctx = createAppContext(deps)
+    await ctx.refreshExtensions()
+
+    expect(retained.at(-1)).not.toContain(ghostKey)
+    expect(abandoned.at(-1)).toEqual({
+      keys: [ghostKey],
+      reason: "extension-disabled",
+    })
+  })
+
+  it("stops and abandons a runner key that is not a flow key at all", async () => {
+    // `activeInstanceKeys` is an injected seam; a key that does not parse as `flow:<id>:<nonce>`
+    // names no contribution, so nothing can vouch for it and it must not be retained.
+    const { deps } = makeFakeDeps()
+    const { retained, abandoned } = wire(
+      deps,
+      { region: "eu" },
+      always("bogus"),
+    )
+
+    const ctx = createAppContext(deps)
+    await ctx.refreshExtensions()
+
+    expect(retained.at(-1)).not.toContain("bogus")
+    expect(abandoned.at(-1)).toEqual({
+      keys: ["bogus"],
+      reason: "extension-disabled",
+    })
+  })
+
+  it("tells the flow runner about dropped flows BEFORE stopping their children", async () => {
+    // `retainOnly` stops AND forgets, with no callback and no reason code, and `host.status`
+    // reports "stopped" identically for a swept, a crashed, and a never-existing instance — so
+    // the runner cannot discover why its child died and must be told first. Reversing the pair
+    // gives the user a raw transport error instead of a named "no longer enabled" step.
+    const { deps } = makeFakeDeps()
+    const { order } = wire(deps, { region: "eu" }, always(ACME_FLOW_KEY))
+
+    const ctx = createAppContext(deps)
+    await ctx.refreshExtensions()
+
+    expect(order.slice(-2)).toEqual(["abandon", "retainOnly"])
   })
 })

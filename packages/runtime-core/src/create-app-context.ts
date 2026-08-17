@@ -49,6 +49,8 @@ import {
   resolveAppEnv,
   resolveChannel,
 } from "@spectrum/platform"
+import type { FlowTimerHandle } from "@spectrum/provider-host"
+import { flowContributionIdOf } from "@spectrum/provider-host"
 import type { ProviderDescriptor, ProviderRegistry } from "@spectrum/providers"
 import {
   type ResolveBaseUrl,
@@ -844,6 +846,34 @@ export const createAppContext = (
     logger: log.child("provider-host"),
   })
 
+  /**
+   * Drives one multi-step provider setup exchange (forms, an OAuth handshake) on its OWN
+   * supervised child, keyed `flow:<contribution id>:<nonce>`.
+   *
+   * Declared HERE — after `providerHost`, before `retainConfiguredInstances` — because the
+   * sweep asks it which flow instances are live. Its `idGen` mints BOTH the instance-key nonce
+   * and the Spectrum session id from one unguessable source: the session id is a capability
+   * handle held by the IPC caller and the nonce keeps two concurrent flows apart, so neither
+   * may be derivable from the other.
+   */
+  const flowRunner = deps.createFlowRunner({
+    host: providerHost,
+    client: deps.createFlowClient({ http: deps.createFetchFlowHttp() }),
+    idGen: () => crypto.randomUUID(),
+    now: () => Date.now(),
+    // The 10-minute budget is an ARMED deadline, not only a check: `now` is read when a call
+    // arrives, so a user who closes the setup window without cancelling would otherwise leave
+    // the child running forever.
+    setTimer: (ms: number, onFire: () => void): FlowTimerHandle =>
+      setTimeout(onFire, ms),
+    clearTimer: (handle: FlowTimerHandle): void => {
+      // `FlowTimerHandle` is opaque by design; the only handles that reach here are the ones
+      // `setTimer` directly above minted, so this narrows to that exact type.
+      clearTimeout(handle as ReturnType<typeof setTimeout>)
+    },
+    logger: log.child("provider-flow"),
+  })
+
   // Reusable across calls: side-effect-free constructors, no config dependency.
   const installerGitClient = deps.createProcessGitClient({
     resolver,
@@ -980,7 +1010,36 @@ export const createAppContext = (
           }),
         ),
     )
-    await providerHost.retainOnly(keys)
+
+    // A live flow's instance key belongs to NO provider record, so `keys` alone would sweep it
+    // away — including on the very `config.save` that persists the flow's own output, and on
+    // any unrelated provider edit made in another window. Read from the runner at sweep time,
+    // never from a snapshot: a flow that ended between two sweeps must NOT be retained.
+    //
+    // Flows of a DISABLED extension are deliberately NOT retained. "Disabled is inert" is a
+    // security invariant, not a convenience: a user who disables an extension mid-flow is
+    // withdrawing consent from that extension's process, and an in-flight flow is exactly the
+    // case where it is still holding a half-finished credential exchange. The predicate reuses
+    // `enabled` (computed from the config being swept) and `supervisedOwners` for the same
+    // reasons the provider branch above does — a flow key's middle segment is the provider
+    // CONTRIBUTION id, a different id space from the MANIFEST id `enabled` is keyed by.
+    const liveFlowKeys = [...flowRunner.activeInstanceKeys()]
+    const flowIsRetained = (key: string): boolean => {
+      const contributionId = flowContributionIdOf(key)
+      if (contributionId === undefined) return false
+      const owner = supervisedOwners.get(contributionId)
+      return owner !== undefined && enabled.has(owner)
+    }
+    const retainedFlowKeys = liveFlowKeys.filter(flowIsRetained)
+    const droppedFlowKeys = liveFlowKeys.filter((key) => !flowIsRetained(key))
+
+    // Immediately BEFORE `retainOnly`, which is what actually stops the children. `retainOnly`
+    // stops and FORGETS an instance with no callback and no reason code, and `host.status`
+    // reports "stopped" identically for a swept instance, a crashed one, and a key that never
+    // existed — so the runner cannot discover why its child died and must be told. `abandon`
+    // deliberately does not stop anything itself; a second stop path would race this one.
+    flowRunner.abandon(droppedFlowKeys, "extension-disabled")
+    await providerHost.retainOnly(new Set([...keys, ...retainedFlowKeys]))
   }
 
   /**
@@ -1345,6 +1404,7 @@ export const createAppContext = (
     routingDriver,
     resolveResumeInput,
     resolveModelEnv,
+    flowRunner,
     // GUI-only runner extension points (typed + documented on AppContext; the CLI never reads
     // these). `closeDb` lets `createResetApp` release the SQLite file handle before rmSync;
     // `clock` preserves the injectable seam so the GUI composition layer can hand the runner a

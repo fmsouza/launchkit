@@ -16,7 +16,7 @@ import type {
 } from "@spectrum/harnesses"
 import type { Logger } from "@spectrum/logger"
 import type { ProjectStore } from "@spectrum/projects"
-import type { ProviderHost } from "@spectrum/provider-host"
+import type { FlowRunner, ProviderHost } from "@spectrum/provider-host"
 import type { ProviderRegistry } from "@spectrum/providers"
 import type {
   LanguageModelGateway,
@@ -55,8 +55,8 @@ export type ProviderTestResult = {
  * (`runner`, `runnerSocketUrl`, `rendererWatchdog`, `resetApp`, `pickFolder`, `openExternalUrl`,
  * `updater`) are NOT here — they live on `createGuiContext`'s extension in apps/desktop.
  * Runner extension points (`sessionSink`, `runStore`, `routingDriver`, `resolveResumeInput`,
- * `resolveModelEnv`) ARE on the base so `createAppContext` can wire them once and both runtimes
- * can carry them; the CLI ignores them, the GUI consumes them.
+ * `resolveModelEnv`, `flowRunner`) ARE on the base so `createAppContext` can wire them once and
+ * both runtimes can carry them; the CLI ignores them, the GUI consumes them.
  */
 export interface AppContext {
   readonly config: ConfigStore
@@ -237,6 +237,17 @@ export interface AppContext {
   readonly resolveResumeInput: NonNullable<RunManagerDeps["resolveResumeInput"]>
   /** Re-render a session's proxied route env when the user picks a model in-session. */
   readonly resolveModelEnv: NonNullable<RunManagerDeps["resolveModelEnv"]>
+  /**
+   * GUI runner extension point: drives one multi-step provider setup exchange on its own
+   * supervised child. Wired here (not in `createGuiContext`) because the composition root's
+   * retention sweep must know which flow instances are live — a `flow:<contribution id>:<nonce>`
+   * key belongs to no provider record, so the configured-provider set alone would stop the
+   * child mid-flight.
+   *
+   * SECURITY: `takeCompletion` returns PLAINTEXT secrets. Only the GUI's flow IPC handler may
+   * call it, and only to write them straight to the keychain; the CLI never reads this field.
+   */
+  readonly flowRunner: FlowRunner
   /**
    * GUI factory-reset hook: explicitly close the SQLite handle before rmSync. The resetApp
    * routine (`createResetApp` in apps/desktop) calls this before `removeDir(dataDir)` so the file
