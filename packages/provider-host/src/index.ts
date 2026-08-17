@@ -1,3 +1,7 @@
+export type { FlowClient, FlowHttp } from "./flow-client"
+export { createFetchFlowHttp, createFlowClient } from "./flow-client"
+export type { OpenExternal } from "./open-external"
+export { createGuardedOpenExternal } from "./open-external"
 export type { PortAllocator } from "./port"
 export { createLoopbackPortAllocator } from "./port"
 export type { TokenGen } from "./host-token"
