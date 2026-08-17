@@ -195,11 +195,12 @@ export const createExtensionInstaller = (deps: {
         })
         return err(error)
       }
-      const cloned = await deps.git.clone(
-        p.source.url,
-        p.writeDir,
-        p.source.ref,
-      )
+      // The CALLER's ref, not `p.source.ref`. The plan records `"HEAD"` when no ref was
+      // requested, because that is what `update`'s `git fetch` needs — but `git clone
+      // --branch HEAD` is fatal (`HEAD` is a symref, not a name under `refs/heads`/
+      // `refs/tags`), so forwarding the recorded value would fail every default-branch
+      // install. Omitting `--branch` entirely is what gets the remote's default branch.
+      const cloned = await deps.git.clone(p.source.url, p.writeDir, input.ref)
       if (isErr(cloned)) {
         logger.error("extension install failed", {
           id: String(p.id),

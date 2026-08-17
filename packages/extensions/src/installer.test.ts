@@ -142,6 +142,38 @@ describe("install — git", () => {
     expect(git.calls.map((c) => c.op)).toEqual(["clone", "revParse"])
   })
 
+  /** `git clone --branch HEAD` is a FATAL error — `HEAD` is a symref, not a name under
+   * `refs/heads`/`refs/tags` — so the recorded `ref: "HEAD"` (which `fetch` does accept, and
+   * which `update` depends on) must never be synthesised into the clone. Omitting `--branch`
+   * is what gets the remote's default branch. */
+  it("clones the remote's default branch when no ref was requested", async () => {
+    const { installer, git } = harness({
+      manifests: { "/data/providers/acme": validManifest("acme") },
+    })
+    await installer.install({ source: "https://example.com/acme.git" })
+    const clone = git.calls.find((c) => c.op === "clone")
+    expect(clone?.args).toEqual([
+      "https://example.com/acme.git",
+      "/data/providers/acme",
+    ])
+  })
+
+  it("passes an explicitly requested ref through to the clone", async () => {
+    const { installer, git } = harness({
+      manifests: { "/data/providers/acme": validManifest("acme") },
+    })
+    await installer.install({
+      source: "https://example.com/acme.git",
+      ref: "v1.2.3",
+    })
+    const clone = git.calls.find((c) => c.op === "clone")
+    expect(clone?.args).toEqual([
+      "https://example.com/acme.git",
+      "/data/providers/acme",
+      "v1.2.3",
+    ])
+  })
+
   it("enables the extension on install because installing is the trust decision", async () => {
     const { installer } = harness({
       manifests: { "/data/providers/acme": validManifest("acme") },
