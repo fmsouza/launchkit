@@ -104,4 +104,40 @@ describe("createProcessGitClient against real git", () => {
     expect(r.ok).toBe(true)
     if (r.ok) expect(r.value).toMatch(/^[0-9a-f]{40}$/)
   })
+
+  it("fetches HEAD, reads the candidate file out of FETCH_HEAD, and only then checks it out", async () => {
+    const dest = join(root, "clone-update")
+    await gitClient().clone(origin, dest)
+    await commitFile(origin, "spectrum-extension.json", '{"v":9}', "upstream")
+
+    const client = gitClient()
+    const fetched = await client.fetch(dest, "HEAD")
+    expect(fetched.ok).toBe(true)
+
+    const shown = await client.showFetchHead(dest, "spectrum-extension.json")
+    expect(shown.ok).toBe(true)
+    if (shown.ok) expect(shown.value.trim()).toBe('{"v":9}')
+
+    // The fetch alone left the working tree on the OLD commit — that is the property the
+    // installer relies on to validate a candidate manifest before adopting it.
+    expect(await readFile(join(dest, "spectrum-extension.json"), "utf8")).toBe(
+      '{"v":1}',
+    )
+
+    const checkedOut = await client.checkoutFetchHead(dest)
+    expect(checkedOut.ok).toBe(true)
+    expect(await readFile(join(dest, "spectrum-extension.json"), "utf8")).toBe(
+      '{"v":9}',
+    )
+  })
+
+  it("fails with git-failed when the fetched tree holds no such file", async () => {
+    const dest = join(root, "clone-missing")
+    await gitClient().clone(origin, dest)
+    const client = gitClient()
+    await client.fetch(dest, "HEAD")
+    const shown = await client.showFetchHead(dest, "nope.json")
+    expect(shown.ok).toBe(false)
+    if (!shown.ok) expect(shown.error.kind).toBe("git-failed")
+  })
 })

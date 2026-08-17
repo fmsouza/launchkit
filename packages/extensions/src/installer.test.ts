@@ -76,6 +76,15 @@ const harness = (opts: {
   const git = createFakeGitClient({
     ...(opts.commit === undefined ? {} : { commit: opts.commit }),
     ...(opts.gitFailure === undefined ? {} : { failure: opts.gitFailure }),
+    // `update` reads its candidate manifest out of `FETCH_HEAD`, not off disk, so the same
+    // `manifests` map serves both paths: as directory contents for `install`'s
+    // `readManifest`, and as the fetched bytes for `update`'s `showFetchHead`.
+    fetchHead: Object.fromEntries(
+      Object.entries(opts.manifests ?? {}).map(([dir, raw]) => [
+        dir,
+        JSON.stringify(raw),
+      ]),
+    ),
   })
   // A real clone writes a tree at the destination; the fake records the same fact so
   // "deletes the clone" assertions test something rather than passing trivially.
@@ -303,7 +312,9 @@ describe("install — git", () => {
         copier.add(dest)
         return ok(undefined)
       },
-      fetchCheckout: async () => ok(undefined),
+      fetch: async () => ok(undefined),
+      showFetchHead: async () => ok("{}"),
+      checkoutFetchHead: async () => ok(undefined),
       revParse: async () => ok(undefined as unknown as string),
     }
     const fileSource = createInMemoryExtensionFileSource([])
@@ -464,12 +475,25 @@ describe("update", () => {
     if (r.ok) expect(r.value.install.source.kind).toBe("git")
     if (r.ok && r.value.install.source.kind === "git")
       expect(r.value.install.source.commit).toBe("feed01")
-    expect(git.calls.map((c) => c.op)).toEqual(["fetchCheckout", "revParse"])
-    expect(git.calls.map((c) => c.args[0])).toEqual(["/fs/acme", "/fs/acme"])
+    expect(git.calls.map((c) => c.op)).toEqual([
+      "fetch",
+      "showFetchHead",
+      "checkoutFetchHead",
+      "revParse",
+    ])
+    expect(git.calls.map((c) => c.args[0])).toEqual([
+      "/fs/acme",
+      "/fs/acme",
+      "/fs/acme",
+      "/fs/acme",
+    ])
   })
 
-  it("fails without adopting the new tree when the updated manifest is invalid", async () => {
-    const { installer } = harness({
+  /** The refusal must land BEFORE the checkout, not after it: `registry.list()` batch-fails
+   * on an invalid manifest or a duplicate id, so a bad commit left checked out takes every
+   * other installed extension down with it. */
+  it("never checks out the fetched commit when the updated manifest is invalid", async () => {
+    const { installer, git } = harness({
       manifests: { "/fs/acme": v2Manifest("acme") },
       installed: [gitInstall("acme")],
       commit: "feed01",
@@ -477,6 +501,19 @@ describe("update", () => {
     const r = await installer.update(pid("acme"), gitInstall("acme"))
     expect(r.ok).toBe(false)
     if (!r.ok) expect(r.error.kind).toBe("unsupported-api-version")
+    expect(git.calls.map((c) => c.op)).toEqual(["fetch", "showFetchHead"])
+  })
+
+  it("never checks out the fetched commit when its contribution id collides with a neighbour", async () => {
+    const { installer, git } = harness({
+      manifests: { "/fs/acme": validManifest("acme", "shared") },
+      onDisk: { neighbour: validManifest("neighbour", "shared") },
+      installed: [gitInstall("acme")],
+    })
+    const r = await installer.update(pid("acme"), gitInstall("acme"))
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.error.kind).toBe("duplicate-id")
+    expect(git.calls.map((c) => c.op)).not.toContain("checkoutFetchHead")
   })
 
   it("never deletes the extension when an update fails, so the old install survives", async () => {

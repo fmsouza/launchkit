@@ -5,8 +5,7 @@ import { type Result, err, ok } from "@spectrum/utils"
 import type { PluginError } from "./errors"
 import type { ExtensionEntry, ExtensionFileSource } from "./file-source"
 import { type CaptureStdout, gitEnv } from "./git"
-
-const MANIFEST_FILE = "spectrum-extension.json"
+import { MANIFEST_FILE } from "./manifest"
 
 /** Reject ids that are empty or could escape `root` (path separators / parent refs). */
 const safeId = (id: string): Result<string, PluginError> => {
@@ -197,7 +196,7 @@ export const createBunCaptureStdout = (): CaptureStdout => {
     try {
       const child = Bun.spawn([command, ...args], {
         cwd,
-        // Same policy as `createBunProcessSpawner` (the spawner `clone`/`fetchCheckout` go
+        // Same policy as `createBunProcessSpawner` (the spawner `clone`/`fetch`/`checkout` go
         // through): merge the ambient env, then let `gitEnv()`'s overrides win, so `git
         // rev-parse` gets PATH/HOME/etc. from the environment plus the same askpass/proxy/
         // prompt neutralisation as every other git invocation here.

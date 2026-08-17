@@ -5,6 +5,11 @@ import { isSupportedApiVersion } from "./api-version"
 import type { PluginError } from "./errors"
 import { ProviderContributionSchema } from "./provider-contribution"
 
+/** The manifest's file name inside an extension directory. Declared here — the one module
+ * every manifest reader goes through — so the fs adapter and the installer's git-side
+ * candidate read cannot drift to two different names. */
+export const MANIFEST_FILE = "spectrum-extension.json"
+
 /** Contribution keys this Spectrum understands. Anything else is ignored, not rejected. */
 export const KNOWN_CONTRIBUTION_KEYS = ["providers"] as const
 

@@ -93,23 +93,50 @@ describe("createProcessGitClient", () => {
     expect(spawner.calls.length).toBe(0)
   })
 
-  it("checks out the pinned ref inside the extension directory when updating", async () => {
+  it("fetches the pinned ref inside the extension directory without touching the working tree", async () => {
     const { git, spawner } = client()
-    const r = await git.fetchCheckout("/data/providers/a", "v2")
+    const r = await git.fetch("/data/providers/a", "v2")
     expect(r.ok).toBe(true)
     expect(spawner.calls.map((c) => c.args)).toEqual([
       ["fetch", "--depth", "1", "--", "origin", "v2"],
+    ])
+    expect(spawner.calls[0]?.cwd).toBe("/data/providers/a")
+  })
+
+  it("checks out the fetched commit as its own separate operation", async () => {
+    const { git, spawner } = client()
+    const r = await git.checkoutFetchHead("/data/providers/a")
+    expect(r.ok).toBe(true)
+    expect(spawner.calls.map((c) => c.args)).toEqual([
       ["checkout", "FETCH_HEAD"],
     ])
     expect(spawner.calls[0]?.cwd).toBe("/data/providers/a")
   })
 
+  it("reads a file out of the fetched commit without checking anything out", async () => {
+    const captured: { args?: readonly string[]; cwd?: string } = {}
+    const spawner = createRecordingProcessSpawner(4242, 0)
+    const git = createProcessGitClient({
+      resolver: createFakeCommandResolver({ git: "/usr/bin/git" }, "macos"),
+      spawner,
+      capture: async (_command, args, cwd) => {
+        captured.args = args
+        captured.cwd = cwd
+        return ok('{"id":"a"}')
+      },
+    })
+    const r = await git.showFetchHead("/data/providers/a", "manifest.json")
+    expect(r.ok).toBe(true)
+    if (r.ok) expect(r.value).toBe('{"id":"a"}')
+    expect(captured.args).toEqual(["show", "FETCH_HEAD:manifest.json"])
+    expect(captured.cwd).toBe("/data/providers/a")
+    // Nothing was spawned through the mutating path — reading a candidate must never write.
+    expect(spawner.calls.length).toBe(0)
+  })
+
   it("puts -- before origin/ref in fetch so a leading-dash ref can't be parsed as a git option", async () => {
     const { git, spawner } = client()
-    await git.fetchCheckout(
-      "/data/providers/a",
-      "--upload-pack=touch /tmp/pwned",
-    )
+    await git.fetch("/data/providers/a", "--upload-pack=touch /tmp/pwned")
     const fetchArgs = spawner.calls[0]?.args ?? []
     expect(fetchArgs).toContain("--")
     const dashIndex = fetchArgs.indexOf("--")

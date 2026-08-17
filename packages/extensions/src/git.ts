@@ -19,12 +19,22 @@ export type GitClient = {
     dest: string,
     ref?: string,
   ): Promise<Result<void, PluginError>>
-  fetchCheckout(dir: string, ref: string): Promise<Result<void, PluginError>>
+  /** Downloads `ref` into `FETCH_HEAD` WITHOUT touching the working tree — the split from
+   * `checkoutFetchHead` is what lets a caller validate the candidate before adopting it. */
+  fetch(dir: string, ref: string): Promise<Result<void, PluginError>>
+  /** Reads one file out of the fetched (not yet checked-out) commit. */
+  showFetchHead(dir: string, file: string): Promise<Result<string, PluginError>>
+  checkoutFetchHead(dir: string): Promise<Result<void, PluginError>>
   revParse(dir: string): Promise<Result<string, PluginError>>
 }
 
 export type GitCall = {
-  readonly op: "clone" | "fetchCheckout" | "revParse"
+  readonly op:
+    | "clone"
+    | "fetch"
+    | "showFetchHead"
+    | "checkoutFetchHead"
+    | "revParse"
   readonly args: readonly string[]
 }
 
@@ -57,6 +67,20 @@ export const createProcessGitClient = (deps: {
   readonly spawner: ProcessSpawner
   readonly capture: CaptureStdout
 }): GitClient => {
+  const capture = async (
+    args: readonly string[],
+    cwd: string,
+  ): Promise<Result<string, PluginError>> => {
+    const resolved = deps.resolver.resolve("git")
+    if (!resolved.ok) {
+      return err({
+        kind: "git-failed",
+        detail: `git is not available: ${resolved.error.detail}`,
+      })
+    }
+    return deps.capture(resolved.value, args, cwd)
+  }
+
   const run = async (
     args: readonly string[],
     cwd?: string,
@@ -100,28 +124,17 @@ export const createProcessGitClient = (deps: {
       return run(args)
     },
 
-    fetchCheckout: async (dir, ref) => {
-      const fetched = await run(
-        ["fetch", "--depth", "1", "--", "origin", ref],
-        dir,
-      )
-      if (!fetched.ok) return fetched
-      return run(["checkout", "FETCH_HEAD"], dir)
-    },
+    fetch: (dir, ref) =>
+      run(["fetch", "--depth", "1", "--", "origin", ref], dir),
+
+    // `FETCH_HEAD:<file>` is a single argument with a fixed, non-dash prefix, so it can
+    // never be read as an option and needs no `--`.
+    showFetchHead: (dir, file) => capture(["show", `FETCH_HEAD:${file}`], dir),
+
+    checkoutFetchHead: (dir) => run(["checkout", "FETCH_HEAD"], dir),
 
     revParse: async (dir) => {
-      const resolved = deps.resolver.resolve("git")
-      if (!resolved.ok) {
-        return err({
-          kind: "git-failed",
-          detail: `git is not available: ${resolved.error.detail}`,
-        })
-      }
-      const captured = await deps.capture(
-        resolved.value,
-        ["rev-parse", "HEAD"],
-        dir,
-      )
+      const captured = await capture(["rev-parse", "HEAD"], dir)
       if (!captured.ok) return captured
       const trimmed = captured.value.trim()
       if (trimmed.length === 0) {
@@ -136,10 +149,13 @@ export const createProcessGitClient = (deps: {
 }
 
 /** In-memory fake `GitClient`: records every call and either succeeds with a canned commit or
- * returns the supplied failure for every operation. */
+ * returns the supplied failure for every operation. `fetchHead` maps a directory to the file
+ * contents `showFetchHead` serves for it — the candidate an `update` validates before
+ * adopting. */
 export const createFakeGitClient = (opts?: {
   readonly commit?: string
   readonly failure?: PluginError
+  readonly fetchHead?: Readonly<Record<string, string>>
 }): GitClient & { readonly calls: readonly GitCall[] } => {
   const calls: GitCall[] = []
 
@@ -154,8 +170,25 @@ export const createFakeGitClient = (opts?: {
       if (opts?.failure !== undefined) return err(opts.failure)
       return ok(undefined)
     },
-    fetchCheckout: async (dir, ref) => {
-      record("fetchCheckout", [dir, ref])
+    fetch: async (dir, ref) => {
+      record("fetch", [dir, ref])
+      if (opts?.failure !== undefined) return err(opts.failure)
+      return ok(undefined)
+    },
+    showFetchHead: async (dir, file) => {
+      record("showFetchHead", [dir, file])
+      if (opts?.failure !== undefined) return err(opts.failure)
+      const contents = opts?.fetchHead?.[dir]
+      if (contents === undefined) {
+        return err({
+          kind: "git-failed",
+          detail: `fake: no ${file} at FETCH_HEAD in ${dir}`,
+        })
+      }
+      return ok(contents)
+    },
+    checkoutFetchHead: async (dir) => {
+      record("checkoutFetchHead", [dir])
       if (opts?.failure !== undefined) return err(opts.failure)
       return ok(undefined)
     },

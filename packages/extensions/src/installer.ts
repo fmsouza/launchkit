@@ -7,7 +7,7 @@ import type { PluginError } from "./errors"
 import type { ExtensionFileSource } from "./file-source"
 import type { DirCopier, GitClient } from "./git"
 import type { ExtensionManifest, ParsedManifest } from "./manifest"
-import { parseManifest } from "./manifest"
+import { MANIFEST_FILE, parseManifest } from "./manifest"
 import type { InstallMode, InstallPlan } from "./plan-install"
 import { planInstall } from "./plan-install"
 import { redactUrlCredentials } from "./redact"
@@ -52,6 +52,19 @@ const hasWriteDir = (
 ): plan is InstallPlan & { readonly writeDir: string } =>
   plan.writeDir !== undefined
 
+/** `JSON.parse` as a `Result`. The fs read seam does its own parsing; this is the git-side
+ * candidate's, which arrives as the raw bytes of `FETCH_HEAD:<manifest>`. */
+const parseJson = (text: string): Result<unknown, PluginError> => {
+  try {
+    return ok(JSON.parse(text) as unknown)
+  } catch (cause) {
+    return err({
+      kind: "invalid-manifest",
+      detail: `manifest is not valid JSON: ${cause instanceof Error ? cause.message : String(cause)}`,
+    })
+  }
+}
+
 const noWriteDirError = (plan: InstallPlan): PluginError => ({
   kind: "write-failed",
   detail: `internal: planInstall produced no write directory for a ${plan.source.kind} install of "${plan.id}"`,
@@ -83,22 +96,22 @@ const collectClaimedContributionIds = async (
 }
 
 /**
- * Rules 3-5: read the manifest from `dir`, validate its shape and api version, confirm its
- * declared id matches `id`, validate every provider contribution's launch templates, and
- * confirm none of its contributed provider ids collide with an already-installed extension.
+ * Rules 3-5: validate an already-read manifest's shape and api version, confirm its declared
+ * id matches `id`, validate every provider contribution's launch templates, and confirm none
+ * of its contributed provider ids collide with an already-installed extension.
+ *
+ * Takes the raw manifest rather than a directory so `update` can validate a candidate read
+ * out of `FETCH_HEAD` — before it is checked out — through exactly the same rules `install`
+ * applies to a directory it just wrote.
  */
 const validateManifest = (deps: {
-  readonly readManifest: (dir: string) => Promise<Result<unknown, PluginError>>
   readonly fileSource: ExtensionFileSource
 }) => {
   return async (
     id: PluginId,
-    dir: string,
+    raw: unknown,
   ): Promise<Result<ParsedManifest, PluginError>> => {
-    const raw = await deps.readManifest(dir)
-    if (isErr(raw)) return raw
-
-    const parsed = parseManifest(raw.value)
+    const parsed = parseManifest(raw)
     if (isErr(parsed)) return parsed
     const { manifest, ignoredContributions } = parsed.value
 
@@ -151,10 +164,18 @@ export const createExtensionInstaller = (deps: {
   readonly logger?: Logger
 }): ExtensionInstaller => {
   const logger = deps.logger ?? createNoopLogger()
-  const validate = validateManifest({
-    readManifest: deps.readManifest,
-    fileSource: deps.fileSource,
-  })
+  const validateRaw = validateManifest({ fileSource: deps.fileSource })
+
+  /** `install`'s form: read the manifest off the directory that was just written, then
+   * validate it. */
+  const validate = async (
+    id: PluginId,
+    dir: string,
+  ): Promise<Result<ParsedManifest, PluginError>> => {
+    const raw = await deps.readManifest(dir)
+    if (isErr(raw)) return raw
+    return validateRaw(id, raw.value)
+  }
 
   /** Rule 6: any failure after something was written removes exactly what was written. A
    * linked install (`plan.writeDir === undefined`) wrote nothing under the plugin root, so
@@ -378,31 +399,42 @@ export const createExtensionInstaller = (deps: {
     // `git` installs, which are never linked, so this always resolves to `root/id`.
     const dir = deps.fileSource.extensionDir(id)
 
-    const fetched = await deps.git.fetchCheckout(dir, current.source.ref)
-    if (isErr(fetched)) {
+    const failed = (
+      error: PluginError,
+    ): Result<InstalledExtension, PluginError> => {
       logger.error("extension update failed", {
         id: String(id),
-        kind: fetched.error.kind,
+        kind: error.kind,
       })
-      return fetched
-    }
-    const revved = await deps.git.revParse(dir)
-    if (isErr(revved)) {
-      logger.error("extension update failed", {
-        id: String(id),
-        kind: revved.error.kind,
-      })
-      return revved
+      return err(error)
     }
 
-    const validated = await validate(id, dir)
-    if (isErr(validated)) {
-      logger.error("extension update failed", {
-        id: String(id),
-        kind: validated.error.kind,
-      })
-      return validated
-    }
+    // Validate BEFORE adopting: `git fetch` downloads the candidate into `FETCH_HEAD`
+    // without touching the working tree, so the new manifest can be read out of it and put
+    // through the same rules `install` applies. Checking out first and validating after
+    // would leave an invalid or duplicate-id manifest checked out on every refusal —
+    // `registry.list()` batch-fails on either, so ONE bad upstream commit would make every
+    // installed extension vanish from the catalog, the CLI and the GUI, with `update`
+    // unable to recover it (the recorded ref is unchanged, so it re-fetches the same
+    // commit). Ordering it this way needs no rollback, which is the point: a rollback's own
+    // failure path would reintroduce exactly what it was added to prevent.
+    const fetched = await deps.git.fetch(dir, current.source.ref)
+    if (isErr(fetched)) return failed(fetched.error)
+
+    const shown = await deps.git.showFetchHead(dir, MANIFEST_FILE)
+    if (isErr(shown)) return failed(shown.error)
+
+    const raw = parseJson(shown.value)
+    if (isErr(raw)) return failed(raw.error)
+
+    const validated = await validateRaw(id, raw.value)
+    if (isErr(validated)) return failed(validated.error)
+
+    const checkedOut = await deps.git.checkoutFetchHead(dir)
+    if (isErr(checkedOut)) return failed(checkedOut.error)
+
+    const revved = await deps.git.revParse(dir)
+    if (isErr(revved)) return failed(revved.error)
 
     const updatedInstall: PluginInstall = {
       ...current,

@@ -325,14 +325,19 @@ export const createExtensionAdmin = (deps: {
     const updated = await deps.installer.update(id, current)
     if (isErr(updated)) return updated
 
-    // KNOWN LIMITATION, deliberately NOT fixed with a rollback: `installer.update` already
-    // mutated the on-disk clone (`git fetchCheckout`) before this point. If the config write
-    // below fails, disk is left at the NEW commit while config still records the OLD one — a
-    // version-skew, not the orphaned-directory corruption `install`'s rollback guards against
-    // (the manifest is read from disk on every load, so behaviour follows the new tree either
-    // way; nothing is invisible or duplicate-id-blocking). A git rollback here would add its own
-    // failure mode — the checkout itself can fail, and there is no atomic story for "undo a
-    // fetch+checkout" — to fix a skew that self-heals on the next successful update.
+    // KNOWN LIMITATION, deliberately NOT fixed with a rollback: a SUCCESSFUL
+    // `installer.update` has already checked out the new commit by this point, so if the
+    // config write below fails, disk is at the NEW commit while config still records the OLD
+    // one — a version skew that self-heals on the next successful update. The manifest is
+    // read from disk on every load, so behaviour simply follows the new tree.
+    //
+    // This is narrow, and only true because the update was already validated: `installer.update`
+    // reads the candidate manifest out of `FETCH_HEAD` and validates it BEFORE checking
+    // anything out (see the ordering comment in `packages/extensions/src/installer.ts`), so a
+    // manifest that is invalid or duplicate-id-blocking is refused with the working tree
+    // untouched and never reaches this point at all. Without that ordering the claim would be
+    // false — a refused update would leave a broken manifest checked out, and `registry.list()`
+    // batch-fails, so every OTHER installed extension would disappear too.
     const freshCfg = await loadConfig()
     if (isErr(freshCfg)) return freshCfg
 
