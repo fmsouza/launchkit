@@ -1,6 +1,7 @@
 export {
   createBunCaptureStdout,
   createDirExtensionFileSource,
+  createFsReadManifest,
 } from "./adapters"
 export {
   SUPPORTED_API_MAJOR,

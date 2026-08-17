@@ -69,6 +69,7 @@ import {
   type DriverRegistry,
   createDriverRegistry,
 } from "./driver-registry"
+import { createExtensionAdmin } from "./extension-admin"
 import {
   createSecretRegistry,
   withRuntimeKeyRegistration,
@@ -677,6 +678,31 @@ export const createAppContext = (
     logger: log.child("provider-host"),
   })
 
+  const extensionInstaller = deps.createExtensionInstaller({
+    git: deps.createProcessGitClient({
+      resolver,
+      spawner: deps.createBunProcessSpawner(),
+      capture: deps.createBunCaptureStdout(),
+    }),
+    copier: deps.createFsDirCopier(),
+    // The SAME file source construction the refresh uses, so `removeExtension` deletes from
+    // the one directory the loader reads. A second root here would silently orphan files.
+    fileSource: deps.createDirExtensionFileSource(paths.providerPluginDir, {}),
+    readManifest: deps.createFsReadManifest(),
+    pluginRoot: paths.providerPluginDir,
+    existingInstalls: () => (liveConfig ?? defaultConfig()).providerPlugins,
+    logger: extensionsLog,
+  })
+
+  const extensions = createExtensionAdmin({
+    config,
+    installer: extensionInstaller,
+    registry: extensionRegistry,
+    providerHost,
+    refresh: refreshExtensions,
+    logger: extensionsLog,
+  })
+
   /**
    * Retire every supervised child that no longer belongs to a configured, supervised provider.
    *
@@ -1041,6 +1067,7 @@ export const createAppContext = (
     extensionRegistry,
     providerHost,
     refreshExtensions,
+    extensions,
     runtime,
     testProvider: createTestProvider(config, factory, gateway, () =>
       deps.createSystemClock(),

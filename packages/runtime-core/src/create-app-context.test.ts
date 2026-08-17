@@ -130,6 +130,22 @@ const makeFakeDeps = (): {
         retainOnly: async () => undefined,
       }
     }) as never,
+    // Extension installer layer: shaped stubs — the composition root constructs the installer
+    // (and the git client it takes) during wiring, calling `createProcessGitClient` and
+    // `createExtensionInstaller` synchronously, so `record(...)`'s `{ __stub }` would not do
+    // for the installer (it must be a real-shaped `ExtensionInstaller`).
+    createProcessGitClient: record("createProcessGitClient") as never,
+    createFsDirCopier: record("createFsDirCopier") as never,
+    createFsReadManifest: record("createFsReadManifest") as never,
+    createBunCaptureStdout: record("createBunCaptureStdout") as never,
+    createExtensionInstaller: ((..._a: unknown[]) => {
+      calls.createExtensionInstaller = _a
+      return {
+        install: async () => err({ kind: "not-found", id: "none" }),
+        update: async () => err({ kind: "not-found", id: "none" }),
+        remove: async () => ok(undefined),
+      }
+    }) as never,
     createLoopbackPortAllocator: record("createLoopbackPortAllocator") as never,
     createFetchHealthProbe: record("createFetchHealthProbe") as never,
     createCryptoTokenGen: record("createCryptoTokenGen") as never,

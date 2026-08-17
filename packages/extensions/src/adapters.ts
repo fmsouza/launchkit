@@ -51,9 +51,14 @@ export const createDirExtensionFileSource = (
         const dirents = await readdir(root, { withFileTypes: true })
         rootIds = dirents.filter((d) => d.isDirectory()).map((d) => d.name)
       } catch (cause) {
-        // A missing plugin root is not an error — the user simply has no plugins installed.
-        if (isErrno(cause, "ENOENT")) return ok([])
-        return err({ kind: "read-failed", detail: detailOf(cause) })
+        // A missing plugin root is not an error — either the user has no COPY/GIT-installed
+        // plugins yet, or (link mode) none was ever needed: a linked install writes nothing
+        // under root, so the root can stay absent forever while `linkMap` alone carries every
+        // installed extension. Fall through with an empty `rootIds` rather than returning here
+        // — an early `ok([])` would silently drop every linked extension until some unrelated
+        // git/copy install happened to create the root directory first.
+        if (isErrno(cause, "ENOENT")) rootIds = []
+        else return err({ kind: "read-failed", detail: detailOf(cause) })
       }
 
       // Union: a copy-installed extension is a directory under root; a link-installed one
@@ -159,6 +164,26 @@ export const createDirExtensionFileSource = (
     // `safeId` — `extensionDir` returns a bare `string` and has no `Result` to reject
     // through, so the type itself must be the thing that makes an unsafe id unreachable.
     extensionDir: (id: PluginId): string => resolveDir(id),
+  }
+}
+
+/**
+ * Real manifest reader: `Bun.file(<dir>/spectrum-extension.json).text()` + `JSON.parse`. The
+ * installer's own IO seam — separate from `ExtensionFileSource.readExtension` because the
+ * installer reads a manifest mid-install, before the directory is necessarily reachable
+ * through the file source's id-keyed lookup (a freshly cloned/copied dir, or a not-yet-linked
+ * path source being validated at its original location).
+ */
+export const createFsReadManifest = (): ((
+  dir: string,
+) => Promise<Result<unknown, PluginError>>) => {
+  return async (dir: string) => {
+    try {
+      const text = await Bun.file(join(dir, MANIFEST_FILE)).text()
+      return ok(JSON.parse(text) as unknown)
+    } catch (cause) {
+      return err({ kind: "read-failed", detail: detailOf(cause) })
+    }
   }
 }
 

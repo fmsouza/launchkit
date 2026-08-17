@@ -36,6 +36,7 @@ import type {
 } from "@spectrum/types"
 import type { Clock, Result } from "@spectrum/utils"
 import type { DriverRegistry } from "./driver-registry"
+import type { ExtensionAdmin } from "./extension-admin"
 import type { UploadStore } from "./upload-store"
 
 /** Result of testing one provider's live connectivity (mirrors ipc TestProviderResult). */
@@ -113,6 +114,15 @@ export interface AppContext {
    * rejects — a failed load is logged and leaves the context on builtins only.
    */
   readonly refreshExtensions: () => Promise<void>
+  /**
+   * Install/update/remove/enable-toggle administration for provider plugins. The ONE
+   * implementation that performs both the config write and the `refreshExtensions()` call —
+   * the IPC layer and the CLI both call through this rather than writing `providerPlugins`
+   * directly. See `createExtensionAdmin` (`extension-admin.ts`) for the per-method ordering
+   * rules (e.g. `remove` stops supervised children before deleting files; `setEnabled` never
+   * calls `providerHost.stopAllFor` because `config.save` already sweeps it).
+   */
+  readonly extensions: ExtensionAdmin
   /**
    * Release process-level resources on app exit — today, stop every supervised plugin process.
    * Distinct from `closeDb`, which is the narrow GUI factory-reset hook.
