@@ -61,6 +61,9 @@ const METHOD_NAMES = [
   "setExtensionEnabled",
   "updateExtension",
   "removeExtension",
+  "startProviderFlow",
+  "advanceProviderFlow",
+  "cancelProviderFlow",
 ] as const satisfies ReadonlyArray<keyof IpcClient>
 
 /**

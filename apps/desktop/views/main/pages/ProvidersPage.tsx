@@ -1,12 +1,14 @@
 import type { ProviderView } from "@spectrum/ipc"
 import type { ProviderAction, ProviderCatalogEntry } from "@spectrum/providers"
-import { SdkProviderSchema } from "@spectrum/types"
-import type { SdkProvider } from "@spectrum/types"
+import { ProviderKeySchema, SdkProviderSchema } from "@spectrum/types"
+import type { ProviderKey, SdkProvider } from "@spectrum/types"
 import {
   Button,
   EmptyState,
+  FlowStepView,
   FormField,
   Modal,
+  ProviderActionBar,
   ProviderForm,
   ProviderList,
   Row,
@@ -18,12 +20,13 @@ import {
   TextInput,
 } from "@spectrum/ui"
 import type { ProviderRow } from "@spectrum/ui"
-import { type ReactElement, useState } from "react"
+import { type ReactElement, useEffect, useState } from "react"
 import { useDraftConnectionTest } from "../hooks/useDraftConnectionTest"
 import { useDraftProviderModels } from "../hooks/useDraftProviderModels"
 import { useNotifications } from "../hooks/useNotifications"
 import type { UseNotifications } from "../hooks/useNotifications"
 import { useProviderCatalog } from "../hooks/useProviderCatalog"
+import { useProviderFlow } from "../hooks/useProviderFlow"
 import { useProviders } from "../hooks/useProviders"
 
 /** Drop empty-string config values so optional fields read as "unset" (zod `.url().optional()` rejects ""). */
@@ -47,6 +50,21 @@ const resolveSdkProvider = (
   return undefined
 }
 
+/**
+ * Narrow a catalog key to a `ProviderKey` (builtin OR `plugin:<id>`) — wider than
+ * `resolveSdkProvider`, which only accepts a builtin. A `flow` action is the one path that
+ * targets a plugin-contributed provider, so it needs the wider union.
+ */
+const resolveProviderKey = (
+  key: string,
+  notify: UseNotifications["notify"],
+): ProviderKey | undefined => {
+  const validated = ProviderKeySchema.safeParse(key)
+  if (validated.success) return validated.data
+  notify({ tone: "error", message: `Provider key not supported: ${key}` })
+  return undefined
+}
+
 /** Project a provider + its catalog entry to the row shape ProviderList renders. */
 const toRow = (
   view: ProviderView,
@@ -65,7 +83,8 @@ const toRow = (
 }
 
 export const ProvidersPage = (): ReactElement => {
-  const { data, loading, error, add, update, setSecret } = useProviders()
+  const { data, loading, error, add, update, setSecret, refetch } =
+    useProviders()
   const catalog = useProviderCatalog()
   const { notify } = useNotifications()
 
@@ -177,21 +196,72 @@ export const ProvidersPage = (): ReactElement => {
       ? catalog.data?.find((c) => c.key === editFor.sdkProvider)
       : undefined
 
-  /** Dispatch on the descriptor-declared action kind — one switch, not two hardcoded modal triggers. */
-  const onAction = (provider: ProviderView, action: ProviderAction): void => {
+  // ── Setup flows (extension-contributed "flow" actions) ──────────────────────────────
+  const flow = useProviderFlow()
+  /** Present while a flow modal is open. `label` is the action's own label, used as the
+   * modal title; `context` decides whether `done` should also close the add-provider modal. */
+  const [flowTarget, setFlowTarget] = useState<
+    | { readonly context: "create" | "provider"; readonly label: string }
+    | undefined
+  >(undefined)
+
+  const closeFlowModal = (): void => {
+    void flow.cancel()
+    setFlowTarget(undefined)
+  }
+
+  // `done` means the record was created/updated server-side (Task 5) — reload the list so
+  // it shows up, and for a "create" flow close the add-provider modal too rather than
+  // repopulating its draft form (a supervised plugin can't be probed from a draft). Keyed
+  // only on `flow.step`: `refetch`/`flowTarget`/`closeAddModal` are read at fire time, not
+  // watched — re-running this on every render (their identity changes each render) would
+  // refetch/close repeatedly instead of exactly once per `done`.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: see comment above the effect
+  useEffect(() => {
+    if (flow.step?.kind !== "done") return
+    refetch()
+    if (flowTarget?.context === "create") closeAddModal()
+    setFlowTarget(undefined)
+  }, [flow.step])
+
+  /** Dispatch on the descriptor-declared action kind — one switch, not two hardcoded modal triggers.
+   * `provider` is `undefined` for a `context: "create"` action fired from the add-provider modal,
+   * where no provider record exists yet. */
+  const onAction = (
+    provider: ProviderView | undefined,
+    action: ProviderAction,
+  ): void => {
     if (action.kind === "edit-config") {
+      if (provider === undefined) return
       setEditFor(provider)
       setEditConfig({ ...provider.config })
       return
     }
     if (action.kind === "set-secrets") {
+      if (provider === undefined) return
       setSecretFor(provider)
       setSecretValues({})
       return
     }
-    // "flow" arrives in Plan 4; unreachable today — no builtin declares one and no
-    // contribution exists yet. Never swallow it silently if it ever does fire.
-    notify({ tone: "error", message: "This action needs a newer Spectrum" })
+    // action.kind === "flow"
+    const providerKey = resolveProviderKey(
+      provider === undefined
+        ? (selectedEntry?.key ?? newSdk)
+        : provider.sdkProvider,
+      notify,
+    )
+    if (providerKey === undefined) return
+    setFlowTarget({
+      context: provider === undefined ? "create" : "provider",
+      label: action.label,
+    })
+    void flow.start({
+      providerKey,
+      flowId: action.id,
+      context: provider === undefined ? "create" : "provider",
+      config: provider === undefined ? omitEmpty(newConfig) : provider.config,
+      ...(provider !== undefined ? { providerId: provider.id } : {}),
+    })
   }
 
   return (
@@ -267,6 +337,15 @@ export const ProvidersPage = (): ReactElement => {
                 resetDraftProbes()
               }}
             />
+          ) : null}
+          {selectedEntry !== undefined && selectedEntry.actions.length > 0 ? (
+            <Row gap={2}>
+              <ProviderActionBar
+                actions={selectedEntry.actions}
+                context="create"
+                onAction={(action) => onAction(undefined, action)}
+              />
+            </Row>
           ) : null}
           <Row gap={2}>
             <Button
@@ -408,6 +487,23 @@ export const ProvidersPage = (): ReactElement => {
             </Row>
           </form>
         ) : null}
+      </Modal>
+      <Modal
+        title={flowTarget?.label ?? "Set up provider"}
+        open={flowTarget !== undefined}
+        onClose={closeFlowModal}
+      >
+        {flow.step !== undefined ? (
+          <FlowStepView
+            step={flow.step}
+            onSubmit={(values) => void flow.submit(values)}
+            onAck={() => void flow.ack()}
+            onCancel={closeFlowModal}
+            busy={flow.busy}
+          />
+        ) : (
+          <Spinner label="Starting…" />
+        )}
       </Modal>
     </SettingsLayout>
   )

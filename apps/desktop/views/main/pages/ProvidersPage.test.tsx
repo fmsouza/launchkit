@@ -724,4 +724,257 @@ describe("ProvidersPage", () => {
       }),
     })
   })
+
+  // ── Setup flows (extension-contributed "flow" actions) ────────────────────
+
+  describe("provider setup flows", () => {
+    const catalogWithFlow = (
+      flowContext: "create" | "provider",
+    ): ProviderCatalogEntry[] => [
+      ...defaultCatalog,
+      {
+        key: "plugin:acme",
+        label: "Acme",
+        configFields: [],
+        secretFields: [],
+        supportsCustomHeaders: false,
+        actions: [
+          {
+            kind: "flow",
+            id: "signin",
+            label: "Sign in with Acme",
+            context: flowContext,
+          },
+        ],
+      },
+    ]
+
+    const pluginView: ProviderView = {
+      id: "p_acme",
+      name: "Acme",
+      sdkProvider: "plugin:acme",
+      config: { region: "us" },
+      secretFields: {},
+      models: [],
+    } as unknown as ProviderView
+
+    it("renders a create-context flow action's button in the add-provider modal", async () => {
+      renderPage({
+        getProviderCatalog: async () => ({
+          ok: true,
+          value: catalogWithFlow("create"),
+        }),
+      })
+      await waitFor(() =>
+        expect(
+          screen.getByRole("cell", { name: "OpenAI" }),
+        ).toBeInTheDocument(),
+      )
+      fireEvent.click(screen.getByRole("button", { name: /add provider/i }))
+      fireEvent.change(screen.getByLabelText("SDK provider"), {
+        target: { value: "plugin:acme" },
+      })
+      const form = document.querySelector(
+        "form[aria-label='Add provider']",
+      ) as HTMLElement
+      expect(
+        within(form).getByRole("button", { name: "Sign in with Acme" }),
+      ).toBeInTheDocument()
+    })
+
+    it("does NOT render a provider-context flow action's button in the add-provider modal", async () => {
+      renderPage({
+        getProviderCatalog: async () => ({
+          ok: true,
+          value: catalogWithFlow("provider"),
+        }),
+      })
+      await waitFor(() =>
+        expect(
+          screen.getByRole("cell", { name: "OpenAI" }),
+        ).toBeInTheDocument(),
+      )
+      fireEvent.click(screen.getByRole("button", { name: /add provider/i }))
+      fireEvent.change(screen.getByLabelText("SDK provider"), {
+        target: { value: "plugin:acme" },
+      })
+      const form = document.querySelector(
+        "form[aria-label='Add provider']",
+      ) as HTMLElement
+      expect(
+        within(form).queryByRole("button", { name: "Sign in with Acme" }),
+      ).toBeNull()
+    })
+
+    it("starts the flow with the provider's own id and context when fired from a provider row", async () => {
+      const client = renderPage({
+        getProviders: async () => ({ ok: true, value: [pluginView] }),
+        getProviderCatalog: async () => ({
+          ok: true,
+          value: catalogWithFlow("provider"),
+        }),
+        startProviderFlow: async () => ({
+          ok: true,
+          value: {
+            sessionId: "sess_1",
+            step: {
+              kind: "message",
+              title: "Almost there",
+              body: "Check your inbox",
+              tone: "info",
+            },
+          },
+        }),
+      })
+      await waitFor(() =>
+        expect(screen.getByRole("cell", { name: "Acme" })).toBeInTheDocument(),
+      )
+      const row = document.querySelector("tbody tr") as HTMLElement
+      const actionsCell = row.querySelector("td.lk-cell-actions") as HTMLElement
+      fireEvent.click(
+        within(actionsCell).getByRole("button", {
+          name: "Sign in with Acme",
+        }),
+      )
+      await waitFor(() => expect(client.calls.startProviderFlow.length).toBe(1))
+      expect(client.calls.startProviderFlow[0]).toEqual({
+        providerKey: "plugin:acme",
+        flowId: "signin",
+        context: "provider",
+        config: { region: "us" },
+        providerId: "p_acme" as ProviderId,
+      })
+      await screen.findByRole("dialog", { name: "Sign in with Acme" })
+      expect(screen.getByText("Check your inbox")).toBeInTheDocument()
+    })
+
+    it("cancels the flow's session when the flow modal is dismissed mid-flow", async () => {
+      const client = renderPage({
+        getProviders: async () => ({ ok: true, value: [pluginView] }),
+        getProviderCatalog: async () => ({
+          ok: true,
+          value: catalogWithFlow("provider"),
+        }),
+        startProviderFlow: async () => ({
+          ok: true,
+          value: {
+            sessionId: "sess_1",
+            step: { kind: "form", title: "Sign in", fields: [] },
+          },
+        }),
+        cancelProviderFlow: async () => ({ ok: true, value: null }),
+      })
+      await waitFor(() =>
+        expect(screen.getByRole("cell", { name: "Acme" })).toBeInTheDocument(),
+      )
+      const row = document.querySelector("tbody tr") as HTMLElement
+      const actionsCell = row.querySelector("td.lk-cell-actions") as HTMLElement
+      fireEvent.click(
+        within(actionsCell).getByRole("button", {
+          name: "Sign in with Acme",
+        }),
+      )
+      const dialog = await screen.findByRole("dialog", {
+        name: "Sign in with Acme",
+      })
+      // FlowStepView always renders a "Cancel" control alongside the step itself.
+      fireEvent.click(within(dialog).getByRole("button", { name: /cancel/i }))
+      await waitFor(() =>
+        expect(client.calls.cancelProviderFlow).toEqual([
+          { sessionId: "sess_1" },
+        ]),
+      )
+      expect(
+        screen.queryByRole("dialog", { name: "Sign in with Acme" }),
+      ).toBeNull()
+    })
+
+    it("reloads the provider list and closes the add-provider modal when a create-context flow finishes", async () => {
+      const client = renderPage({
+        getProviders: async () => ({ ok: true, value: [view] }),
+        getProviderCatalog: async () => ({
+          ok: true,
+          value: catalogWithFlow("create"),
+        }),
+        startProviderFlow: async () => ({
+          ok: true,
+          value: { sessionId: "sess_1", step: { kind: "done", message: "ok" } },
+        }),
+      })
+      await waitFor(() =>
+        expect(
+          screen.getByRole("cell", { name: "OpenAI" }),
+        ).toBeInTheDocument(),
+      )
+      fireEvent.click(screen.getByRole("button", { name: /add provider/i }))
+      fireEvent.change(screen.getByLabelText("SDK provider"), {
+        target: { value: "plugin:acme" },
+      })
+      fireEvent.click(screen.getByRole("button", { name: "Sign in with Acme" }))
+      await waitFor(() => expect(client.calls.getProviders.length).toBe(2))
+      expect(
+        screen.queryByRole("dialog", { name: "Sign in with Acme" }),
+      ).toBeNull()
+      expect(screen.queryByRole("dialog", { name: /add provider/i })).toBeNull()
+    })
+
+    it("does NOT close an already-open add-provider modal when an unrelated provider-context flow finishes", async () => {
+      // The add-provider modal is opened independently of the flow (the user has it open
+      // while also re-authorizing an existing row's provider). A provider-context "done"
+      // must not close it — only a create-context flow that itself opened from inside that
+      // modal should.
+      const client = renderPage({
+        getProviders: async () => ({ ok: true, value: [pluginView] }),
+        getProviderCatalog: async () => ({
+          ok: true,
+          value: catalogWithFlow("provider"),
+        }),
+        startProviderFlow: async () => ({
+          ok: true,
+          value: { sessionId: "sess_1", step: { kind: "done", message: "ok" } },
+        }),
+      })
+      await waitFor(() =>
+        expect(screen.getByRole("cell", { name: "Acme" })).toBeInTheDocument(),
+      )
+      fireEvent.click(screen.getByRole("button", { name: /add provider/i }))
+      await screen.findByRole("dialog", { name: /add provider/i })
+
+      const row = document.querySelector("tbody tr") as HTMLElement
+      const actionsCell = row.querySelector("td.lk-cell-actions") as HTMLElement
+      fireEvent.click(
+        within(actionsCell).getByRole("button", {
+          name: "Sign in with Acme",
+        }),
+      )
+      await waitFor(() => expect(client.calls.getProviders.length).toBe(2))
+      expect(
+        screen.queryByRole("dialog", { name: "Sign in with Acme" }),
+      ).toBeNull()
+      expect(
+        screen.getByRole("dialog", { name: /add provider/i }),
+      ).toBeInTheDocument()
+    })
+
+    it("no-ops a 'both'-context edit-config action clicked from the add-provider modal (no provider exists yet)", async () => {
+      // The default catalog declares edit-config/set-secrets as context "both", so they
+      // also match the create-context filter and render in the add-provider modal's own
+      // action bar. There is no provider record yet to edit, so the click must be a no-op
+      // rather than opening the Edit modal against `undefined`.
+      renderPage({})
+      await waitFor(() =>
+        expect(
+          screen.getByRole("cell", { name: "OpenAI" }),
+        ).toBeInTheDocument(),
+      )
+      fireEvent.click(screen.getByRole("button", { name: /add provider/i }))
+      const addForm = document.querySelector(
+        "form[aria-label='Add provider']",
+      ) as HTMLElement
+      fireEvent.click(within(addForm).getByRole("button", { name: /^edit$/i }))
+      expect(
+        screen.queryByRole("dialog", { name: /edit provider/i }),
+      ).toBeNull()
+    })
+  })
 })
