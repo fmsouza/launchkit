@@ -510,11 +510,14 @@ describe("extension setup flow, end to end", () => {
       result: { kind: "poll" },
     })
     expect(after.ok).toBe(false)
+    if (!after.ok) expect(after.error.kind).toBe("not-found")
   }, 60_000)
 
   it("kills the flow's child when the total-timeout deadline fires on a flow that never answers", async () => {
-    // The runner's real budget is 10 minutes; only the injected timer is compressed.
-    const { ctx } = await buildHarness({ flowDeadlineMs: 750 })
+    // The runner's real budget is 10 minutes; only the injected timer is compressed. The
+    // deadline is armed the moment the child is ready, so this has to outlast the opening
+    // exchange (a few loopback round trips) by a wide margin on a loaded machine.
+    const { ctx } = await buildHarness({ flowDeadlineMs: 1500 })
 
     const opened = unwrap(await ctx.flowRunner.start(startInput("hang")))
     if (opened.step.kind !== "open-external") throw new Error("no redirect")
@@ -529,6 +532,12 @@ describe("extension setup flow, end to end", () => {
       result: { kind: "ack" },
     })
     expect(hung.ok).toBe(false)
+    // The deadline ends the session while this call is suspended, so the call that WAS in
+    // flight comes back `not-found` rather than naming the timeout. Pinned as the observed
+    // behaviour, not endorsed: `flow-errors.ts` renders `not-found` as "this extension does
+    // not offer that setup flow, or the flow has already ended (<id>)" — misleading copy for
+    // a timeout, and the `<id>` it prints here is the Spectrum-side session handle.
+    if (!hung.ok) expect(hung.error.kind).toBe("not-found")
     expect(ctx.providerHost.status(flowKey)).toBe("stopped")
     expect([...ctx.flowRunner.activeInstanceKeys()]).toEqual([])
     expect(await awaitProcessGone(pid)).toBe(true)
