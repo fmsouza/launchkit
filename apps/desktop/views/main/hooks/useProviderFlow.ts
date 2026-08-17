@@ -47,6 +47,11 @@ export const useProviderFlow = (): UseProviderFlow => {
   const sessionRef = useRef<string | undefined>(undefined)
   const stepRef = useRef<FlowStepViewData | undefined>(undefined)
   const timerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  // Bumped by `start`/`cancel` — the two user-driven actions that begin a new attempt.
+  // `advance` captures the current value before its IPC call and checks it again after:
+  // if it moved, a cancel (or a fresh start) happened while the call was in flight, and
+  // applying its response would revive an ended session or clobber a newer one.
+  const generationRef = useRef<number>(0)
 
   const clearPoll = (): void => {
     if (timerRef.current !== undefined) {
@@ -109,9 +114,14 @@ export const useProviderFlow = (): UseProviderFlow => {
     sid: string,
     result: FlowResultViewData,
   ): Promise<void> => {
+    const gen = generationRef.current
     setBusy(true)
     const r = await client.advanceProviderFlow({ sessionId: sid, result })
     setBusy(false)
+    // Stale: a cancel (or a newer start) happened while this call was in flight. Bail out
+    // before touching any state — applying this response would re-arm polling (or worse,
+    // a fresh error toast) for a session the user already ended.
+    if (generationRef.current !== gen) return
     if (!r.ok) {
       notify({ tone: "error", message: "Couldn't continue the setup flow" })
       endSession()
@@ -132,9 +142,14 @@ export const useProviderFlow = (): UseProviderFlow => {
   }
 
   const start = async (input: StartProviderFlowInput): Promise<void> => {
+    generationRef.current += 1
+    const gen = generationRef.current
     setBusy(true)
     const r = await client.startProviderFlow(input)
     setBusy(false)
+    // Superseded by a later start/cancel while this call was in flight (e.g. the modal was
+    // cancelled, or a different flow was started) — its response is stale.
+    if (generationRef.current !== gen) return
     if (!r.ok) {
       notify({ tone: "error", message: "Couldn't start the setup flow" })
       return
@@ -157,6 +172,7 @@ export const useProviderFlow = (): UseProviderFlow => {
   }
 
   const cancel = async (): Promise<void> => {
+    generationRef.current += 1
     const sid = sessionRef.current
     endSession()
     setLiveStep(undefined)

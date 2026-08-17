@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test"
 import type { ProviderView } from "@spectrum/ipc"
 import type { ProviderCatalogEntry } from "@spectrum/providers"
 import type { ProviderId } from "@spectrum/types"
-import { fireEvent, screen, waitFor, within } from "@testing-library/react"
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react"
 import { Toasts } from "../test/Toasts"
 import { createFakeIpcClient } from "../test/fake-client"
 import { renderWithProviders } from "../test/renderWithProviders"
@@ -956,25 +956,137 @@ describe("ProvidersPage", () => {
       ).toBeInTheDocument()
     })
 
-    it("no-ops a 'both'-context edit-config action clicked from the add-provider modal (no provider exists yet)", async () => {
-      // The default catalog declares edit-config/set-secrets as context "both", so they
-      // also match the create-context filter and render in the add-provider modal's own
-      // action bar. There is no provider record yet to edit, so the click must be a no-op
-      // rather than opening the Edit modal against `undefined`.
-      renderPage({})
+    it("renders only the flow action in the add-provider modal, never a 'both'-context edit-config/set-secrets action", async () => {
+      // The default catalog declares edit-config/set-secrets as context "both", so they'd
+      // also match the create-context filter on `context` alone — as dead buttons, since
+      // no provider record exists yet to edit or set a secret on. The add-provider modal's
+      // action bar must filter to `kind === "flow"` on top of the context filter.
+      const mixedCatalog: ProviderCatalogEntry[] = [
+        ...defaultCatalog,
+        {
+          key: "plugin:acme",
+          label: "Acme",
+          configFields: [],
+          secretFields: [],
+          supportsCustomHeaders: false,
+          actions: [
+            {
+              kind: "flow",
+              id: "signin",
+              label: "Sign in with Acme",
+              context: "create",
+            },
+            ...defaultProviderActions,
+          ],
+        },
+      ]
+      renderPage({
+        getProviderCatalog: async () => ({ ok: true, value: mixedCatalog }),
+      })
       await waitFor(() =>
         expect(
           screen.getByRole("cell", { name: "OpenAI" }),
         ).toBeInTheDocument(),
       )
       fireEvent.click(screen.getByRole("button", { name: /add provider/i }))
+      fireEvent.change(screen.getByLabelText("SDK provider"), {
+        target: { value: "plugin:acme" },
+      })
       const addForm = document.querySelector(
         "form[aria-label='Add provider']",
       ) as HTMLElement
-      fireEvent.click(within(addForm).getByRole("button", { name: /^edit$/i }))
       expect(
-        screen.queryByRole("dialog", { name: /edit provider/i }),
+        within(addForm).getByRole("button", { name: "Sign in with Acme" }),
+      ).toBeInTheDocument()
+      expect(
+        within(addForm).queryByRole("button", { name: /^edit$/i }),
       ).toBeNull()
+      expect(
+        within(addForm).queryByRole("button", { name: /set secret/i }),
+      ).toBeNull()
+    })
+
+    it("does not flash the previous flow's terminal step when a second flow starts", async () => {
+      // The flow hook is a page-level singleton, reused across flows. Without clearing
+      // `step` after `done`, a second flow's modal would render the first flow's stale
+      // "ok" message instead of the "Starting…" spinner while its own `start` is pending.
+      let resolveSecondStart:
+        | ((value: {
+            readonly ok: true
+            readonly value: {
+              readonly sessionId: string
+              readonly step: {
+                readonly kind: "message"
+                readonly title: string
+                readonly body: string
+                readonly tone: "info"
+              }
+            }
+          }) => void)
+        | undefined
+      let startCalls = 0
+      const client = renderPage({
+        getProviders: async () => ({ ok: true, value: [pluginView] }),
+        getProviderCatalog: async () => ({
+          ok: true,
+          value: catalogWithFlow("provider"),
+        }),
+        startProviderFlow: async () => {
+          startCalls += 1
+          if (startCalls === 1) {
+            return {
+              ok: true,
+              value: {
+                sessionId: "sess_1",
+                step: { kind: "done", message: "ok" },
+              },
+            }
+          }
+          return new Promise((resolve) => {
+            resolveSecondStart = resolve
+          })
+        },
+      })
+      await waitFor(() =>
+        expect(screen.getByRole("cell", { name: "Acme" })).toBeInTheDocument(),
+      )
+      const row = document.querySelector("tbody tr") as HTMLElement
+      const actionsCell = row.querySelector("td.lk-cell-actions") as HTMLElement
+
+      fireEvent.click(
+        within(actionsCell).getByRole("button", {
+          name: "Sign in with Acme",
+        }),
+      )
+      await waitFor(() => expect(client.calls.getProviders.length).toBe(2))
+      expect(
+        screen.queryByRole("dialog", { name: "Sign in with Acme" }),
+      ).toBeNull()
+
+      fireEvent.click(
+        within(actionsCell).getByRole("button", {
+          name: "Sign in with Acme",
+        }),
+      )
+      const dialog = await screen.findByRole("dialog", {
+        name: "Sign in with Acme",
+      })
+      expect(within(dialog).queryByText("ok")).toBeNull()
+      expect(
+        within(dialog).getByRole("status", { name: "Starting…" }),
+      ).toBeInTheDocument()
+
+      // Resolve so no promise is left dangling past the test.
+      await act(async () => {
+        resolveSecondStart?.({
+          ok: true,
+          value: {
+            sessionId: "sess_2",
+            step: { kind: "message", title: "Hi", body: "hi", tone: "info" },
+          },
+        })
+        await Promise.resolve()
+      })
     })
   })
 })

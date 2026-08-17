@@ -115,6 +115,12 @@ export const ProvidersPage = (): ReactElement => {
   }
 
   const selectedEntry = catalog.data?.find((c) => c.key === newSdk)
+  // `edit-config`/`set-secrets` are declared `context: "both"` on every builtin
+  // (`defaultActions` in `@spectrum/providers`), which would otherwise match this
+  // create-context bar too — as dead buttons, since no provider record exists yet to edit
+  // or set a secret on. Only a `flow` action makes sense here.
+  const createFlowActions =
+    selectedEntry?.actions.filter((a) => a.kind === "flow") ?? []
 
   const submitAdd = async (): Promise<void> => {
     const trimmed = newName.trim()
@@ -212,16 +218,21 @@ export const ProvidersPage = (): ReactElement => {
 
   // `done` means the record was created/updated server-side (Task 5) — reload the list so
   // it shows up, and for a "create" flow close the add-provider modal too rather than
-  // repopulating its draft form (a supervised plugin can't be probed from a draft). Keyed
-  // only on `flow.step`: `refetch`/`flowTarget`/`closeAddModal` are read at fire time, not
-  // watched — re-running this on every render (their identity changes each render) would
-  // refetch/close repeatedly instead of exactly once per `done`.
+  // repopulating its draft form (a supervised plugin can't be probed from a draft).
+  // `flow.cancel()` is a safe no-op here (the session already ended when `done` arrived —
+  // see `useProviderFlow`), used only to clear `flow.step` back to `undefined` so a second
+  // flow starting later shows the "Starting…" spinner instead of flashing this one's
+  // terminal step (the hook is a page-level singleton, reused across flows). Keyed only on
+  // `flow.step`: `refetch`/`flowTarget`/`closeAddModal`/`flow.cancel` are read at fire
+  // time, not watched — re-running this on every render (their identity changes each
+  // render) would refetch/close repeatedly instead of exactly once per `done`.
   // biome-ignore lint/correctness/useExhaustiveDependencies: see comment above the effect
   useEffect(() => {
     if (flow.step?.kind !== "done") return
     refetch()
     if (flowTarget?.context === "create") closeAddModal()
     setFlowTarget(undefined)
+    void flow.cancel()
   }, [flow.step])
 
   /** Dispatch on the descriptor-declared action kind — one switch, not two hardcoded modal triggers.
@@ -232,13 +243,16 @@ export const ProvidersPage = (): ReactElement => {
     action: ProviderAction,
   ): void => {
     if (action.kind === "edit-config") {
+      // `provider.config` below needs the narrowing — the create-context action bar only
+      // ever feeds this a `flow` action (see `createFlowActions`), so in practice this
+      // path is only ever reached with a defined provider, but the compiler can't know
+      // that from here.
       if (provider === undefined) return
       setEditFor(provider)
       setEditConfig({ ...provider.config })
       return
     }
     if (action.kind === "set-secrets") {
-      if (provider === undefined) return
       setSecretFor(provider)
       setSecretValues({})
       return
@@ -338,10 +352,10 @@ export const ProvidersPage = (): ReactElement => {
               }}
             />
           ) : null}
-          {selectedEntry !== undefined && selectedEntry.actions.length > 0 ? (
+          {createFlowActions.length > 0 ? (
             <Row gap={2}>
               <ProviderActionBar
-                actions={selectedEntry.actions}
+                actions={createFlowActions}
                 context="create"
                 onAction={(action) => onAction(undefined, action)}
               />

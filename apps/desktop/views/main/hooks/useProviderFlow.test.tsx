@@ -3,7 +3,10 @@ import type {
   FlowResultViewData,
   FlowStepViewData,
   FlowToastViewData,
+  IpcError,
+  IpcMethods,
 } from "@spectrum/ipc"
+import type { Result } from "@spectrum/utils"
 import { act, waitFor } from "@testing-library/react"
 import type { JSX } from "react"
 import { createFakeIpcClient } from "../test/fake-client"
@@ -290,5 +293,123 @@ describe("useProviderFlow", () => {
     expect(advanceCalls).toBe(1)
     expect(hookRef.current.step?.kind).toBe("await")
     expect(hookRef.current.sessionId).toBe("sess_1")
+  })
+
+  it("ignores a poll response that resolves after cancel (in-flight advance is stale)", async () => {
+    type AdvanceResult = Result<
+      IpcMethods["advanceProviderFlow"]["result"],
+      IpcError
+    >
+    let resolveAdvance: ((value: AdvanceResult) => void) | undefined
+    const advanceCalls: FlowResultViewData[] = []
+    const cancelled: string[] = []
+    const client = createFakeIpcClient({
+      startProviderFlow: async () => ({
+        ok: true,
+        value: {
+          sessionId: "sess_1",
+          step: { kind: "await", title: "Waiting", pollMs: 10 },
+        },
+      }),
+      advanceProviderFlow: async (params) => {
+        advanceCalls.push(params.result)
+        return new Promise<AdvanceResult>((resolve) => {
+          resolveAdvance = resolve
+        })
+      },
+      cancelProviderFlow: async (params) => {
+        cancelled.push(params.sessionId)
+        return { ok: true, value: null }
+      },
+    })
+    const hookRef: { current: UseProviderFlow } = {
+      current: undefined as unknown as UseProviderFlow,
+    }
+    const Probe = (): JSX.Element => {
+      hookRef.current = useProviderFlow()
+      return null as unknown as JSX.Element
+    }
+    renderWithProviders(<Probe />, client)
+    await act(async () => {
+      await hookRef.current.start(startParams)
+    })
+    // Let the poll timer fire so its `advance` call is genuinely in flight (parked on the
+    // unresolved promise above) before we cancel.
+    await waitFor(() => expect(advanceCalls.length).toBe(1))
+
+    await act(async () => {
+      await hookRef.current.cancel()
+    })
+    expect(hookRef.current.sessionId).toBeUndefined()
+    expect(hookRef.current.step).toBeUndefined()
+    expect(cancelled).toEqual(["sess_1"])
+
+    // The stale in-flight advance now resolves, carrying a step that would otherwise
+    // re-arm the (already-cancelled) session.
+    await act(async () => {
+      resolveAdvance?.({
+        ok: true,
+        value: {
+          sessionId: "sess_1",
+          step: { kind: "await", title: "Waiting", pollMs: 10 },
+        },
+      })
+    })
+    expect(hookRef.current.sessionId).toBeUndefined()
+    expect(hookRef.current.step).toBeUndefined()
+    // Only the one explicit cancel call — the stale response must not trigger another.
+    expect(cancelled).toEqual(["sess_1"])
+  })
+
+  it("ignores a start response that resolves after cancel (cancel raced the very first start)", async () => {
+    type StartResult = Result<
+      IpcMethods["startProviderFlow"]["result"],
+      IpcError
+    >
+    let resolveStart: ((value: StartResult) => void) | undefined
+    const cancelled: string[] = []
+    const client = createFakeIpcClient({
+      startProviderFlow: async () =>
+        new Promise<StartResult>((resolve) => {
+          resolveStart = resolve
+        }),
+      cancelProviderFlow: async (params) => {
+        cancelled.push(params.sessionId)
+        return { ok: true, value: null }
+      },
+    })
+    const hookRef: { current: UseProviderFlow } = {
+      current: undefined as unknown as UseProviderFlow,
+    }
+    const Probe = (): JSX.Element => {
+      hookRef.current = useProviderFlow()
+      return null as unknown as JSX.Element
+    }
+    renderWithProviders(<Probe />, client)
+
+    // Don't await: `start` is left in flight while we cancel underneath it. There is no
+    // session yet, so `cancel` has nothing to tell the server about, but it must still
+    // invalidate whatever `start` eventually resolves with.
+    let startPromise: Promise<void> = Promise.resolve()
+    act(() => {
+      startPromise = hookRef.current.start(startParams)
+    })
+    await act(async () => {
+      await hookRef.current.cancel()
+    })
+    expect(cancelled).toEqual([])
+
+    await act(async () => {
+      resolveStart?.({
+        ok: true,
+        value: {
+          sessionId: "sess_1",
+          step: { kind: "form", title: "Sign in", fields: [] },
+        },
+      })
+      await startPromise
+    })
+    expect(hookRef.current.sessionId).toBeUndefined()
+    expect(hookRef.current.step).toBeUndefined()
   })
 })
