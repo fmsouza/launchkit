@@ -37,8 +37,10 @@ const URL_SCHEME = /^[a-z][a-z0-9+.-]*:\/\//i
 /** Matches an `https://` url carrying userinfo (`user:pass@` or a bare `token@`) before the
  * host. `ssh://git@host/...` and scp-style `git@host:path` are NOT matched — `git@` there is
  * a username, not a secret, since SSH authenticates by key. Only `https://` carries a secret
- * in the url itself. */
-const HTTPS_CREDENTIALS = /^https:\/\/[^/\s]*@/i
+ * in the url itself. Written as `(?:[^/\s@]*@)+` rather than `[^/\s]*@` for the reason
+ * documented at the top of `redact.ts`: `@` is a member of `[^/\s]`, so the latter can split
+ * a run of `@`s many ways and backtracks polynomially over a hostile source. */
+const HTTPS_CREDENTIALS = /^https:\/\/(?:[^/\s@]*@)+/i
 
 const hasEmbeddedHttpsCredentials = (source: string): boolean =>
   HTTPS_CREDENTIALS.test(source)
@@ -92,13 +94,19 @@ const finalSegment = (source: string): string | undefined => {
   return segments.at(-1)
 }
 
-/** Slugifies a candidate id: lowercase, non-`[a-z0-9]` runs become `-`, trimmed, `undefined` if empty. */
+/** Slugifies a candidate id: lowercase, non-`[a-z0-9]` runs become `-`, trimmed, `undefined` if empty.
+ *
+ * The trim is `^-|-$`, not `^-+|-+$`, and the order of the two replaces is load-bearing: the
+ * collapse above turns every run of non-`[a-z0-9]` into a SINGLE `-`, so by the time the trim
+ * runs no two `-` are adjacent and the two spellings accept the same strings. `-+$` is not
+ * anchored to a start position, so the engine retries it at every index and backtracks
+ * polynomially over a long run of `-` (CodeQL `js/polynomial-redos`); `-$` cannot. */
 const slugify = (candidate: string): string | undefined => {
   const withoutGit = candidate.replace(/\.git$/, "")
   const slug = withoutGit
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
+    .replace(/^-|-$/g, "")
   return slug.length > 0 ? slug : undefined
 }
 

@@ -66,3 +66,37 @@ describe("redactUrlCredentials", () => {
     expect(redactUrlCredentials(url)).toBe(url)
   })
 })
+
+/**
+ * The redactor runs on a user-supplied install source, so a regex that backtracks
+ * polynomially here is a denial of service (CodeQL `js/polynomial-redos`). Every character
+ * class must be unambiguous around its delimiters — `@` and `:` are themselves members of
+ * `[^/\s]`, so a pattern like `[^/\s]+@` lets the engine split a run of `@`s many ways.
+ *
+ * `N` and the budget are picked from both sides. Linearly these inputs cost well under a
+ * millisecond, so 250ms is ~3 orders of magnitude of headroom and cannot flake on a loaded CI
+ * machine; quadratically the cheapest of them measured ~1.7s before the fix, so a reintroduced
+ * ambiguity still overshoots by ~7x. Do not shrink `N` — that closes the second gap.
+ */
+describe("redactUrlCredentials on adversarial input", () => {
+  const N = 40_000
+  const BUDGET_MS = 250
+
+  const elapsedMs = (input: string): number => {
+    const started = performance.now()
+    redactUrlCredentials(input)
+    return performance.now() - started
+  }
+
+  it("stays linear on a long run of @ separators", () => {
+    expect(elapsedMs("a@".repeat(N))).toBeLessThan(BUDGET_MS)
+  })
+
+  it("stays linear on a long run of : separators after an @", () => {
+    expect(elapsedMs(`a@a:${"a:".repeat(N)}\n`)).toBeLessThan(BUDGET_MS)
+  })
+
+  it("stays linear on a long userinfo carrying no @ at all", () => {
+    expect(elapsedMs(`https://${"a:".repeat(N)}`)).toBeLessThan(BUDGET_MS)
+  })
+})

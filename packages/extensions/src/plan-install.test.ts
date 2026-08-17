@@ -302,3 +302,40 @@ describe("planInstall — shared", () => {
     if (!r.ok) expect(r.error.kind).toBe("duplicate-id")
   })
 })
+
+/**
+ * `source` is user-supplied, so a regex that backtracks polynomially over it is a denial of
+ * service (CodeQL `js/polynomial-redos`). See the matching block in `redact.test.ts` for the
+ * shape of the defect and why the budget is this loose.
+ */
+describe("planInstall on adversarial input", () => {
+  const N = 40_000
+  const BUDGET_MS = 250
+
+  const elapsedMs = (run: () => void): number => {
+    const started = performance.now()
+    run()
+    return performance.now() - started
+  }
+
+  it("stays linear on a source that is a long run of @ separators", () => {
+    const source = "a@".repeat(N)
+    expect(elapsedMs(() => void planInstall({ ...base, source }))).toBeLessThan(
+      BUDGET_MS,
+    )
+  })
+
+  it("stays linear on a source that is a long run of : separators after an @", () => {
+    const source = `a@a:${"a:".repeat(N)}\n`
+    expect(elapsedMs(() => void planInstall({ ...base, source }))).toBeLessThan(
+      BUDGET_MS,
+    )
+  })
+
+  /** Guards the slug trim. Unreachable via `idFromSource` today — the `[^a-z0-9]+` collapse
+   * runs first and leaves no two adjacent `-` — but a reordering there would expose it. */
+  it("stays linear when deriving an id from a long run of dashes", () => {
+    const source = `/home/me/x${"-".repeat(N)}a`
+    expect(elapsedMs(() => void idFromSource(source))).toBeLessThan(BUDGET_MS)
+  })
+})
