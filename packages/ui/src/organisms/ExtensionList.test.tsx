@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test"
 import { render, screen } from "@testing-library/react"
 import { ExtensionList } from "./ExtensionList"
+import type { ExtensionRowData } from "./ExtensionList"
 
 const noops = {
   onSetEnabled: (): void => {},
@@ -8,7 +9,10 @@ const noops = {
   onRemove: (): void => {},
 }
 
-const ext = {
+// Annotated with `ExtensionRowData` (rather than `as const`-ing every literal) so
+// `source.kind` narrows against the real discriminated union — a typo here should fail
+// to compile, not silently fall through to a badge.
+const ext: ExtensionRowData = {
   id: "acme",
   name: "Acme",
   version: "1.0.0",
@@ -33,7 +37,7 @@ const ext = {
   ],
 }
 
-const linkedExt = {
+const linkedExt: ExtensionRowData = {
   ...ext,
   source: { kind: "path", path: "/src/acme", linked: true },
 }
@@ -48,6 +52,18 @@ describe("ExtensionList", () => {
   it("discloses the command that will be spawned", () => {
     render(<ExtensionList extensions={[ext]} {...noops} />)
     expect(screen.getByText(/acme-server/)).toBeInTheDocument()
+  })
+
+  it("renders launchArgs as the raw unrendered template, never interpolated", () => {
+    const { container } = render(
+      <ExtensionList extensions={[ext]} {...noops} />,
+    )
+    // The manifest-declared placeholder must survive verbatim (spec §3: a rendered
+    // arg list can carry a resolved secret) ...
+    expect(screen.getByText(/\{\{port\}\}/)).toBeInTheDocument()
+    // ... and a plausible resolved value must never appear anywhere in the row.
+    expect(container.textContent).not.toMatch(/--port 8080/)
+    expect(container.textContent?.includes("8080")).toBe(false)
   })
 
   it("discloses the secret fields the extension receives", () => {

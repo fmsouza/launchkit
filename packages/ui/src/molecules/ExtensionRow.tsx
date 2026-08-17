@@ -7,17 +7,18 @@ import { Button } from "../atoms/Button"
  * Where an installed extension's files come from — mirrors `ExtensionSource`
  * (`@spectrum/ipc`, `packages/ipc/src/extension-view.ts`) but redefined here rather than
  * imported: this package never depends on `@spectrum/ipc` (see `packages/ui/CLAUDE.md`).
- * A plain shape rather than a discriminated union — `kind` is read as a display key, not
- * narrowed on, so callers don't need `as const` on every literal.
+ * A real discriminated union: a `kind: "gti"` typo or a `path` source missing
+ * `path`/`linked` must fail to compile, not silently fall through to a badge.
  */
-export type ExtensionSourceRow = {
-  readonly kind: string
-  readonly url?: string
-  readonly ref?: string
-  readonly commit?: string
-  readonly path?: string
-  readonly linked?: boolean
-}
+export type ExtensionSourceRow =
+  | { readonly kind: "local" }
+  | {
+      readonly kind: "git"
+      readonly url: string
+      readonly ref: string
+      readonly commit: string
+    }
+  | { readonly kind: "path"; readonly path: string; readonly linked: boolean }
 
 export type ContributedProviderStatusRow =
   | "stopped"
@@ -61,12 +62,16 @@ export type ExtensionRowProps = {
 const sourceBadge = (
   source: ExtensionSourceRow,
 ): { readonly label: string; readonly tone: BadgeTone } => {
-  if (source.kind === "git") return { label: "git", tone: "info" }
-  if (source.kind === "path")
-    return source.linked === true
-      ? { label: "linked", tone: "warning" }
-      : { label: "copied", tone: "info" }
-  return { label: "local", tone: "neutral" }
+  switch (source.kind) {
+    case "git":
+      return { label: "git", tone: "info" }
+    case "path":
+      return source.linked
+        ? { label: "linked", tone: "warning" }
+        : { label: "copied", tone: "info" }
+    case "local":
+      return { label: "local", tone: "neutral" }
+  }
 }
 
 /** Only a git install has an upstream to pull — link/copy/local have no update source. */
@@ -90,8 +95,7 @@ export const ExtensionRow = ({
         </div>
         <p className="lk-extension-row__sub">
           Source directory missing
-          {extension.source.kind === "path" &&
-          extension.source.path !== undefined
+          {extension.source.kind === "path"
             ? ` — recorded at ${extension.source.path}`
             : ""}
         </p>

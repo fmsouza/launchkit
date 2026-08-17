@@ -16,6 +16,7 @@ import type { ExtensionRowData } from "@spectrum/ui"
 import { type ReactElement, useState } from "react"
 import { useExtensions } from "../hooks/useExtensions"
 import { useNotifications } from "../hooks/useNotifications"
+import { useProviders } from "../hooks/useProviders"
 
 /** Project the IPC-crossing `ExtensionView` to the row shape `ExtensionList` renders. */
 const toRow = (view: ExtensionView): ExtensionRowData => ({
@@ -37,7 +38,13 @@ const MODE_OPTIONS = [
 export const ExtensionsPage = (): ReactElement => {
   const { extensions, loading, error, install, setEnabled, update, remove } =
     useExtensions()
+  const { data: providers } = useProviders()
   const { notify } = useNotifications()
+
+  /** Resolve a provider id to its display name; falls back to the id only when no
+   * matching provider record can be found (e.g. it was itself just deleted). */
+  const providerName = (id: string): string =>
+    providers?.find((p) => p.id === id)?.name ?? id
 
   const [installOpen, setInstallOpen] = useState<boolean>(false)
   const [source, setSource] = useState<string>("")
@@ -107,11 +114,13 @@ export const ExtensionsPage = (): ReactElement => {
                   return
                 }
                 // A DATA refusal, not a transport error: name the referencing
-                // providers rather than showing a generic failure (spec §3).
+                // providers (not their opaque ids) rather than showing a generic
+                // failure (spec §3).
                 if (r.value !== undefined) {
+                  const names = r.value.providerIds.map(providerName)
                   notify({
                     tone: "error",
-                    message: `Still in use by ${r.value.providerIds.join(", ")}`,
+                    message: `Still in use by ${names.join(", ")}`,
                   })
                 }
               })
