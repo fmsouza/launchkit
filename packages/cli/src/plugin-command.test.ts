@@ -1,14 +1,21 @@
 import { describe, expect, it } from "bun:test"
 import { type Config, defaultConfig } from "@spectrum/config"
-import type { ExtensionManifest } from "@spectrum/extensions"
+import type { ExtensionManifest, PluginError } from "@spectrum/extensions"
 import type { PluginId } from "@spectrum/types"
 import { type Result, err, ok } from "@spectrum/utils"
 import { pluginCommand } from "./plugin-command"
 import { createMemoryWriter } from "./writer"
 
-/** A well-formed installed extension manifest fixture: one provider contribution with a
+/**
+ * A well-formed installed extension manifest fixture: one provider contribution with a
  * launch block (so install disclosure has something to print) and a `flow` action (so the
- * GUI-only-action line has something to trigger on). */
+ * GUI-only-action line has something to trigger on). The launch templates every kind of
+ * value a sabotaged `discloseInstall` could leak: `{{apiKey}}` (a declared SECRET field —
+ * the one most worth rendering-into-real-value by mistake) and `{{hostToken}}` (a RUNTIME
+ * token the CLI never has a real value for either). `envTemplate` carries the same tokens
+ * again so a sabotage that dumps the env map (in ANY form — key=value, JSON, ...) instead
+ * of skipping it is also visible to a test that pins the full output.
+ */
 const acmeManifest: ExtensionManifest = {
   apiVersion: "spectrum.dev/v1",
   id: "acme" as PluginId,
@@ -40,8 +47,18 @@ const acmeManifest: ExtensionManifest = {
           wire: "openai",
           launch: {
             command: "acme-server",
-            args: ["--api-key", "{{apiKey}}", "--port", "{{port}}"],
-            envTemplate: { SPECTRUM_TOKEN: "{{hostToken}}" },
+            args: [
+              "--api-key",
+              "{{apiKey}}",
+              "--host-token",
+              "{{hostToken}}",
+              "--port",
+              "{{port}}",
+            ],
+            envTemplate: {
+              API_KEY: "{{apiKey}}",
+              SPECTRUM_TOKEN: "{{hostToken}}",
+            },
             healthPath: "/models",
             readyTimeoutMs: 10_000,
           },
@@ -57,7 +74,10 @@ const acmeInstall = {
   enabled: true,
 }
 
-const harness = (opts?: { removeRefused?: boolean }) => {
+const harness = (opts?: {
+  removeRefused?: boolean
+  listError?: PluginError
+}) => {
   const writer = createMemoryWriter()
   const calls: { op: string; arg: unknown }[] = []
   const deps = {
@@ -92,7 +112,11 @@ const harness = (opts?: { removeRefused?: boolean }) => {
     },
     extensionRegistry: {
       list: async () =>
-        ok([{ manifest: acmeManifest, ignoredContributions: [], dir: "/d" }]),
+        opts?.listError !== undefined
+          ? err(opts.listError)
+          : ok([
+              { manifest: acmeManifest, ignoredContributions: [], dir: "/d" },
+            ]),
       providerDescriptors: async () => ok([]),
     },
     config: {
@@ -144,20 +168,41 @@ describe("pluginCommand", () => {
     expect(calls[0]?.arg).toMatchObject({ ref: "v2" })
   })
 
-  it("discloses the spawned command and declared secrets after installing", async () => {
+  it("discloses the origin, spawned command, and declared secret names as exactly these lines", async () => {
     const { run, writer } = harness()
     await run(["install", "/home/me/acme"])
-    const out = writer.lines.join("\n")
-    expect(out).toContain("acme-server")
-    expect(out).toContain("apiKey")
+    // Full-array equality, not a substring check: any change to what gets printed —
+    // a rendered arg, an extra env-dump line, a reordered/duplicated notice — breaks
+    // this test, not just a change to the one property a `.toContain` happens to probe.
+    expect(writer.lines).toEqual([
+      "installed acme (1.0.0) from linked path /home/me/acme",
+      "  will spawn: acme-server --api-key {{apiKey}} --host-token {{hostToken}} --port {{port}}",
+      "  declared secrets: apiKey",
+      "  acme: at least one setup action is only available in the GUI",
+    ])
   })
 
-  it("never prints a rendered env value or a host token", async () => {
+  it("never renders the declared secret or runtime tokens into the printed args", async () => {
     const { run, writer } = harness()
     await run(["install", "/home/me/acme"])
     const out = writer.lines.join("\n")
-    expect(out).not.toContain("SPECTRUM_TOKEN=")
+    // The manifest's OWN unrendered templates must appear verbatim — `discloseInstall`
+    // must never call `renderPluginArgs`/`renderPluginEnv`, which would replace these
+    // with a substituted (in this fake, empty-string) value instead.
+    expect(out).toContain("{{apiKey}}")
+    expect(out).toContain("{{hostToken}}")
     expect(out).toContain("{{port}}")
+  })
+
+  it("never prints the env map in any form — no key, no JSON, no key=value pair", async () => {
+    const { run, writer } = harness()
+    await run(["install", "/home/me/acme"])
+    const out = writer.lines.join("\n")
+    // `envTemplate`'s KEYS (`API_KEY`, `SPECTRUM_TOKEN`) are distinct from any arg or
+    // secret-field name in this fixture, so their presence anywhere in the output — a
+    // `KEY=` pair, a JSON dump, a bare mention — can only mean the env map leaked.
+    expect(out).not.toContain("API_KEY")
+    expect(out).not.toContain("SPECTRUM_TOKEN")
   })
 
   it("writes enabled false to config when given disable", async () => {
@@ -212,5 +257,48 @@ describe("pluginCommand", () => {
     await run(["list"])
     // acmeManifest's contribution declares a `flow` action.
     expect(writer.lines.join("\n")).toMatch(/only available in the GUI/i)
+  })
+
+  it("names the offending extension when the registry reports an unsupported api version with an id", async () => {
+    const { run } = harness({
+      listError: {
+        kind: "unsupported-api-version",
+        apiVersion: "spectrum.dev/v2",
+        id: "acme",
+      },
+    })
+    const r = await run(["list"])
+    expect(r.ok).toBe(false)
+    if (r.ok) return
+    expect(r.error.kind).toBe("failed")
+    if (r.error.kind !== "failed") return
+    expect(r.error.detail).toContain("acme")
+    expect(r.error.detail).toContain("spectrum.dev/v2")
+  })
+
+  it("names the offending extension when the registry reports an invalid manifest with an id", async () => {
+    const { run } = harness({
+      listError: { kind: "invalid-manifest", detail: "bad shape", id: "acme" },
+    })
+    const r = await run(["list"])
+    expect(r.ok).toBe(false)
+    if (r.ok) return
+    expect(r.error.kind).toBe("failed")
+    if (r.error.kind !== "failed") return
+    expect(r.error.detail).toContain("acme")
+    expect(r.error.detail).toContain("bad shape")
+  })
+
+  it("does not print the literal string 'undefined' when the registry error carries no id", async () => {
+    const { run } = harness({
+      listError: { kind: "invalid-manifest", detail: "bad shape" },
+    })
+    const r = await run(["list"])
+    expect(r.ok).toBe(false)
+    if (r.ok) return
+    expect(r.error.kind).toBe("failed")
+    if (r.error.kind !== "failed") return
+    expect(r.error.detail).not.toContain("undefined")
+    expect(r.error.detail).toContain("bad shape")
   })
 })

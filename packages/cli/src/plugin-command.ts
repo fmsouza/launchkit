@@ -2,6 +2,7 @@ import type {
   InstallInput,
   InstalledExtension,
   PluginError,
+  ProviderContribution,
 } from "@spectrum/extensions"
 import { type PluginId, PluginIdSchema } from "@spectrum/types"
 import { type Result, err, isErr, ok } from "@spectrum/utils"
@@ -63,6 +64,22 @@ const parsePluginId = (raw: string | undefined): Result<PluginId, CliError> => {
 }
 
 /**
+ * Every contribution declaring a `flow` setup action gets one line saying so is GUI-only,
+ * instead of the CLI half-supporting it. Shared by `runList` (walks every installed
+ * extension's contributions) and `discloseInstall` (walks one just-installed extension's
+ * contributions) so the wording lives in exactly one place.
+ */
+const flowOnlyNotices = (
+  contributions: readonly ProviderContribution[],
+): readonly string[] =>
+  contributions
+    .filter((c) => c.descriptor.actions?.some((a) => a.kind === "flow"))
+    .map(
+      (c) =>
+        `  ${c.id}: at least one setup action is only available in the GUI`,
+    )
+
+/**
  * `install`/`update` disclosure — spec §3: this IS the trust decision, so it prints exactly
  * what will happen and nothing is hidden behind a confirmation prompt. Prints the resolved
  * commit (git) or the linked/copied path, the UNRENDERED spawn command + args (never
@@ -96,11 +113,9 @@ const discloseInstall = (
     if (secretNames.length > 0) {
       deps.out.write(`  declared secrets: ${secretNames.join(", ")}`)
     }
-    if (contribution.descriptor.actions?.some((a) => a.kind === "flow")) {
-      deps.out.write(
-        `  ${contribution.id}: at least one setup action is only available in the GUI`,
-      )
-    }
+  }
+  for (const line of flowOnlyNotices(manifest.contributes.providers)) {
+    deps.out.write(line)
   }
 }
 
@@ -125,12 +140,10 @@ const runList = async (deps: CliDeps): Promise<Result<void, CliError>> => {
     deps.out.write(
       `${extension.manifest.id}\t${extension.manifest.name}\t${enabled ? "enabled" : "disabled"}`,
     )
-    for (const contribution of extension.manifest.contributes.providers) {
-      if (contribution.descriptor.actions?.some((a) => a.kind === "flow")) {
-        deps.out.write(
-          `  ${contribution.id}: at least one setup action is only available in the GUI`,
-        )
-      }
+    for (const line of flowOnlyNotices(
+      extension.manifest.contributes.providers,
+    )) {
+      deps.out.write(line)
     }
   }
   return ok(undefined)
