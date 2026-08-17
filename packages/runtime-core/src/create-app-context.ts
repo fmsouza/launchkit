@@ -722,8 +722,18 @@ export const createAppContext = (
    * `installer.test.ts`), so handing this installer a live link map cannot turn a stray path
    * into a delete target.
    */
-  const buildExtensionInstaller = (): ExtensionInstaller => {
-    const cfg = liveConfig ?? defaultConfig()
+  const buildExtensionInstaller = async (): Promise<ExtensionInstaller> => {
+    // AWAIT the config load rather than reading `liveConfig` synchronously: on a cold start
+    // `liveConfig` is still `undefined` until the constructor's own initial `refreshExtensions()`
+    // resolves, which is real fs IO several ticks away. `ExtensionAdmin.install` calls this
+    // BEFORE its own `loadConfig()`, so reading `liveConfig` here would reproduce the exact bug
+    // this function exists to fix, just moved earlier: the first install of a process (with a
+    // linked extension already on disk from a previous session) would still see an empty link
+    // map. `config.load()` goes through `createCachedConfigStore`, so every call after the very
+    // first is a cache hit, not a second fs read. Only fall back to `liveConfig` if THIS load
+    // itself fails — matching `runRefresh`'s own fallback.
+    const loaded = await config.load()
+    const cfg = loaded.ok ? loaded.value : (liveConfig ?? defaultConfig())
     return deps.createExtensionInstaller({
       git: installerGitClient,
       copier: installerDirCopier,
@@ -738,10 +748,15 @@ export const createAppContext = (
     })
   }
   const extensionInstaller: ExtensionInstaller = {
-    install: (input) => buildExtensionInstaller().install(input),
-    update: (id, install) => buildExtensionInstaller().update(id, install),
-    remove: (id, install, referencingProviderIds) =>
-      buildExtensionInstaller().remove(id, install, referencingProviderIds),
+    install: async (input) => (await buildExtensionInstaller()).install(input),
+    update: async (id, install) =>
+      (await buildExtensionInstaller()).update(id, install),
+    remove: async (id, install, referencingProviderIds) =>
+      (await buildExtensionInstaller()).remove(
+        id,
+        install,
+        referencingProviderIds,
+      ),
   }
 
   const extensions = createExtensionAdmin({

@@ -2,11 +2,65 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test"
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { defaultConfig } from "@spectrum/config"
 import { PluginIdSchema, pluginKeyOf } from "@spectrum/types"
 import type { AppContext } from "./app-context"
 import { createAppContext } from "./create-app-context"
 import type { CreateAppContextDeps } from "./deps"
 import { buildFakeAppContextDeps, realAdapterDefaults } from "./test-support"
+
+/** Every real-adapter override this file needs, over `resolveAppPaths` alone — factored out so
+ * the cold-start scenario (which must NOT await a refresh before its first `extensions` call)
+ * can build its own isolated `AppContext` without duplicating this list. */
+const realDepsFor = (
+  paths: ReturnType<typeof buildTestPaths>,
+): CreateAppContextDeps =>
+  buildFakeAppContextDeps({
+    resolveAppPaths: () => paths,
+    // Real config persistence: the admin's `config.save` and the refresh's `config.load` must
+    // observe each other's writes, which the default in-memory `buildFakeAppContextDeps` stub
+    // (a fixed `defaultConfig()` on every load) does not provide.
+    createFsConfigFile:
+      realAdapterDefaults.createFsConfigFile as CreateAppContextDeps["createFsConfigFile"],
+    createFileConfigStore:
+      realAdapterDefaults.createFileConfigStore as CreateAppContextDeps["createFileConfigStore"],
+    createCachedConfigStore:
+      realAdapterDefaults.createCachedConfigStore as CreateAppContextDeps["createCachedConfigStore"],
+    // Real extension + provider-plugin layer end to end: the file source reads the plugin root
+    // (and, for a linked install, the working copy) live; the registry parses what it finds;
+    // the provider registry projects the resulting descriptors.
+    createDirExtensionFileSource:
+      realAdapterDefaults.createDirExtensionFileSource as CreateAppContextDeps["createDirExtensionFileSource"],
+    createExtensionRegistry:
+      realAdapterDefaults.createExtensionRegistry as CreateAppContextDeps["createExtensionRegistry"],
+    createProviderRegistry:
+      realAdapterDefaults.createProviderRegistry as CreateAppContextDeps["createProviderRegistry"],
+    // The installer's own dep chain, real end to end (a `path` source install never calls git,
+    // but the git client is still constructed at wiring time).
+    createProcessGitClient:
+      realAdapterDefaults.createProcessGitClient as CreateAppContextDeps["createProcessGitClient"],
+    createFsDirCopier:
+      realAdapterDefaults.createFsDirCopier as CreateAppContextDeps["createFsDirCopier"],
+    createFsReadManifest:
+      realAdapterDefaults.createFsReadManifest as CreateAppContextDeps["createFsReadManifest"],
+    createBunCaptureStdout:
+      realAdapterDefaults.createBunCaptureStdout as CreateAppContextDeps["createBunCaptureStdout"],
+    createExtensionInstaller:
+      realAdapterDefaults.createExtensionInstaller as CreateAppContextDeps["createExtensionInstaller"],
+    createPathCommandResolver:
+      realAdapterDefaults.createPathCommandResolver as CreateAppContextDeps["createPathCommandResolver"],
+  })
+
+const buildTestPaths = (dataDir: string) => ({
+  dataDir,
+  configFile: join(dataDir, "config.json"),
+  dbFile: join(dataDir, "spectrum.db"),
+  harnessDir: join(dataDir, "harnesses"),
+  providerPluginDir: join(dataDir, "providers"),
+  runtimeFile: join(dataDir, "runtime.json"),
+  secretsDir: join(dataDir, "secrets"),
+  uploadsDir: join(dataDir, "uploads"),
+})
 
 /**
  * Proves the plan's headline claim for link-mode installs: editing a LINKED working copy on
@@ -85,52 +139,8 @@ beforeEach(async () => {
     "utf8",
   )
 
-  const paths = {
-    dataDir,
-    configFile: join(dataDir, "config.json"),
-    dbFile: join(dataDir, "spectrum.db"),
-    harnessDir: join(dataDir, "harnesses"),
-    providerPluginDir: join(dataDir, "providers"),
-    runtimeFile: join(dataDir, "runtime.json"),
-    secretsDir: join(dataDir, "secrets"),
-    uploadsDir: join(dataDir, "uploads"),
-  }
-
-  const deps = buildFakeAppContextDeps({
-    resolveAppPaths: () => paths,
-    // Real config persistence: the admin's `config.save` and the refresh's `config.load` must
-    // observe each other's writes, which the default in-memory `buildFakeAppContextDeps` stub
-    // (a fixed `defaultConfig()` on every load) does not provide.
-    createFsConfigFile:
-      realAdapterDefaults.createFsConfigFile as CreateAppContextDeps["createFsConfigFile"],
-    createFileConfigStore:
-      realAdapterDefaults.createFileConfigStore as CreateAppContextDeps["createFileConfigStore"],
-    createCachedConfigStore:
-      realAdapterDefaults.createCachedConfigStore as CreateAppContextDeps["createCachedConfigStore"],
-    // Real extension + provider-plugin layer end to end: the file source reads the plugin root
-    // (and, for a linked install, the working copy) live; the registry parses what it finds;
-    // the provider registry projects the resulting descriptors.
-    createDirExtensionFileSource:
-      realAdapterDefaults.createDirExtensionFileSource as CreateAppContextDeps["createDirExtensionFileSource"],
-    createExtensionRegistry:
-      realAdapterDefaults.createExtensionRegistry as CreateAppContextDeps["createExtensionRegistry"],
-    createProviderRegistry:
-      realAdapterDefaults.createProviderRegistry as CreateAppContextDeps["createProviderRegistry"],
-    // The installer's own dep chain, real end to end (a `path` source install never calls git,
-    // but the git client is still constructed at wiring time).
-    createProcessGitClient:
-      realAdapterDefaults.createProcessGitClient as CreateAppContextDeps["createProcessGitClient"],
-    createFsDirCopier:
-      realAdapterDefaults.createFsDirCopier as CreateAppContextDeps["createFsDirCopier"],
-    createFsReadManifest:
-      realAdapterDefaults.createFsReadManifest as CreateAppContextDeps["createFsReadManifest"],
-    createBunCaptureStdout:
-      realAdapterDefaults.createBunCaptureStdout as CreateAppContextDeps["createBunCaptureStdout"],
-    createExtensionInstaller:
-      realAdapterDefaults.createExtensionInstaller as CreateAppContextDeps["createExtensionInstaller"],
-    createPathCommandResolver:
-      realAdapterDefaults.createPathCommandResolver as CreateAppContextDeps["createPathCommandResolver"],
-  })
+  const paths = buildTestPaths(dataDir)
+  const deps = realDepsFor(paths)
 
   ctx = createAppContext(deps)
   // Let the constructor's own initial refresh (against an empty plugin root) settle before the
@@ -218,5 +228,92 @@ describe("duplicate-contribution guard sees already-installed linked extensions"
     await ctx.refreshExtensions()
     const key = pluginKeyOf(PluginIdSchema.parse("linked-plugin"))
     expect(ctx.providerRegistry.get(key)?.label).toBe("Linked v1")
+  })
+})
+
+describe("cold start (no refresh awaited before the first extensions call)", () => {
+  it("sees an already-installed linked extension's contribution id on the very first admin call of the process", async () => {
+    // A SEPARATE AppContext, deliberately NOT the shared `ctx` from `beforeEach` (which always
+    // awaits an initial refresh) — the bug this pins only reproduces when `extensions.install`
+    // is the FIRST thing called on a freshly constructed context, exactly like Task 5/6's very
+    // first IPC/CLI command of a process.
+    const coldRoot = await mkdtemp(
+      join(tmpdir(), "spectrum-extension-admin-cold-"),
+    )
+    try {
+      const coldWorkingCopy = join(coldRoot, "working-copy")
+      const coldDataDir = join(coldRoot, "data")
+      await mkdir(coldWorkingCopy, { recursive: true })
+      await writeFile(
+        join(coldWorkingCopy, "spectrum-extension.json"),
+        JSON.stringify(manifestFor("Linked v1"), null, 2),
+        "utf8",
+      )
+
+      const coldPaths = buildTestPaths(coldDataDir)
+      // Simulate a PREVIOUS session: plugin-a (linked) is already recorded in config.json
+      // before this process's AppContext is even constructed.
+      await mkdir(coldDataDir, { recursive: true })
+      await writeFile(
+        coldPaths.configFile,
+        JSON.stringify(
+          {
+            ...defaultConfig(),
+            providerPlugins: [
+              {
+                id: "linked-plugin",
+                source: { kind: "path", path: coldWorkingCopy, linked: true },
+                enabled: true,
+              },
+            ],
+          },
+          null,
+          2,
+        ),
+        "utf8",
+      )
+
+      // Everything the second install needs must be written to disk BEFORE `createAppContext`
+      // runs — no `await` may separate construction from the `extensions.install` call below,
+      // or the constructor's own fire-and-forget initial refresh gets a chance to resolve
+      // `liveConfig` on this test's behalf, which would silently defeat the whole point: the
+      // scenario is specifically the FIRST synchronous thing a process does with the context.
+      const copySource = join(coldRoot, "copy-source")
+      await mkdir(copySource, { recursive: true })
+      await writeFile(
+        join(copySource, "spectrum-extension.json"),
+        JSON.stringify(
+          manifestWith({
+            manifestId: "copy-plugin",
+            contributionId: "linked-plugin",
+            label: "Copy plugin",
+          }),
+          null,
+          2,
+        ),
+        "utf8",
+      )
+
+      const coldCtx = createAppContext(realDepsFor(coldPaths))
+      // Deliberately NO `await coldCtx.refreshExtensions()`, and no OTHER `await` above this
+      // line since construction: `liveConfig` is still `undefined` here — the constructor's own
+      // initial refresh has not resolved — so a link map built from `liveConfig ??
+      // defaultConfig()` would be `{}`, reproducing the original bug one level earlier: the
+      // installer's duplicate-contribution-id gate (`collectClaimedContributionIds`) would not
+      // see plugin-a's contribution at all.
+      const installedB = await coldCtx.extensions.install({
+        source: copySource,
+        id: "copy-plugin",
+        mode: "copy",
+      })
+      expect(installedB.ok).toBe(false)
+      if (!installedB.ok) expect(installedB.error.kind).toBe("duplicate-id")
+
+      await coldCtx.refreshExtensions()
+      const key = pluginKeyOf(PluginIdSchema.parse("linked-plugin"))
+      expect(coldCtx.providerRegistry.get(key)?.label).toBe("Linked v1")
+    } finally {
+      await rm(coldRoot, { recursive: true, force: true })
+    }
   })
 })
