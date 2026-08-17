@@ -1,4 +1,3 @@
-import { join } from "node:path"
 import type { PluginInstall } from "@spectrum/config"
 import { type Logger, createNoopLogger } from "@spectrum/logger"
 import type { PluginId } from "@spectrum/types"
@@ -6,12 +5,12 @@ import { type Result, err, isErr, ok } from "@spectrum/utils"
 import { validateContributionTemplates } from "./env-template"
 import type { PluginError } from "./errors"
 import type { ExtensionFileSource } from "./file-source"
-import { redactUrlCredentials } from "./git"
 import type { DirCopier, GitClient } from "./git"
 import type { ExtensionManifest, ParsedManifest } from "./manifest"
 import { parseManifest } from "./manifest"
 import type { InstallMode, InstallPlan } from "./plan-install"
 import { planInstall } from "./plan-install"
+import { redactUrlCredentials } from "./redact"
 
 export type InstalledExtension = {
   readonly manifest: ExtensionManifest
@@ -40,6 +39,23 @@ export interface ExtensionInstaller {
 }
 
 const sourceKindOf = (install: PluginInstall): string => install.source.kind
+
+/**
+ * Structural narrow, not a cast: `planInstall` guarantees `writeDir` is set for a `git` plan
+ * and a `path`+`copy` plan, and unset for a `path`+`link` plan, but nothing in the `InstallPlan`
+ * TYPE encodes that correlation. A `p.writeDir as string` would compile even if a future
+ * `planInstall` change broke the guarantee, turning it into a runtime `git.clone(url,
+ * undefined)`. This guard instead turns that "shouldn't happen" into a typed `Result`.
+ */
+const hasWriteDir = (
+  plan: InstallPlan,
+): plan is InstallPlan & { readonly writeDir: string } =>
+  plan.writeDir !== undefined
+
+const noWriteDirError = (plan: InstallPlan): PluginError => ({
+  kind: "write-failed",
+  detail: `internal: planInstall produced no write directory for a ${plan.source.kind} install of "${plan.id}"`,
+})
 
 /** Reads every already-installed extension's manifest and collects the provider-contribution
  * ids it declares. Entries the file source could not read (a dead linked source) or whose
@@ -103,11 +119,22 @@ const validateManifest = (deps: {
       String(id),
     )
     if (isErr(claimed)) return claimed
+    // Seed with the incoming manifest's OWN ids as they're walked, not just the other
+    // extensions' claimed set. `ExtensionManifestSchema` already refuses a manifest that
+    // collides with itself (defense #1, and the one that also covers hand-placed and
+    // linked directories, which never reach this installer at all) — this is defense #2,
+    // so the installer's own pre-install check reports the collision in its own error
+    // shape rather than relying solely on the schema layer.
+    const seenInThisManifest = new Set<string>()
     for (const contribution of manifest.contributes.providers) {
       const contributionId = String(contribution.id)
-      if (claimed.value.has(contributionId)) {
+      if (
+        claimed.value.has(contributionId) ||
+        seenInThisManifest.has(contributionId)
+      ) {
         return err({ kind: "duplicate-id", id: contributionId })
       }
+      seenInThisManifest.add(contributionId)
     }
 
     return ok({ manifest, ignoredContributions })
@@ -160,8 +187,19 @@ export const createExtensionInstaller = (deps: {
 
     let commit: string | undefined
     if (p.source.kind === "git") {
-      const writeDir = p.writeDir as string
-      const cloned = await deps.git.clone(p.source.url, writeDir, p.source.ref)
+      if (!hasWriteDir(p)) {
+        const error = noWriteDirError(p)
+        logger.error("extension install failed", {
+          id: String(p.id),
+          kind: error.kind,
+        })
+        return err(error)
+      }
+      const cloned = await deps.git.clone(
+        p.source.url,
+        p.writeDir,
+        p.source.ref,
+      )
       if (isErr(cloned)) {
         logger.error("extension install failed", {
           id: String(p.id),
@@ -169,7 +207,7 @@ export const createExtensionInstaller = (deps: {
         })
         return cloned
       }
-      const revved = await deps.git.revParse(writeDir)
+      const revved = await deps.git.revParse(p.writeDir)
       if (isErr(revved)) {
         await cleanupAfterFailure(p)
         logger.error("extension install failed", {
@@ -180,6 +218,14 @@ export const createExtensionInstaller = (deps: {
       }
       commit = revved.value
     } else if (p.source.kind === "path" && !p.source.linked) {
+      if (!hasWriteDir(p)) {
+        const error = noWriteDirError(p)
+        logger.error("extension install failed", {
+          id: String(p.id),
+          kind: error.kind,
+        })
+        return err(error)
+      }
       const exists = await deps.copier.exists(p.source.path)
       if (!exists) {
         const error: PluginError = {
@@ -193,9 +239,26 @@ export const createExtensionInstaller = (deps: {
         })
         return err(error)
       }
-      const writeDir = p.writeDir as string
-      const copied = await deps.copier.copy(p.source.path, writeDir)
+      // A hand-placed extension at the destination has no config record, so it is not
+      // among `existingInstalls()` and `planInstall`'s own duplicate-id check (which only
+      // looks at existingIds) never sees the id as taken. Without this check, `copy` would
+      // overwrite that directory and, on any later validation failure, `cleanupAfterFailure`
+      // would delete a directory this install never created.
+      const occupied = await deps.copier.exists(p.writeDir)
+      if (occupied) {
+        const error: PluginError = { kind: "duplicate-id", id: String(p.id) }
+        logger.error("extension install failed", {
+          id: String(p.id),
+          kind: error.kind,
+        })
+        return err(error)
+      }
+      const copied = await deps.copier.copy(p.source.path, p.writeDir)
       if (isErr(copied)) {
+        // The destination-occupied check above means a copy failure here did not
+        // overwrite a pre-existing directory, so cleaning up whatever the failed copy
+        // partially wrote is safe.
+        await cleanupAfterFailure(p)
         logger.error("extension install failed", {
           id: String(p.id),
           kind: copied.error.kind,
@@ -228,27 +291,38 @@ export const createExtensionInstaller = (deps: {
       return validated
     }
 
-    const pluginInstall: PluginInstall =
-      p.source.kind === "git"
-        ? {
-            id: p.id,
-            source: {
-              kind: "git",
-              url: p.source.url,
-              ref: p.source.ref,
-              commit: commit as string,
-            },
-            enabled: true,
-          }
-        : {
-            id: p.id,
-            source: {
-              kind: "path",
-              path: p.source.path,
-              linked: p.source.linked,
-            },
-            enabled: true,
-          }
+    let pluginInstall: PluginInstall
+    if (p.source.kind === "git") {
+      if (commit === undefined) {
+        // Unreachable: the git branch above always sets `commit` before falling through
+        // to here on success. Kept as a typed guard rather than an `as string` cast so a
+        // future refactor that breaks that invariant fails a Result check, not silently.
+        const error: PluginError = {
+          kind: "write-failed",
+          detail: `internal: git install of "${p.id}" resolved no commit`,
+        }
+        logger.error("extension install failed", {
+          id: String(p.id),
+          kind: error.kind,
+        })
+        return err(error)
+      }
+      pluginInstall = {
+        id: p.id,
+        source: { kind: "git", url: p.source.url, ref: p.source.ref, commit },
+        enabled: true,
+      }
+    } else {
+      pluginInstall = {
+        id: p.id,
+        source: {
+          kind: "path",
+          path: p.source.path,
+          linked: p.source.linked,
+        },
+        enabled: true,
+      }
+    }
 
     logger.info("extension installed", {
       id: String(p.id),
@@ -267,11 +341,25 @@ export const createExtensionInstaller = (deps: {
     id: PluginId,
     current: PluginInstall,
   ): Promise<Result<InstalledExtension, PluginError>> => {
+    if (String(current.id) !== String(id)) {
+      const error: PluginError = {
+        kind: "invalid-manifest",
+        detail: `install record id "${current.id}" does not match requested id "${id}"`,
+      }
+      logger.error("extension update failed", {
+        id: String(id),
+        kind: error.kind,
+      })
+      return err(error)
+    }
+
     if (current.source.kind !== "git") {
       const detail =
         current.source.kind === "local"
           ? `cannot update a local hand-placed extension: ${id}`
-          : `cannot update a linked extension, there is nothing to fetch: ${id}`
+          : current.source.linked
+            ? `cannot update a linked extension, there is nothing to fetch: ${id}`
+            : `cannot update a snapshotted copy in place, reinstall with --copy instead: ${id}`
       const error: PluginError = { kind: "invalid-manifest", detail }
       logger.error("extension update failed", {
         id: String(id),
@@ -280,7 +368,11 @@ export const createExtensionInstaller = (deps: {
       return err(error)
     }
 
-    const dir = join(deps.pluginRoot, String(id))
+    // `extensionDir` is the file source's own definition of an installed extension's
+    // directory (real adapter: `linkMap[id] ?? join(root, id)`) — re-deriving `pluginRoot/id`
+    // here would be a second, driftable definition of the same layout. Only reached for
+    // `git` installs, which are never linked, so this always resolves to `root/id`.
+    const dir = deps.fileSource.extensionDir(id)
 
     const fetched = await deps.git.fetchCheckout(dir, current.source.ref)
     if (isErr(fetched)) {

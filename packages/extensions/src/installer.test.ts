@@ -98,6 +98,11 @@ const harness = (opts: {
       copier.drop(`/data/providers/${id}`)
       return ok(undefined)
     },
+    // The real `createDirExtensionFileSource` resolves a non-linked extension's directory
+    // as `root/id` — mirror that here (rather than the base in-memory fake's opaque
+    // `/in-memory/<id>`) so `update` can use `fileSource.extensionDir(id)` as its one
+    // definition of the layout instead of re-deriving `pluginRoot/id` itself.
+    extensionDir: (id: string) => `/data/providers/${id}`,
   }
   const manifests = opts.manifests ?? {}
   const installer = createExtensionInstaller({
@@ -218,6 +223,38 @@ describe("install — git", () => {
     expect(removed).toEqual(["beta"])
   })
 
+  it("installs cleanly past a broken neighbour whose manifest fails to parse", async () => {
+    const { installer, removed } = harness({
+      manifests: { "/data/providers/beta": validManifest("beta") },
+      // "broken" is on disk but its manifest is garbage — must be skipped, not fail the
+      // batch, so it never blocks an unrelated install.
+      onDisk: { broken: { not: "a manifest" } },
+    })
+    const r = await installer.install({
+      source: "https://example.com/beta.git",
+    })
+    expect(r.ok).toBe(true)
+    expect(removed).toEqual([])
+  })
+
+  it("still catches a real contribution-id collision with a broken neighbour present", async () => {
+    const { installer, removed } = harness({
+      manifests: { "/data/providers/beta": validManifest("beta", "acme") },
+      onDisk: {
+        broken: { not: "a manifest" },
+        acme: validManifest("acme"),
+      },
+      installed: [gitInstall("acme")],
+    })
+    const r = await installer.install({
+      source: "https://example.com/beta.git",
+    })
+    expect(r.ok).toBe(false)
+    if (!r.ok && r.error.kind === "duplicate-id")
+      expect(r.error.id).toBe("acme")
+    expect(removed).toEqual(["beta"])
+  })
+
   it("fails with git-failed and writes nothing when the clone fails", async () => {
     const { installer, copier } = harness({
       gitFailure: { kind: "git-failed", detail: "exit 128" },
@@ -277,6 +314,37 @@ describe("install — path", () => {
     expect(r.ok).toBe(false)
     if (!r.ok) expect(r.error.kind).toBe("source-unavailable")
   })
+
+  /** Rule 6's cleanup is gated on `plan.writeDir !== undefined`, not on "did an error
+   * happen" — a linked install never has a `writeDir`, so `removeExtension` must never be
+   * called for it even when validation fails. Nothing in the git-install failure tests
+   * above pins this: they all have a `writeDir`, so removing `if (plan.writeDir ===
+   * undefined) return` from `cleanupAfterFailure` breaks zero tests without this one. */
+  it("never calls removeExtension when a linked install's manifest fails validation", async () => {
+    const { installer, removed, copier } = harness({
+      manifests: { "/src/acme": validManifest("other") },
+      present: ["/src/acme"],
+    })
+    const r = await installer.install({ source: "/src/acme" })
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.error.kind).toBe("invalid-manifest")
+    expect(removed).toEqual([])
+    expect(await copier.exists("/src/acme")).toBe(true)
+  })
+
+  it("refuses with duplicate-id and copies nothing when the copy destination is already occupied", async () => {
+    const { installer, copier } = harness({
+      manifests: { "/src/acme": validManifest("acme") },
+      // A hand-placed directory at the destination — not in `existingInstalls()`, since
+      // Spectrum never recorded installing it, so `planInstall`'s own duplicate-id check
+      // (which only looks at existingIds) does not see it as taken.
+      present: ["/src/acme", "/data/providers/acme"],
+    })
+    const r = await installer.install({ source: "/src/acme", mode: "copy" })
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.error.kind).toBe("duplicate-id")
+    expect(copier.copies).toEqual([])
+  })
 })
 
 describe("update", () => {
@@ -334,6 +402,30 @@ describe("update", () => {
     const r = await installer.update(pid("acme"), local)
     expect(r.ok).toBe(false)
   })
+
+  it("refuses to update a copy-mode path install, with a message distinct from the linked one", async () => {
+    const copyInstall: PluginInstall = {
+      id: pid("acme"),
+      source: { kind: "path", path: "/src/acme", linked: false },
+      enabled: true,
+    }
+    const { installer, git } = harness({ installed: [copyInstall] })
+    const r = await installer.update(pid("acme"), copyInstall)
+    expect(r.ok).toBe(false)
+    if (!r.ok && r.error.kind === "invalid-manifest")
+      expect(r.error.detail).not.toContain("linked")
+    expect(git.calls).toEqual([])
+  })
+
+  it("refuses when the install record's id does not match the requested id", async () => {
+    const { installer, git } = harness({
+      manifests: { "/data/providers/acme": validManifest("acme") },
+      installed: [gitInstall("acme")],
+    })
+    const r = await installer.update(pid("other"), gitInstall("acme"))
+    expect(r.ok).toBe(false)
+    expect(git.calls).toEqual([])
+  })
 })
 
 describe("remove", () => {
@@ -372,5 +464,20 @@ describe("remove", () => {
     expect(r.ok).toBe(true)
     expect(removed).toEqual([])
     expect(await copier.exists("/src/acme")).toBe(true)
+  })
+
+  /** A `local` hand-placed install is the other "Spectrum never acquired these files" case
+   * alongside `linked` — nothing pinned it before this test, so making `remove` delete
+   * unconditionally would only have broken the `linked` test above. */
+  it("never calls removeExtension for a local hand-placed install", async () => {
+    const local: PluginInstall = {
+      id: pid("acme"),
+      source: { kind: "local" },
+      enabled: true,
+    }
+    const { installer, removed } = harness({ installed: [local] })
+    const r = await installer.remove(pid("acme"), local, [])
+    expect(r.ok).toBe(true)
+    expect(removed).toEqual([])
   })
 })
