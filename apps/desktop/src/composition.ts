@@ -62,6 +62,8 @@ import { createRunManager } from "@spectrum/agent-driver"
 import type { RootRunnerMap } from "@spectrum/agent-events"
 import { isRootRunnerFinished, trackRootRunner } from "@spectrum/agent-events"
 import type { Logger } from "@spectrum/logger"
+import type { OpenExternal } from "@spectrum/provider-host"
+import { createGuardedOpenExternal } from "@spectrum/provider-host"
 import { createNameGenerator } from "@spectrum/proxy"
 import {
   type TerminalManager,
@@ -127,6 +129,15 @@ export interface GuiContext extends AppContext {
    */
   readonly pickFiles: () => Promise<readonly string[]>
   readonly openExternalUrl: (url: string) => Promise<boolean>
+  /**
+   * `openExternalUrl` behind `@spectrum/provider-host`'s scheme guard — the ONLY path by
+   * which an EXTENSION-supplied url may reach the OS opener. Anything else would make
+   * Spectrum a launcher for arbitrary registered URL handlers on a plugin's behalf.
+   *
+   * The raw `openExternalUrl` above stays for Spectrum's own urls (the upload handler opens
+   * `file://` paths, which this guard deliberately refuses).
+   */
+  readonly openExternalGuarded: OpenExternal
   readonly updater: UpdaterAdapter
   /** In-app terminal PTY manager (terminal-panel plan). */
   readonly terminalManager: TerminalManager
@@ -479,6 +490,10 @@ export const createGuiContext = (
     const { Utils } = await import("electrobun/bun")
     return Utils.openExternal(url)
   }
+  // Built HERE, not in the handler: the guard is the single permitted path for an
+  // extension-supplied url, and constructing it beside the raw capability is what keeps that
+  // visible. A throw out of the FFI call becomes a `Result` rather than taking the process down.
+  const openExternalGuarded = createGuardedOpenExternal(openExternalUrl)
 
   // ------------------------------------------------------------------
   // Session row / project path resolvers — feed the terminal cwd handler.
@@ -523,6 +538,7 @@ export const createGuiContext = (
     pickFolder,
     pickFiles,
     openExternalUrl,
+    openExternalGuarded,
     updater,
     terminalManager,
     terminalSocketUrl: terminalSocket.url,

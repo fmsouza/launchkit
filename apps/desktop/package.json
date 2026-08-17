@@ -30,6 +30,7 @@
     "@spectrum/logger": "workspace:*",
     "@spectrum/platform": "workspace:*",
     "@spectrum/proc": "workspace:*",
+    "@spectrum/provider-host": "workspace:*",
     "@spectrum/providers": "workspace:*",
     "@spectrum/proxy": "workspace:*",
     "@spectrum/pty": "workspace:*",

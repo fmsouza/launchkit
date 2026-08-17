@@ -58,6 +58,7 @@
         "@spectrum/platform": "workspace:*",
         "@spectrum/proc": "workspace:*",
         "@spectrum/projects": "workspace:*",
+        "@spectrum/provider-host": "workspace:*",
         "@spectrum/providers": "workspace:*",
         "@spectrum/proxy": "workspace:*",
         "@spectrum/pty": "workspace:*",
