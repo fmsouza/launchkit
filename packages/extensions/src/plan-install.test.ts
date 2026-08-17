@@ -142,6 +142,32 @@ describe("planInstall — git", () => {
     const r = planInstall({ ...base, source: "git@example.com:me/acme.git" })
     expect(r.ok).toBe(true)
   })
+
+  /** The scp form is the third way a password can ride in a source, and it is the worst one
+   * to miss: the url is persisted verbatim to `config.json`, crosses IPC in
+   * `ExtensionView.source.url`, and is printed by the CLI. */
+  it("refuses an scp-style url whose userinfo embeds a password", () => {
+    const r = planInstall({
+      ...base,
+      source: "git:hunter2@example.com:me/acme.git",
+    })
+    expect(r.ok).toBe(false)
+    if (!r.ok) {
+      expect(r.error.kind).toBe("invalid-manifest")
+      if (r.error.kind === "invalid-manifest")
+        expect(r.error.detail).not.toContain("hunter2")
+    }
+  })
+
+  it("refuses an scp-style url whose password itself contains an @", () => {
+    const r = planInstall({
+      ...base,
+      source: "git:p@ssw0rd@example.com:me/acme.git",
+    })
+    expect(r.ok).toBe(false)
+    if (!r.ok && r.error.kind === "invalid-manifest")
+      expect(r.error.detail).not.toContain("ssw0rd")
+  })
 })
 
 describe("planInstall — path", () => {

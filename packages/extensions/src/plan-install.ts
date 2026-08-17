@@ -62,6 +62,18 @@ const hasSshPasswordUserinfo = (source: string): boolean => {
 }
 
 /**
+ * The scp form (`user@host:path`) is the third place a password can hide, and the mirror of
+ * `hasSshPasswordUserinfo`: same rule (a `:` in the segment before the FIRST `@` is a
+ * password), same refusal. A bare `git@host:path` username is not a secret — SSH
+ * authenticates by key — so only the password case is refused.
+ */
+const hasScpPasswordUserinfo = (source: string): boolean => {
+  if (!SCP_STYLE.test(source)) return false
+  const atIndex = source.indexOf("@")
+  return source.slice(0, atIndex).includes(":")
+}
+
+/**
  * Splits a source's final path-like segment. For a `scheme://` url or an scp-style
  * `user@host:path`, the host is not a candidate segment — only what follows it is.
  */
@@ -223,6 +235,13 @@ export const planInstall = (
     return err({
       kind: "invalid-manifest",
       detail: `ssh url must not embed a password — config stores this url verbatim; use a bare ssh://user@host (key-based auth) instead: ${redactUrlCredentials(input.source)}`,
+    })
+  }
+
+  if (hasScpPasswordUserinfo(input.source)) {
+    return err({
+      kind: "invalid-manifest",
+      detail: `scp-style git source must not embed a password — config stores this url verbatim; use a bare user@host:path (key-based auth) instead: ${redactUrlCredentials(input.source)}`,
     })
   }
 
