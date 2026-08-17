@@ -140,6 +140,36 @@ describe("planInstall — path", () => {
     expect(r.ok).toBe(true)
     if (r.ok) expect(r.value.writeDir).toBe("C:\\data\\providers\\acme")
   })
+
+  it("rejects a link whose path differs from the plugin root only in case, on macos", () => {
+    const r = planInstall({
+      ...base,
+      source: "/data/Providers/acme",
+      platform: "macos",
+    })
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.error.kind).toBe("invalid-manifest")
+  })
+
+  it("rejects a link whose path differs from the plugin root only in case, on windows", () => {
+    const r = planInstall({
+      source: "C:\\Data\\Providers\\acme",
+      pluginRoot: "C:\\data\\providers",
+      existingIds: [],
+      platform: "windows",
+    })
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.error.kind).toBe("invalid-manifest")
+  })
+
+  it("accepts a link whose path differs from the plugin root only in case, on linux", () => {
+    const r = planInstall({
+      ...base,
+      source: "/data/Providers/acme",
+      platform: "linux",
+    })
+    expect(r.ok).toBe(true)
+  })
 })
 
 describe("planInstall — shared", () => {

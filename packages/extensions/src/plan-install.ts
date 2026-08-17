@@ -83,16 +83,25 @@ const isGitUrl = (source: string): boolean =>
 const stripTrailingSep = (p: string, sep: string): string =>
   p.endsWith(sep) ? p.slice(0, -sep.length) : p
 
+/**
+ * macOS (APFS default) and Windows (NTFS default) volumes are case-insensitive, so two paths
+ * differing only in case are the same directory there — fold case before comparing. Linux
+ * filesystems are case-sensitive, so such paths are genuinely distinct and must not be folded.
+ */
 const isContainedIn = (
   candidate: string,
   root: string,
   pathImpl: typeof path.win32,
+  platform: Platform,
 ): boolean => {
-  const normCandidate = stripTrailingSep(
-    pathImpl.normalize(candidate),
-    pathImpl.sep,
+  const fold = (s: string): string =>
+    platform === "linux" ? s : s.toLowerCase()
+  const normCandidate = fold(
+    stripTrailingSep(pathImpl.normalize(candidate), pathImpl.sep),
   )
-  const normRoot = stripTrailingSep(pathImpl.normalize(root), pathImpl.sep)
+  const normRoot = fold(
+    stripTrailingSep(pathImpl.normalize(root), pathImpl.sep),
+  )
   return (
     normCandidate === normRoot ||
     normCandidate.startsWith(normRoot + pathImpl.sep)
@@ -151,7 +160,10 @@ export const planInstall = (
       ? undefined
       : pathImpl.join(input.pluginRoot, String(id))
 
-    if (linked && isContainedIn(input.source, input.pluginRoot, pathImpl)) {
+    if (
+      linked &&
+      isContainedIn(input.source, input.pluginRoot, pathImpl, platform)
+    ) {
       return err({
         kind: "invalid-manifest",
         detail: `link source must not be inside the plugin root: ${input.source}`,
