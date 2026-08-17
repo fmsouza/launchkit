@@ -71,6 +71,40 @@ describe("waitForReady", () => {
     expect(attempts).toBe(4)
   })
 
+  it("keeps waiting when the probe answers ok with no token at all", async () => {
+    let attempts = 0
+    const ready = await waitForReady(
+      {
+        probe: async () => {
+          attempts += 1
+          return { ok: true, token: undefined }
+        },
+        sleep: async () => {},
+      },
+      { url: "u", expectedToken: "t1", timeoutMs: 500, now: ticking(200) },
+    )
+    expect(ready).toBe(false)
+    expect(attempts).toBeGreaterThan(1)
+  })
+
+  it("accepts the real plugin once it replaces a tokenless squatter's response", async () => {
+    let attempts = 0
+    const ready = await waitForReady(
+      {
+        probe: async () => {
+          attempts += 1
+          return attempts >= 3
+            ? { ok: true, token: "t1" }
+            : { ok: true, token: undefined }
+        },
+        sleep: async () => {},
+      },
+      { url: "u", expectedToken: "t1", timeoutMs: 10_000, now: ticking(100) },
+    )
+    expect(ready).toBe(true)
+    expect(attempts).toBe(3)
+  })
+
   it("returns false when the deadline passes before the probe succeeds", async () => {
     let attempts = 0
     const ready = await waitForReady(
