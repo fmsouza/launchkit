@@ -8,7 +8,10 @@ import {
 import { resolveAppPaths } from "@spectrum/platform"
 import { createFakeCommandResolver } from "@spectrum/proc"
 import { createProjectStore } from "@spectrum/projects"
-import { createInMemoryRuntimeState } from "@spectrum/proxy"
+import {
+  createInMemoryRuntimeState,
+  providerInstanceKey,
+} from "@spectrum/proxy"
 import type { HarnessId } from "@spectrum/types"
 import { err, ok } from "@spectrum/utils"
 import { createAppContext } from "./create-app-context"
@@ -124,6 +127,7 @@ const makeFakeDeps = (): {
         stop: async () => undefined,
         stopAllFor: async () => undefined,
         stopAll: async () => undefined,
+        retainOnly: async () => undefined,
       }
     }) as never,
     createLoopbackPortAllocator: record("createLoopbackPortAllocator") as never,
@@ -534,6 +538,7 @@ describe("createAppContext wiring", () => {
       stopAll: async () => {
         stopAllCalls += 1
       },
+      retainOnly: async () => undefined,
     })
 
     const ctx = createAppContext(deps)
@@ -1302,6 +1307,7 @@ describe("createAppContext resolveBaseUrl", () => {
       stop: async () => undefined,
       stopAllFor: async () => undefined,
       stopAll: async () => undefined,
+      retainOnly: async () => undefined,
     })) as never
 
     const ctx = createAppContext(deps)
@@ -1332,6 +1338,7 @@ describe("createAppContext resolveBaseUrl", () => {
       stop: async () => undefined,
       stopAllFor: async () => undefined,
       stopAll: async () => undefined,
+      retainOnly: async () => undefined,
     })) as never
 
     const ctx = createAppContext(deps)
@@ -1357,6 +1364,7 @@ describe("createAppContext resolveBaseUrl", () => {
       stop: async () => undefined,
       stopAllFor: async () => undefined,
       stopAll: async () => undefined,
+      retainOnly: async () => undefined,
     })) as never
 
     const ctx = createAppContext(deps)
@@ -1424,6 +1432,7 @@ describe("createAppContext resolveBaseUrl", () => {
       stop: async () => undefined,
       stopAllFor: async () => undefined,
       stopAll: async () => undefined,
+      retainOnly: async () => undefined,
     })) as never
 
     const ctx = createAppContext(deps)
@@ -1460,6 +1469,7 @@ describe("createAppContext resolveBaseUrl", () => {
       stop: async () => undefined,
       stopAllFor: async () => undefined,
       stopAll: async () => undefined,
+      retainOnly: async () => undefined,
     })) as never
 
     const ctx = createAppContext(deps)
@@ -1550,6 +1560,7 @@ describe("createAppContext resolveBaseUrl", () => {
       stop: async () => undefined,
       stopAllFor: async () => undefined,
       stopAll: async () => undefined,
+      retainOnly: async () => undefined,
     })) as never
 
     const ctx = createAppContext(deps)
@@ -1565,5 +1576,140 @@ describe("createAppContext resolveBaseUrl", () => {
     })
 
     expect(r.ok && r.value).toBe("http://127.0.0.1:45003")
+  })
+})
+
+/**
+ * A supervised child is keyed by the provider's CONFIGURATION, so every config edit mints a new
+ * key. Nothing retired the old one, so the previous child stayed `running` forever with the old
+ * secrets in its environment. Retention is asserted here, at the composition root, because that
+ * is the only layer that knows which keys are still backed by a configured provider.
+ */
+describe("createAppContext supervised instance retention", () => {
+  const PLUGIN_KEY = "plugin:acme"
+
+  /** A LoadedExtension whose one contribution declares a launch block. */
+  const supervisedExtension = (id: string): unknown => ({
+    manifest: {
+      id,
+      contributes: {
+        providers: [
+          {
+            id,
+            transport: {
+              kind: "http",
+              wire: "openai",
+              launch: { command: "srv", args: [], envTemplate: {} },
+            },
+          },
+        ],
+      },
+    },
+    ignoredContributions: [],
+    dir: `/plugins/${id}`,
+  })
+
+  const configWith = (providerConfig: Record<string, string>): unknown => ({
+    ...defaultConfig(),
+    providerPlugins: [{ id: "acme", source: { kind: "local" }, enabled: true }],
+    providers: [
+      {
+        id: "p_acme",
+        name: "Acme",
+        sdkProvider: PLUGIN_KEY,
+        models: ["m"],
+        config: providerConfig,
+        secrets: { apiKey: { ref: "kc_1" } },
+      },
+    ],
+  })
+
+  const keyFor = (providerConfig: Record<string, string>): string =>
+    providerInstanceKey({
+      sdkProvider: PLUGIN_KEY,
+      config: providerConfig,
+      secretRefs: { apiKey: { ref: "kc_1" } },
+    })
+
+  /** Wires a config store over a mutable cell and a provider host that records retention. */
+  const wire = (
+    deps: CreateAppContextDeps,
+    initial: Record<string, string>,
+  ): { retained: Array<readonly string[]> } => {
+    let current = configWith(initial)
+    ;(deps as { createCachedConfigStore: unknown }).createCachedConfigStore =
+      (() => ({
+        load: async () => ok(current),
+        save: async (next: unknown) => {
+          current = next
+          return ok(undefined)
+        },
+      })) as never
+    ;(deps as { createExtensionRegistry: unknown }).createExtensionRegistry =
+      (() => ({
+        list: async () => ok([supervisedExtension("acme")]),
+        providerDescriptors: async () => ok([]),
+      })) as never
+    const retained: Array<readonly string[]> = []
+    ;(deps as { createProviderHost: unknown }).createProviderHost = (() => ({
+      ensureRunning: async () => err({ kind: "not-found", id: "acme" }),
+      status: () => "stopped",
+      stop: async () => undefined,
+      stopAllFor: async () => undefined,
+      stopAll: async () => undefined,
+      retainOnly: async (keys: ReadonlySet<string>) => {
+        retained.push([...keys])
+      },
+    })) as never
+    return { retained }
+  }
+
+  it("retains exactly the instance key of the configured supervised provider on refresh", async () => {
+    const { deps } = makeFakeDeps()
+    const { retained } = wire(deps, { region: "eu" })
+
+    const ctx = createAppContext(deps)
+    await ctx.refreshExtensions()
+
+    expect(retained.at(-1)).toEqual([keyFor({ region: "eu" })])
+  })
+
+  it("retires the previous child's instance key when the provider's config changes", async () => {
+    const { deps } = makeFakeDeps()
+    const { retained } = wire(deps, { region: "eu" })
+
+    const ctx = createAppContext(deps)
+    await ctx.refreshExtensions()
+    const before = keyFor({ region: "eu" })
+    expect(retained.at(-1)).toEqual([before])
+
+    const saved = await ctx.config.save(configWith({ region: "us" }) as never)
+    expect(saved.ok).toBe(true)
+
+    const after = keyFor({ region: "us" })
+    expect(after).not.toBe(before)
+    // The retired key is absent from the retention set, so its child is stopped rather than
+    // left running with the old secrets.
+    expect(retained.at(-1)).toEqual([after])
+  })
+
+  it("retires a supervised child whose extension a refresh dropped", async () => {
+    const { deps } = makeFakeDeps()
+    const { retained } = wire(deps, { region: "eu" })
+    let installed: readonly unknown[] = [supervisedExtension("acme")]
+    ;(deps as { createExtensionRegistry: unknown }).createExtensionRegistry =
+      (() => ({
+        list: async () => ok(installed),
+        providerDescriptors: async () => ok([]),
+      })) as never
+
+    const ctx = createAppContext(deps)
+    await ctx.refreshExtensions()
+    expect(retained.at(-1)).toEqual([keyFor({ region: "eu" })])
+
+    installed = []
+    await ctx.refreshExtensions()
+
+    expect(retained.at(-1)).toEqual([])
   })
 })

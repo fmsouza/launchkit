@@ -47,6 +47,16 @@ export interface ProviderHost {
   stop(instanceKey: string): Promise<void>
   stopAllFor(providerId: string): Promise<void>
   stopAll(): Promise<void>
+  /**
+   * Stop and forget every instance whose key is not in `instanceKeys`.
+   *
+   * The composition root calls this whenever the live config changes and on every extension
+   * refresh. Without it the host retains a child per historical provider CONFIGURATION: an
+   * instance key is derived from the provider's config and secret refs, so editing one field
+   * spawns a new child while the previous one stays `running` forever, still holding the old
+   * secrets in its environment.
+   */
+  retainOnly(instanceKeys: ReadonlySet<string>): Promise<void>
 }
 
 export type ProviderHostDeps = {
@@ -461,6 +471,24 @@ export const createProviderHost = (deps: ProviderHostDeps): ProviderHost => {
     },
     stopAll: async (): Promise<void> => {
       for (const key of instances.keys()) await stop(key)
+    },
+    retainOnly: async (instanceKeys: ReadonlySet<string>): Promise<void> => {
+      // Snapshot the keys first: `stop` awaits, and the map is mutated below.
+      for (const key of [...instances.keys()]) {
+        if (instanceKeys.has(key)) continue
+        const providerId = instances.get(key)?.providerId
+        await stop(key)
+        // Forget it as well as stopping it. `stop` leaves a `stopped` record behind, which is
+        // right for a key that may be asked for again; a retired configuration never will be,
+        // so keeping it would trade a process leak for a map leak. Any start still in flight
+        // was cancelled by `stop`'s generation bump and commits to an orphaned record.
+        instances.delete(key)
+        if (providerId !== undefined) {
+          const keys = byProvider.get(providerId)
+          keys?.delete(key)
+          if (keys?.size === 0) byProvider.delete(providerId)
+        }
+      }
     },
   }
 }

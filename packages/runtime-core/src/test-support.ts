@@ -226,6 +226,7 @@ export const buildFakeAppContextDeps = (
           stop: async () => undefined,
           stopAllFor: async () => undefined,
           stopAll: async () => undefined,
+          retainOnly: async () => undefined,
         }
       }) as never),
     createLoopbackPortAllocator:

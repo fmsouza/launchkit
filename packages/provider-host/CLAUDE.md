@@ -26,7 +26,8 @@ and stopping it on demand.
 - `createProviderHost(deps: { registry, resolver, spawner, allocator, probe, sleep, now,
   tokenGen, logger?, maxRestarts? }): ProviderHost` with
   `ensureRunning({ instanceKey, providerId, secrets })`, `status(instanceKey)`,
-  `stop(instanceKey)`, `stopAllFor(providerId)`, `stopAll()`
+  `stop(instanceKey)`, `stopAllFor(providerId)`, `stopAll()`,
+  `retainOnly(instanceKeys)` — stop and FORGET every instance the set does not name
 - `PluginStatus = "stopped" | "starting" | "running" | "failed"`,
   `RunningPlugin = { baseUrl; pid; hostToken }`, `EnsureRunningInput`
 
@@ -48,6 +49,12 @@ and stopping it on demand.
   await — two racing `ensureRunning` calls spawn once. `ensureRunning` is idempotent and
   cheap once running; the proxy calls it per request, and that is how a restarted plugin's
   new port reaches the provider factory.
+- Nothing here expires an instance on its own, so the composition root MUST sweep with
+  `retainOnly` whenever the live config changes and on every extension refresh. The instance key
+  is derived from the provider's config and secret refs, so editing one GUI field mints a new key
+  and spawns a second child while the first stays `running` forever with the superseded secrets
+  in its environment. `retainOnly` also DELETES the record, not just the process: a retired
+  configuration is never asked for again, so keeping it would trade a process leak for a map leak.
 - A restart mints a NEW port and a NEW host token — never reuses the dead instance's.
 - Every start carries the `generation` it was issued under; `stop` and each new start bump it.
   A start whose generation went stale kills whatever it spawned and commits NOTHING. Without

@@ -452,6 +452,32 @@ describe("createProviderHost", () => {
     expect(h.status("k2")).toBe("stopped")
   })
 
+  it("stops the instances retainOnly no longer names and keeps the rest", async () => {
+    // THE LEAK: the instance key is derived from the provider's config and secret refs, so
+    // editing any field in the GUI produces a NEW key. The old child kept running forever with
+    // the OLD secrets in its environment, because nothing ever retired a key.
+    const { host: h, spawner } = host()
+    await h.ensureRunning(run("acme", "k-old", "sk-old"))
+    await h.ensureRunning(run("acme", "k-new", "sk-new"))
+    expect(spawner.calls).toHaveLength(2)
+
+    await h.retainOnly(new Set(["k-new"]))
+
+    expect(spawner.kills).toEqual([100])
+    expect(h.status("k-old")).toBe("stopped")
+    expect(h.status("k-new")).toBe("running")
+  })
+
+  it("forgets a retired instance so its key does not accumulate", async () => {
+    const { host: h, spawner } = host()
+    await h.ensureRunning(run("acme", "k-old"))
+    await h.retainOnly(new Set<string>())
+    // Retired, then reconfigured back: a fresh instance, not a resurrected stopped one.
+    await h.ensureRunning(run("acme", "k-old"))
+    expect(h.status("k-old")).toBe("running")
+    expect(spawner.calls).toHaveLength(2)
+  })
+
   it("reports stopped for an instance key that was never started", () => {
     const { host: h } = host()
     expect(h.status("never")).toBe("stopped")

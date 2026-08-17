@@ -351,7 +351,13 @@ export const createAppContext = (
     },
     save: async (next) => {
       const saved = await baseConfig.save(next)
-      if (saved.ok) liveConfig = next
+      if (saved.ok) {
+        liveConfig = next
+        // Every provider edit changes that provider's instance key, so the child serving the
+        // PREVIOUS configuration is now unreachable and must be stopped rather than left
+        // running with the superseded secrets.
+        await retainConfiguredInstances(next)
+      }
       return saved
     },
   }
@@ -590,6 +596,10 @@ export const createAppContext = (
       supervisedIds = nextSupervised
       providerRegistryCell = nextProviders
       haveGoodExtensionState = true
+
+      // AFTER the swap, so retention is judged against the view that is now live: a plugin this
+      // refresh dropped or disabled is no longer supervised, so its child is retired here.
+      await retainConfiguredInstances(cfg)
     } catch (cause) {
       // Defensive: every adapter above returns a Result, so this is unreachable by design.
       // It exists so an unexpected throw degrades gracefully instead of rejecting
@@ -629,6 +639,35 @@ export const createAppContext = (
     tokenGen: deps.createCryptoTokenGen(),
     logger: log.child("provider-host"),
   })
+
+  /**
+   * Retire every supervised child that no longer belongs to a configured, supervised provider.
+   *
+   * A child is keyed by the provider's CONFIGURATION (`providerInstanceKey` — the SAME
+   * derivation the proxy factory caches on, deliberately not a second copy of the formula), so
+   * editing any field in the GUI mints a new key and spawns a new child. Without this sweep the
+   * previous child stays `running` for the life of the app, still holding the old secrets in its
+   * environment. The same sweep retires a plugin an extension refresh dropped or disabled.
+   */
+  const retainConfiguredInstances = async (
+    cfg: import("@spectrum/config").Config,
+  ): Promise<void> => {
+    const keys = new Set(
+      cfg.providers
+        .filter((p) => {
+          const id = pluginIdOf(p.sdkProvider)
+          return id !== undefined && supervisedIds.has(id)
+        })
+        .map((p) =>
+          providerInstanceKey({
+            sdkProvider: p.sdkProvider,
+            config: p.config,
+            secretRefs: p.secrets,
+          }),
+        ),
+    )
+    await providerHost.retainOnly(keys)
+  }
 
   /**
    * Base-url resolution for the proxy factory. A supervised contribution resolves to its live
