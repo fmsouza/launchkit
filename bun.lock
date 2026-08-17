@@ -248,6 +248,18 @@
         "drizzle-orm": "catalog:",
       },
     },
+    "packages/provider-host": {
+      "name": "@spectrum/provider-host",
+      "version": "1.9.0",
+      "dependencies": {
+        "@spectrum/extensions": "workspace:*",
+        "@spectrum/logger": "workspace:*",
+        "@spectrum/platform": "workspace:*",
+        "@spectrum/proc": "workspace:*",
+        "@spectrum/types": "workspace:*",
+        "@spectrum/utils": "workspace:*",
+      },
+    },
     "packages/providers": {
       "name": "@spectrum/providers",
       "version": "1.9.0",
@@ -609,6 +621,8 @@
     "@spectrum/proc": ["@spectrum/proc@workspace:packages/proc"],
 
     "@spectrum/projects": ["@spectrum/projects@workspace:packages/projects"],
+
+    "@spectrum/provider-host": ["@spectrum/provider-host@workspace:packages/provider-host"],
 
     "@spectrum/providers": ["@spectrum/providers@workspace:packages/providers"],
 
