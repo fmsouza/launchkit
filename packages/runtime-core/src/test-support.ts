@@ -6,10 +6,15 @@ import {
   createCachedConfigStore,
   createFileConfigStore,
   createFsConfigFile,
+  defaultConfig,
 } from "@spectrum/config"
 import { createDataAdmin } from "@spectrum/data-admin"
 import { createSqliteClient, runMigrations } from "@spectrum/db"
 import { createAcpDriver } from "@spectrum/driver-acp"
+import {
+  createDirExtensionFileSource,
+  createExtensionRegistry,
+} from "@spectrum/extensions"
 import { createRegistry, launchHarness } from "@spectrum/harnesses"
 import { detectPlatform, resolveAppPaths } from "@spectrum/platform"
 import {
@@ -17,6 +22,12 @@ import {
   createPathCommandResolver,
 } from "@spectrum/proc"
 import { createProjectStore } from "@spectrum/projects"
+import {
+  createCryptoTokenGen,
+  createFetchHealthProbe,
+  createLoopbackPortAllocator,
+  createProviderHost,
+} from "@spectrum/provider-host"
 import { createProviderRegistry } from "@spectrum/providers"
 import {
   createFileRuntimeState,
@@ -32,7 +43,7 @@ import {
   createSecretStore,
 } from "@spectrum/secrets"
 import { createSessionStore } from "@spectrum/sessions"
-import { createCryptoIdGen, createSystemClock, ok } from "@spectrum/utils"
+import { createCryptoIdGen, createSystemClock, err, ok } from "@spectrum/utils"
 import type { CreateAppContextDeps } from "./deps"
 import { migrateProductionToCanary } from "./migrate-canary-data"
 import {
@@ -106,9 +117,17 @@ export const buildFakeAppContextDeps = (
     createFileConfigStore:
       overrides.createFileConfigStore ??
       (record("createFileConfigStore") as never),
+    // Shaped, not `record(...)`: the composition root loads config during its initial
+    // extension refresh, so the stub needs a real `load`/`save`.
     createCachedConfigStore:
       overrides.createCachedConfigStore ??
-      (record("createCachedConfigStore") as never),
+      (((...a: unknown[]) => {
+        calls.createCachedConfigStore = a
+        return {
+          load: async () => ok(defaultConfig()),
+          save: async () => ok(undefined),
+        }
+      }) as never),
     createPlatformKeychainBackend:
       overrides.createPlatformKeychainBackend ??
       (record("createPlatformKeychainBackend") as never),
@@ -170,6 +189,49 @@ export const buildFakeAppContextDeps = (
     createProviderRegistry:
       overrides.createProviderRegistry ??
       (record("createProviderRegistry") as never),
+    // Extension/plugin layer: SHAPED stubs, not `record(...)` — the composition root calls
+    // methods on the returned objects during its initial refresh, and `{ __stub }` has none.
+    createDirExtensionFileSource:
+      overrides.createDirExtensionFileSource ??
+      (((root: string, linkMap: Readonly<Record<string, string>>) => {
+        calls.createDirExtensionFileSource = [root, linkMap]
+        return {
+          listExtensions: async () => ok([]),
+          readExtension: async () => err({ kind: "not-found", id: "none" }),
+          removeExtension: async () => ok(undefined),
+          extensionDir: (id: string) => `/plugins/${id}`,
+        }
+      }) as never),
+    createExtensionRegistry:
+      overrides.createExtensionRegistry ??
+      (((...a: unknown[]) => {
+        calls.createExtensionRegistry = a
+        return {
+          list: async () => ok([]),
+          providerDescriptors: async () => ok([]),
+        }
+      }) as never),
+    createProviderHost:
+      overrides.createProviderHost ??
+      (((...a: unknown[]) => {
+        calls.createProviderHost = a
+        return {
+          ensureRunning: async () => err({ kind: "not-found", id: "none" }),
+          status: () => "stopped",
+          stop: async () => undefined,
+          stopAllFor: async () => undefined,
+          stopAll: async () => undefined,
+        }
+      }) as never),
+    createLoopbackPortAllocator:
+      overrides.createLoopbackPortAllocator ??
+      (record("createLoopbackPortAllocator") as never),
+    createFetchHealthProbe:
+      overrides.createFetchHealthProbe ??
+      (record("createFetchHealthProbe") as never),
+    createCryptoTokenGen:
+      overrides.createCryptoTokenGen ??
+      (record("createCryptoTokenGen") as never),
     createProviderFactory:
       overrides.createProviderFactory ??
       (record("createProviderFactory") as never),
@@ -223,6 +285,12 @@ export const realAdapterDefaults: Readonly<Record<string, unknown>> = {
   createBunProcessSpawner,
   launchHarness,
   createProviderRegistry,
+  createDirExtensionFileSource,
+  createExtensionRegistry,
+  createProviderHost,
+  createLoopbackPortAllocator,
+  createFetchHealthProbe,
+  createCryptoTokenGen,
   createProviderFactory,
   loadSdk,
   createRealGateway,

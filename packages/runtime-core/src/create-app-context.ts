@@ -11,6 +11,7 @@ import {
   type HarnessId,
   type ModelId,
   type SessionId,
+  pluginIdOf,
   wireModelFor,
 } from "@spectrum/types"
 
@@ -23,6 +24,7 @@ import type {
 import { demoScript } from "@spectrum/agent-driver"
 import { ThinkingEffortSchema } from "@spectrum/agent-events"
 import { defaultConfig } from "@spectrum/config"
+import type { ExtensionRegistry } from "@spectrum/extensions"
 import {
   type LaunchParams,
   builtinHarnesses,
@@ -45,17 +47,19 @@ import {
 } from "@spectrum/platform"
 import type { ProviderDescriptor, ProviderRegistry } from "@spectrum/providers"
 import {
+  type ResolveBaseUrl,
   createDraftProviderTester,
   createFetchHttpGet,
   createModelLister,
   createProviderTester,
   createRouter,
+  defaultResolveBaseUrl,
   encodeSessionProxyKey,
   isProxyRunning,
   resolveTimeouts,
   startProxy,
 } from "@spectrum/proxy"
-import { err, redactSecrets } from "@spectrum/utils"
+import { err, ok, redactSecrets } from "@spectrum/utils"
 import type { AppContext } from "./app-context"
 import { withDemoHarness } from "./demo-harness"
 import { type CreateAppContextDeps, realDeps } from "./deps"
@@ -459,18 +463,154 @@ export const createAppContext = (
   const resolveLaunchEnvOnly = (params: LaunchParams) =>
     resolveLaunchRaw(params)
 
-  // One registry for the process: builtins now, builtins ⊕ installed plugins in Plan 2. Built
-  // exactly once here and threaded into every consumer below (factory, model listers, the proxy's
-  // getDescriptor) — never re-derived.
-  const providerRegistry: ProviderRegistry = deps.createProviderRegistry()
+  // ---------------------------------------------------------------------------------------
+  // Provider registry ⊕ installed extensions.
+  //
+  // `createAppContext` is synchronous but reading extensions from disk is not, so the
+  // plugin-derived state lives in mutable cells that `refreshExtensions` swaps. Every consumer
+  // is handed a STABLE façade that delegates to the current cell — handing out the cell's value
+  // itself would go stale on the first swap.
+  // ---------------------------------------------------------------------------------------
+  const extensionsLog = log.child("extensions")
+
+  let providerRegistryCell: ProviderRegistry = deps.createProviderRegistry()
+  let extensionRegistryCell = deps.createExtensionRegistry({
+    fileSource: deps.createDirExtensionFileSource(paths.providerPluginDir, {}),
+    logger: extensionsLog,
+  })
+  /** Contribution ids whose transport declares a `launch` block — the ones Spectrum supervises. */
+  let supervisedIds: ReadonlySet<string> = new Set<string>()
+
+  const providerRegistry: ProviderRegistry = {
+    get: (key) => providerRegistryCell.get(key),
+    list: () => providerRegistryCell.list(),
+    catalog: () => providerRegistryCell.catalog(),
+  }
+  const extensionRegistry: ExtensionRegistry = {
+    list: () => extensionRegistryCell.list(),
+    providerDescriptors: (enabledIds) =>
+      extensionRegistryCell.providerDescriptors(enabledIds),
+  }
   const getDescriptor = (key: string): ProviderDescriptor | undefined =>
     providerRegistry.get(key)
+
+  /**
+   * Re-read the installed extensions and rebuild everything derived from them. A failure is
+   * logged (`{ kind }` only) and swallowed: a broken plugin manifest must never stop the app
+   * from starting, so the process continues on builtins only.
+   */
+  const refreshExtensions = async (): Promise<void> => {
+    try {
+      const loaded = await config.load()
+      const cfg = loaded.ok ? loaded.value : (liveConfig ?? defaultConfig())
+      // Only a LINKED path install is read live from its source dir; every other install mode
+      // lives under the plugin root and needs no link entry.
+      const linkMap: Record<string, string> = Object.fromEntries(
+        cfg.providerPlugins.flatMap((p) =>
+          p.source.kind === "path" && p.source.linked
+            ? [[String(p.id), p.source.path] as const]
+            : [],
+        ),
+      )
+      const next = deps.createExtensionRegistry({
+        fileSource: deps.createDirExtensionFileSource(
+          paths.providerPluginDir,
+          linkMap,
+        ),
+        logger: extensionsLog,
+      })
+      extensionRegistryCell = next
+
+      const listed = await next.list()
+      if (!listed.ok) {
+        extensionsLog.error("extension load failed", {
+          kind: listed.error.kind,
+        })
+        supervisedIds = new Set<string>()
+        providerRegistryCell = deps.createProviderRegistry()
+        return
+      }
+      supervisedIds = new Set<string>(
+        listed.value.flatMap((e) =>
+          e.manifest.contributes.providers
+            .filter((p) => p.transport.launch !== undefined)
+            .map((p) => String(p.id)),
+        ),
+      )
+
+      const enabledIds = cfg.providerPlugins
+        .filter((p) => p.enabled)
+        .map((p) => String(p.id))
+      const descriptors = await next.providerDescriptors(enabledIds)
+      if (!descriptors.ok) {
+        extensionsLog.error("extension descriptors unavailable", {
+          kind: descriptors.error.kind,
+        })
+        providerRegistryCell = deps.createProviderRegistry()
+        return
+      }
+      providerRegistryCell = deps.createProviderRegistry(descriptors.value)
+    } catch (cause) {
+      // Defensive: every adapter below returns a Result, so this is unreachable by design.
+      // It exists so an unexpected throw degrades to "builtins only" instead of rejecting
+      // `extensionsReady` — which the proxy's routing path awaits on every request.
+      extensionsLog.error("extension refresh failed", {
+        kind: cause instanceof Error ? cause.name : "unknown",
+      })
+    }
+  }
+
+  /** The initial load, started at construction and awaited by the routing path below. */
+  const extensionsReady: Promise<void> = refreshExtensions()
+
+  const providerHost = deps.createProviderHost({
+    registry: extensionRegistry,
+    resolver,
+    spawner: deps.createBunProcessSpawner(),
+    allocator: deps.createLoopbackPortAllocator(),
+    probe: deps.createFetchHealthProbe(),
+    sleep: (ms: number) => new Promise((resolve) => setTimeout(resolve, ms)),
+    now: () => Date.now(),
+    tokenGen: deps.createCryptoTokenGen(),
+    logger: log.child("provider-host"),
+  })
+
+  /**
+   * Base-url resolution for the proxy factory. A supervised contribution resolves to its live
+   * loopback port (starting the process if needed); everything else — builtins AND user-run
+   * plugin servers with no `launch` block — falls through to the ordinary `serverUrl` path.
+   */
+  const resolveBaseUrl: ResolveBaseUrl = async (input) => {
+    // Close the startup race: `supervisedIds` is empty until the first refresh resolves.
+    await extensionsReady
+    const id = pluginIdOf(String(input.descriptor.key))
+    if (id === undefined || !supervisedIds.has(id))
+      return defaultResolveBaseUrl(input)
+    // Draft probe: refusing beats spawning a throwaway child process per keystroke.
+    if (input.instanceKey === undefined)
+      return err({
+        kind: "bad-request",
+        detail: "save the provider before testing a supervised extension",
+      })
+    const running = await providerHost.ensureRunning({
+      instanceKey: input.instanceKey,
+      providerId: id,
+      secrets: input.secrets,
+    })
+    if (!running.ok)
+      return err({
+        kind: "provider-failed",
+        detail: `extension ${id} not running`,
+      })
+    return ok(running.value.baseUrl)
+  }
 
   // proxy provider layer: factory (secrets + lazy SDK loader) + real streamText gateway
   const factory = deps.createProviderFactory({
     secretStore: secrets,
     loadSdk: deps.loadSdk,
     getDescriptor,
+    resolveBaseUrl,
   })
   const gateway = deps.createRealGateway({
     getTimeouts: (ctx) => {
@@ -738,6 +878,9 @@ export const createAppContext = (
     factory,
     gateway,
     providerRegistry,
+    extensionRegistry,
+    providerHost,
+    refreshExtensions,
     runtime,
     testProvider: createTestProvider(config, factory, gateway, () =>
       deps.createSystemClock(),
@@ -774,6 +917,11 @@ export const createAppContext = (
     // fake clock in tests instead of constructing `{ now: () => new Date() }` inline.
     closeDb: (): void => {
       dbClient.connection.close()
+    },
+    // Process exit: stop every supervised plugin child process. Deliberately NOT folded into
+    // `closeDb`, which is the narrow GUI factory-reset hook.
+    shutdown: async (): Promise<void> => {
+      await providerHost.stopAll()
     },
     clock: deps.createSystemClock(),
   }

@@ -7,6 +7,7 @@ import type {
 import type { StoredEvent } from "@spectrum/agent-events"
 import type { Config, ConfigStore } from "@spectrum/config"
 import type { DataAdmin } from "@spectrum/data-admin"
+import type { ExtensionRegistry } from "@spectrum/extensions"
 import type {
   HarnessError,
   HarnessRegistry,
@@ -15,6 +16,7 @@ import type {
 } from "@spectrum/harnesses"
 import type { Logger } from "@spectrum/logger"
 import type { ProjectStore } from "@spectrum/projects"
+import type { ProviderHost } from "@spectrum/provider-host"
 import type { ProviderRegistry } from "@spectrum/providers"
 import type {
   LanguageModelGateway,
@@ -94,6 +96,28 @@ export interface AppContext {
    * (config-form validation, catalog listing).
    */
   readonly providerRegistry: ProviderRegistry
+  /**
+   * The installed provider-plugin (extension) set. A STABLE façade: `refreshExtensions` swaps the
+   * registry the composition root reads from, and this object keeps delegating to whatever the
+   * current one is.
+   */
+  readonly extensionRegistry: ExtensionRegistry
+  /**
+   * Supervises plugin-contributed provider servers as local child processes. The proxy's base-url
+   * resolver consults it per request; install/uninstall flows stop instances through it.
+   */
+  readonly providerHost: ProviderHost
+  /**
+   * Re-read the installed extensions: rebuilds the link map from config, the file source, the
+   * extension registry, the supervised-contribution set, and the provider registry. Never
+   * rejects — a failed load is logged and leaves the context on builtins only.
+   */
+  readonly refreshExtensions: () => Promise<void>
+  /**
+   * Release process-level resources on app exit — today, stop every supervised plugin process.
+   * Distinct from `closeDb`, which is the narrow GUI factory-reset hook.
+   */
+  readonly shutdown: () => Promise<void>
   /**
    * Persists the GUI proxy's per-run key so the CLI `launch` can reuse it (avoiding a
    * mismatched key the running proxy would reject). Holds only the per-run token — never a secret.

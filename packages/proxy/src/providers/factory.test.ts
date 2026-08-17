@@ -6,8 +6,9 @@ import {
   createSecretStore,
 } from "@spectrum/secrets"
 import type { Provider, ProviderKey } from "@spectrum/types"
-import { createSequentialIdGen } from "@spectrum/utils"
+import { createSequentialIdGen, err, ok } from "@spectrum/utils"
 import { createProviderFactory } from "./factory"
+import { defaultResolveBaseUrl } from "./resolve-base-url"
 
 // Real (builtins-only) registry shared by every test below — descriptor injection is the point
 // of this task, so tests exercise it through a real registry rather than duplicating the catalog.
@@ -41,6 +42,7 @@ describe("createProviderFactory", () => {
       secretStore: store,
       loadSdk,
       getDescriptor: registry.get,
+      resolveBaseUrl: defaultResolveBaseUrl,
     })
     const r = await factory.getModel(
       makeProvider({ secrets: { apiKey: ref } }),
@@ -63,6 +65,7 @@ describe("createProviderFactory", () => {
       secretStore: store,
       loadSdk,
       getDescriptor: registry.get,
+      resolveBaseUrl: defaultResolveBaseUrl,
     })
     const p = makeProvider()
     await factory.getModel(p, "m")
@@ -79,6 +82,7 @@ describe("createProviderFactory", () => {
         throw new Error("no module")
       },
       getDescriptor: registry.get,
+      resolveBaseUrl: defaultResolveBaseUrl,
     })
     const r = await factory.getModel(
       makeProvider({ sdkProvider: "cohere" }),
@@ -104,6 +108,7 @@ describe("createProviderFactory", () => {
       secretStore,
       loadSdk,
       getDescriptor: registry.get,
+      resolveBaseUrl: defaultResolveBaseUrl,
     })
     const provider: Provider = {
       id: "p_1" as Provider["id"],
@@ -119,6 +124,86 @@ describe("createProviderFactory", () => {
       baseURL: "https://ollama.com/api",
       headers: { Authorization: "Bearer cloud-key" },
     })
+  })
+})
+
+describe("createProviderFactory resolveBaseUrl seam", () => {
+  it("passes the resolved base url to the SDK when resolveBaseUrl supplies one", async () => {
+    const captured: Record<string, unknown>[] = []
+    const loadSdk = mock(async (_d: ProviderDescriptor) => ({
+      create: (cfg: Record<string, unknown>) => {
+        captured.push(cfg)
+        return (id: string) => ({ id })
+      },
+    }))
+    const factory = createProviderFactory({
+      secretStore: createSecretStore({
+        backend: createInMemoryKeychainBackend(),
+        idGen: createSequentialIdGen(),
+      }),
+      loadSdk,
+      getDescriptor: registry.get,
+      resolveBaseUrl: async () => ok("http://127.0.0.1:41111"),
+    })
+
+    const r = await factory.getModel(makeProvider(), "gpt-4o")
+
+    expect(r.ok).toBe(true)
+    expect(captured[0]?.baseURL).toBe("http://127.0.0.1:41111")
+  })
+
+  it("fails the model build when resolveBaseUrl fails", async () => {
+    const loadSdk = mock(async (_d: ProviderDescriptor) => ({
+      create: () => ({}),
+    }))
+    const factory = createProviderFactory({
+      secretStore: createSecretStore({
+        backend: createInMemoryKeychainBackend(),
+        idGen: createSequentialIdGen(),
+      }),
+      loadSdk,
+      getDescriptor: registry.get,
+      resolveBaseUrl: async () =>
+        err({ kind: "provider-failed", detail: "extension acme not running" }),
+    })
+
+    const r = await factory.getModel(makeProvider(), "gpt-4o")
+
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.error.kind).toBe("provider-failed")
+    expect(loadSdk).not.toHaveBeenCalled()
+  })
+
+  it("does not reuse a cached instance when the resolved base url changes", async () => {
+    // Spec §8.3: a supervised plugin that restarts comes back on a NEW port. The resolved base
+    // url is part of the cache key, so the second call must build a fresh SDK instance pointed
+    // at the new port rather than serving the cached one bound to the dead one.
+    const captured: Record<string, unknown>[] = []
+    const loadSdk = mock(async (_d: ProviderDescriptor) => ({
+      create: (cfg: Record<string, unknown>) => {
+        captured.push(cfg)
+        return (id: string) => ({ id })
+      },
+    }))
+    const urls = ["http://127.0.0.1:41111", "http://127.0.0.1:41222"]
+    let call = 0
+    const factory = createProviderFactory({
+      secretStore: createSecretStore({
+        backend: createInMemoryKeychainBackend(),
+        idGen: createSequentialIdGen(),
+      }),
+      loadSdk,
+      getDescriptor: registry.get,
+      resolveBaseUrl: async () => ok(urls[call++]),
+    })
+
+    const p = makeProvider()
+    const first = await factory.getModel(p, "m")
+    const second = await factory.getModel(p, "m")
+
+    expect(first.ok && second.ok).toBe(true)
+    expect(loadSdk).toHaveBeenCalledTimes(2)
+    expect(captured.map((c) => c.baseURL)).toEqual(urls)
   })
 })
 
@@ -144,6 +229,7 @@ describe("createProviderFactory.getModelFromResolved", () => {
       secretStore,
       loadSdk,
       getDescriptor: registry.get,
+      resolveBaseUrl: defaultResolveBaseUrl,
     })
 
     const r = await factory.getModelFromResolved({
@@ -171,6 +257,7 @@ describe("createProviderFactory.getModelFromResolved", () => {
       secretStore: store,
       loadSdk,
       getDescriptor: registry.get,
+      resolveBaseUrl: defaultResolveBaseUrl,
     })
     const pluginProvider = makeProvider({
       sdkProvider: "plugin:my-provider" as ProviderKey,
@@ -192,6 +279,7 @@ describe("createProviderFactory.getModelFromResolved", () => {
       secretStore: store,
       loadSdk,
       getDescriptor: () => undefined,
+      resolveBaseUrl: defaultResolveBaseUrl,
     })
     const r = await factory.getModelFromResolved({
       sdkProvider: "plugin:gone",

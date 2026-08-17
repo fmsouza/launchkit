@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test"
+import { defaultConfig } from "@spectrum/config"
 import {
   claude,
   createInMemoryHarnessFileSource,
@@ -38,7 +39,15 @@ const makeFakeDeps = (): {
     migrateProductionToCanary: record("migrateProductionToCanary") as never,
     createFsConfigFile: record("createFsConfigFile") as never,
     createFileConfigStore: record("createFileConfigStore") as never,
-    createCachedConfigStore: record("createCachedConfigStore") as never,
+    // Shaped, not `record(...)`: the composition root loads config during its initial
+    // extension refresh, so the stub needs a real `load`/`save`.
+    createCachedConfigStore: ((..._a: unknown[]) => {
+      calls.createCachedConfigStore = _a
+      return {
+        load: async () => ok(defaultConfig()),
+        save: async () => ok(undefined),
+      }
+    }) as never,
     createPlatformKeychainBackend: record(
       "createPlatformKeychainBackend",
     ) as never,
@@ -85,6 +94,40 @@ const makeFakeDeps = (): {
         catalog: () => [],
       }
     }) as never,
+    // Extension layer: shaped stubs — the composition root calls methods on these during its
+    // initial refresh, so `record(...)`'s `{ __stub }` would not do.
+    createDirExtensionFileSource: ((
+      root: string,
+      linkMap: Readonly<Record<string, string>>,
+    ) => {
+      calls.createDirExtensionFileSource = [root, linkMap]
+      return {
+        listExtensions: async () => ok([]),
+        readExtension: async () => err({ kind: "not-found", id: "none" }),
+        removeExtension: async () => ok(undefined),
+        extensionDir: (id: string) => `/plugins/${id}`,
+      }
+    }) as never,
+    createExtensionRegistry: ((..._a: unknown[]) => {
+      calls.createExtensionRegistry = _a
+      return {
+        list: async () => ok([]),
+        providerDescriptors: async () => ok([]),
+      }
+    }) as never,
+    createProviderHost: ((..._a: unknown[]) => {
+      calls.createProviderHost = _a
+      return {
+        ensureRunning: async () => err({ kind: "not-found", id: "none" }),
+        status: () => "stopped",
+        stop: async () => undefined,
+        stopAllFor: async () => undefined,
+        stopAll: async () => undefined,
+      }
+    }) as never,
+    createLoopbackPortAllocator: record("createLoopbackPortAllocator") as never,
+    createFetchHealthProbe: record("createFetchHealthProbe") as never,
+    createCryptoTokenGen: record("createCryptoTokenGen") as never,
     createProviderFactory: record("createProviderFactory") as never,
     loadSdk: (async () => ({ create: () => ({}) })) as never,
     createRealGateway: record("createRealGateway") as never,
@@ -125,6 +168,7 @@ describe("createAppContext listProviderModels wiring", () => {
         load: async () =>
           ok({
             version: 2,
+            providerPlugins: [],
             providers: [],
             models: [],
             settings: { proxyPort: 4000, proxyHost: "127.0.0.1" },
@@ -145,6 +189,7 @@ describe("createAppContext listProviderModels wiring", () => {
         load: async () =>
           ok({
             version: 2,
+            providerPlugins: [],
             providers: [
               {
                 id: "p_groq",
@@ -193,6 +238,7 @@ describe("createAppContext listProviderModels wiring", () => {
         load: async () =>
           ok({
             version: 2,
+            providerPlugins: [],
             providers: [
               {
                 id: "p_groq",
@@ -229,6 +275,7 @@ describe("createAppContext listProviderModels wiring", () => {
         load: async () =>
           ok({
             version: 2,
+            providerPlugins: [],
             providers: [
               {
                 id: "p_plugin",
@@ -435,6 +482,75 @@ describe("createAppContext wiring", () => {
     expect(typeof ctx.providerRegistry.get).toBe("function")
     expect(typeof ctx.providerRegistry.list).toBe("function")
     expect(typeof ctx.providerRegistry.catalog).toBe("function")
+  })
+
+  it("keeps resolving through the current registry after refreshExtensions swaps it", async () => {
+    // The exposed `providerRegistry` must be a façade over the mutable cell: handing out the
+    // cell's VALUE would pin consumers to the builtins-only registry built at construction and
+    // silently drop every plugin descriptor a later refresh installs.
+    const { deps } = makeFakeDeps()
+    const built: string[] = []
+    ;(deps as { createProviderRegistry: unknown }).createProviderRegistry =
+      () => {
+        const tag = `r${built.length + 1}`
+        built.push(tag)
+        return { get: () => ({ key: tag }), list: () => [], catalog: () => [] }
+      }
+    ;(deps as { createCachedConfigStore: unknown }).createCachedConfigStore =
+      () => ({
+        load: async () => ok(defaultConfig()),
+        save: async () => ok(undefined),
+      })
+
+    const ctx = createAppContext(deps)
+    await ctx.refreshExtensions()
+
+    const latest = built[built.length - 1] ?? ""
+    expect(built.length).toBeGreaterThan(1)
+    expect((ctx.providerRegistry.get("openai") as { key: string }).key).toBe(
+      latest,
+    )
+  })
+
+  it("stops every supervised plugin process when shutdown is called", async () => {
+    const { deps } = makeFakeDeps()
+    let stopAllCalls = 0
+    ;(deps as { createProviderHost: unknown }).createProviderHost = () => ({
+      ensureRunning: async () => err({ kind: "not-found", id: "none" }),
+      status: () => "stopped",
+      stop: async () => undefined,
+      stopAllFor: async () => undefined,
+      stopAll: async () => {
+        stopAllCalls += 1
+      },
+    })
+
+    const ctx = createAppContext(deps)
+    await ctx.shutdown()
+
+    expect(stopAllCalls).toBe(1)
+  })
+
+  it("continues with builtins only when the extension registry fails to list", async () => {
+    // A broken manifest must not take startup down: the refresh logs and falls back.
+    const { deps } = makeFakeDeps()
+    ;(deps as { createExtensionRegistry: unknown }).createExtensionRegistry =
+      () => ({
+        list: async () => err({ kind: "invalid-manifest", detail: "boom" }),
+        providerDescriptors: async () =>
+          err({ kind: "invalid-manifest", detail: "boom" }),
+      })
+    ;(deps as { createCachedConfigStore: unknown }).createCachedConfigStore =
+      () => ({
+        load: async () => ok(defaultConfig()),
+        save: async () => ok(undefined),
+      })
+
+    const ctx = createAppContext(deps)
+    await ctx.refreshExtensions()
+
+    expect(typeof ctx.providerRegistry.get).toBe("function")
+    expect(ctx.providerRegistry.list()).toEqual([])
   })
 
   it("injects the registry's lookup as getDescriptor into the provider factory", () => {
@@ -786,6 +902,7 @@ describe("createAppContext resolveModelEnv wiring", () => {
         load: async () =>
           ok({
             version: 2,
+            providerPlugins: [],
             providers: [
               {
                 id: "p1",
@@ -827,6 +944,7 @@ describe("createAppContext resolveModelEnv wiring", () => {
         load: async () =>
           ok({
             version: 2,
+            providerPlugins: [],
             providers: [],
             models: [],
             settings: { proxyPort: 4000, proxyHost: "127.0.0.1" },
@@ -861,6 +979,7 @@ describe("createAppContext resolveModelEnv wiring", () => {
         load: async () =>
           ok({
             version: 2,
+            providerPlugins: [],
             providers: [],
             models: [],
             settings: { proxyPort: 4000, proxyHost: "127.0.0.1" },
@@ -909,6 +1028,7 @@ describe("createAppContext resolveModelEnv wiring", () => {
         load: async () =>
           ok({
             version: 2,
+            providerPlugins: [],
             providers: [
               {
                 id: "p1",
