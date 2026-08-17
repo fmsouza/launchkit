@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { defaultConfig } from "@spectrum/config"
+import { detectPlatform } from "@spectrum/platform"
 import { PluginIdSchema, ProviderIdSchema, pluginKeyOf } from "@spectrum/types"
 import type { AppContext } from "./app-context"
 import { createAppContext } from "./create-app-context"
@@ -16,6 +17,12 @@ const realDepsFor = (
   paths: ReturnType<typeof buildTestPaths>,
 ): CreateAppContextDeps =>
   buildFakeAppContextDeps({
+    // This scenario writes REAL directories via `mkdtemp`/`mkdir`, so the injected platform
+    // must be the real host platform, not `buildFakeAppContextDeps`'s "linux" default: the
+    // installer's `planInstall` classifies `source`/`pluginRoot` using whatever platform it is
+    // handed, and on Windows CI a real `C:\...` path is neither absolute nor a git url under
+    // POSIX rules, so `install()` refuses every source in this file with `invalid-manifest`.
+    platform: detectPlatform(),
     resolveAppPaths: () => paths,
     // Real config persistence: the admin's `config.save` and the refresh's `config.load` must
     // observe each other's writes, which the default in-memory `buildFakeAppContextDeps` stub

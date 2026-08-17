@@ -359,6 +359,11 @@ describe("install — git", () => {
           ? ok(validManifest("acme"))
           : err({ kind: "not-found", id: dir }),
       pluginRoot: "/data/providers",
+      // Pinned, like `harness()`'s default: this test's dirs are POSIX literals
+      // (`/data/providers/acme`), so leaving `platform` unset would fall back to
+      // `detectPlatform()` and mis-join/mis-classify those literals as non-absolute on a
+      // Windows host, failing before the git-adapter misbehaviour under test is ever reached.
+      platform: "macos",
       existingInstalls: () => [],
     })
     const r = await installer.install({
