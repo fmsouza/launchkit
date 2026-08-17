@@ -36,7 +36,8 @@ const freshConfig = async (): Promise<{
     ],
     models: [{ id: "mdl_default", providerId: "p1", providerModel: "gpt-4o" }],
     settings: { proxyPort: 4000, proxyHost: "127.0.0.1" },
-  } as Config
+    providerPlugins: [],
+  } as unknown as Config
   await writeFile(path, exportConfig(config), "utf8")
   return {
     store: createCachedConfigStore(

@@ -423,4 +423,61 @@ describe("providerPlugins", () => {
       ).toBe(true)
     }
   })
+
+  it("rejects an install record carrying an unknown top-level key (strict)", () => {
+    expect(
+      PluginInstallSchema.safeParse({
+        id: "acme",
+        source: { kind: "local" },
+        enabled: true,
+        version: "1.0.0",
+      }).success,
+    ).toBe(false)
+  })
+
+  it("rejects a git source carrying an unknown key (strict)", () => {
+    expect(
+      PluginInstallSchema.safeParse({
+        id: "acme",
+        source: {
+          kind: "git",
+          url: "https://github.com/acme/spectrum-plugin.git",
+          ref: "main",
+          commit: "abc1234",
+          branch: "main",
+        },
+        enabled: true,
+      }).success,
+    ).toBe(false)
+  })
+
+  it("rejects an uppercase plugin id", () => {
+    expect(
+      PluginInstallSchema.safeParse({
+        id: "ACME",
+        source: { kind: "local" },
+        enabled: true,
+      }).success,
+    ).toBe(false)
+  })
+
+  it("rejects a plugin id starting with a dash", () => {
+    expect(
+      PluginInstallSchema.safeParse({
+        id: "-acme",
+        source: { kind: "local" },
+        enabled: true,
+      }).success,
+    ).toBe(false)
+  })
+
+  it("rejects an empty plugin id", () => {
+    expect(
+      PluginInstallSchema.safeParse({
+        id: "",
+        source: { kind: "local" },
+        enabled: true,
+      }).success,
+    ).toBe(false)
+  })
 })

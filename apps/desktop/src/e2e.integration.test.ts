@@ -46,7 +46,8 @@ const freshConfig = async (): Promise<{
     ],
     models: [{ id: "mdl_default", providerId: "p1", providerModel: "gpt-4o" }],
     settings: { proxyPort: 4000, proxyHost: "127.0.0.1" },
-  } as Config
+    providerPlugins: [],
+  } as unknown as Config
   await writeFile(path, exportConfig(config), "utf8")
   return {
     store: createCachedConfigStore(
@@ -111,6 +112,7 @@ describe("Spectrum end-to-end", () => {
         { id: "mdl_default", providerId: "p1", providerModel: "gpt-4o" },
       ],
       settings: { proxyPort: 4000, proxyHost: "127.0.0.1" },
+      providerPlugins: [],
     } as unknown as Config
 
     // A slow model: nothing for 10.5s (longer than Bun's old default idleTimeout), then a token.
