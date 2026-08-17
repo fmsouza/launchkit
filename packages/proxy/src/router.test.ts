@@ -29,6 +29,7 @@ const configWith = (models: ModelStub[]): Config =>
       },
     ],
     models,
+    providerPlugins: [],
   }) as unknown as Config
 
 const config = {
@@ -45,6 +46,7 @@ const config = {
     },
   ],
   models: [{ id: "mdl_fast", providerId: "openai", providerModel: "gpt-4o" }],
+  providerPlugins: [],
 } as unknown as Config
 
 // ---------------------------------------------------------------------------

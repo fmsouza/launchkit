@@ -23,6 +23,26 @@ export type CliMainDeps = {
   readonly exit: (code: number) => void
   /** Write one diagnostic line to stderr. Receives the line WITHOUT a trailing newline. */
   readonly errOut: (line: string) => void
+  /**
+   * Stop everything the app supervises — today, the plugin provider child processes the
+   * provider host spawned. Awaited on BOTH the success and the failure path: `process.exit`
+   * is immediate, so a child not killed before it becomes an orphan that outlives the CLI.
+   */
+  readonly shutdown: () => Promise<void>
+}
+
+/**
+ * Drain supervised state before exit. A failed shutdown is REPORTED, never swallowed — but it
+ * must not prevent the exit either, or a broken teardown would hang the CLI forever.
+ */
+const drain = async (deps: CliMainDeps): Promise<void> => {
+  try {
+    await deps.shutdown()
+  } catch (cause) {
+    deps.errOut(
+      `spectrum: shutdown failed: ${cause instanceof Error ? cause.message : String(cause)}`,
+    )
+  }
 }
 
 /** Run the CLI, map the Result to an exit code + a human-readable stderr line. */
@@ -31,10 +51,7 @@ export const runCliMain = async (
   deps: CliMainDeps,
 ): Promise<void> => {
   const result = await deps.run(argv)
-  if (result.ok) {
-    deps.exit(0)
-    return
-  }
-  deps.errOut(formatCliError(result.error))
-  deps.exit(1)
+  if (!result.ok) deps.errOut(formatCliError(result.error))
+  await drain(deps)
+  deps.exit(result.ok ? 0 : 1)
 }

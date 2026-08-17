@@ -7,6 +7,7 @@ export interface AppPaths {
   readonly configFile: string
   readonly dbFile: string
   readonly harnessDir: string
+  readonly providerPluginDir: string
   readonly runtimeFile: string
   readonly secretsDir: string
   readonly uploadsDir: string
@@ -83,6 +84,7 @@ export const resolveAppPaths = (input: ResolveAppPathsInput): AppPaths => {
     configFile: p.join(dataDir, "config.json"),
     dbFile: p.join(dataDir, "spectrum.db"),
     harnessDir: p.join(dataDir, "harnesses"),
+    providerPluginDir: p.join(dataDir, "providers"),
     runtimeFile: p.join(dataDir, "runtime.json"),
     secretsDir: p.join(dataDir, "secrets"),
     uploadsDir: p.join(dataDir, "uploads"),

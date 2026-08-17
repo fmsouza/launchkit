@@ -38,6 +38,7 @@ const config = {
     },
   ],
   models: [{ id: "mdl_default", providerId: "p1", providerModel: "gpt-4o" }],
+  providerPlugins: [],
 } as unknown as Config
 
 let stop: (() => void) | undefined

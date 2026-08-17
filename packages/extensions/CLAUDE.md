@@ -1,0 +1,99 @@
+# @spectrum/extensions
+
+Versioned extension manifest schema for provider plugins, plus the registry and file source
+that read the installed set off disk.
+
+## Responsibility
+Defines the on-disk shape of a Spectrum extension manifest and validates it: an api-version
+gate (`spectrum.dev/v<major>`, refused if the major is newer than this Spectrum supports)
+checked *before* shape validation, then a strict-root/passthrough-`contributes` zod schema.
+On top of that, the registry loads every installed extension, rejects duplicate ids, validates
+every provider contribution's launch templates, and projects enabled contributions onto
+`@spectrum/providers` descriptors.
+
+Manifest parsing, template validation, and descriptor projection are PURE. Filesystem access
+is confined to the one adapter (`createDirExtensionFileSource`) behind the `ExtensionFileSource`
+seam; nothing in this package spawns a process (that is `@spectrum/provider-host`).
+
+## Public API
+### Manifest + contribution schemas (pure)
+- `ExtensionManifestSchema` / `ExtensionManifest` — the manifest shape (root is `.strict()`;
+  `contributes` is `.passthrough()` so a manifest from a future Spectrum still parses)
+- `parseManifest(raw): Result<ParsedManifest, PluginError>` — api-version gate, then shape,
+  then reports which `contributes` keys were present but unknown (`ignoredContributions`)
+- `KNOWN_CONTRIBUTION_KEYS` — the `contributes` keys this Spectrum understands (`["providers"]`)
+- `SUPPORTED_API_MAJOR`, `parseApiVersion`, `isSupportedApiVersion`
+- `ProviderContributionSchema` / `ProviderContribution` — one LLM provider a plugin
+  contributes: a descriptor (config/secret fields, reasoning, discovery, actions — mirrors
+  `@spectrum/providers`' builtin shape) + a transport (`kind: "http"`, `wire`, an optional
+  `launch` for a Spectrum-spawned server). A contribution declaring no `actions` defaults to
+  `defaultActions` from `@spectrum/providers`, same as a builtin.
+- `PluginLaunchSchema` / `PluginLaunch` — how a plugin's provider server is launched as a
+  local child process: `command`, `args`, `envTemplate`, optional `cwd`, `healthPath`
+  (default `/models`), `readyTimeoutMs` (default 10 000)
+- `PluginError` — the complete extension error union; declared complete here so no later
+  plan adds variants to it
+
+### Launch templates (pure)
+- `RUNTIME_TOKENS` — the fixed template tokens every launch may use regardless of what the
+  contribution declares: `port`, `host`, `baseUrl`, `hostToken`
+- `allowedTokensFor(contribution): ReadonlySet<string>` — RUNTIME_TOKENS plus the
+  contribution's own declared secret and config field names; computed per contribution,
+  unlike harnesses' fixed token list
+- `validateContributionTemplates(contribution): Result<void, PluginError>` — rejects any
+  `{{token}}` in the launch's env or args that isn't in `allowedTokensFor`
+- `renderPluginEnv(launch, values)` / `renderPluginArgs(launch, values)` — substitute
+  `{{token}}` in a launch's env/args; a token with no supplied value renders to `""`
+  (rendering assumes `validateContributionTemplates` already ran — it never errors)
+
+### Descriptor projection (pure)
+- `descriptorFromContribution(contribution): ProviderDescriptor` — the runtime descriptor the
+  provider registry consumes. `key` is `plugin:<contribution id>`; the config schema is DERIVED
+  from the declared field specs (JSON cannot carry a zod schema); a placeholder api key is
+  always declared because `@ai-sdk/openai` throws without a non-empty string.
+
+### Registry
+- `ExtensionRegistry` / `createExtensionRegistry({ fileSource, logger? })` with
+  `list(): Promise<Result<readonly LoadedExtension[], PluginError>>` and
+  `providerDescriptors(enabledIds): Promise<Result<readonly ProviderDescriptor[], PluginError>>`
+- `LoadedExtension = { manifest; ignoredContributions; dir }`
+
+### File source (the ONE effectful seam)
+- `ExtensionFileSource` — `listExtensions()`, `readExtension(id)`, `removeExtension(id)`,
+  `extensionDir(id: PluginId)` (pure and synchronous; takes a BRANDED id so the traversal
+  guard is structural — do not weaken it back to `string`)
+- `ExtensionEntry = { id; raw }` — still-unvalidated manifest bytes tagged with their directory id
+- `createDirExtensionFileSource(root, linkMap)` — the real adapter: `readdir`/`stat`/`rm` +
+  `Bun.file`. Each subdirectory of `root` is one extension id, unless `linkMap` overrides that
+  id to an absolute directory read LIVE instead (the `link` install mode). No symlinks — they
+  need elevation on Windows.
+- `createInMemoryExtensionFileSource(entries, failure?)` — the fake every test uses
+
+## Local invariants
+- Api-version is checked *before* shape, so a manifest from a future Spectrum reports
+  "needs a newer Spectrum" instead of a confusing schema error.
+- The manifest root is strict (typos are loud); `contributes` passes unknown keys through
+  untouched rather than rejecting them, so an older Spectrum can still install a manifest
+  written for a newer one and simply contribute less.
+- `parseManifest` takes `unknown` and returns `Result`; it never throws. All IO lives in
+  `adapters.ts` behind `ExtensionFileSource` and returns `Result` too.
+- `ProviderContributionSchema`'s `reasoning`/`discovery` fields validate against
+  `ReasoningSupportSchema`/`DiscoverySchema` from `@spectrum/providers` — zod counterparts to
+  that package's hand-written `ReasoningSupport`/`DiscoverySpec` types, pinned to them by a
+  compile-time assertion so the two can't silently drift.
+- Template validation and rendering are split: `validateContributionTemplates` is the only
+  place unknown tokens are rejected; `renderPluginEnv`/`renderPluginArgs` are pure
+  substitution and never fail, so callers must validate before spawning.
+- `list()` refuses duplicate MANIFEST ids and duplicate provider-CONTRIBUTION ids across the
+  whole installed set. The contribution id is the security-relevant one: it becomes
+  `plugin:<id>` and is what `@spectrum/provider-host` keys on when it spawns a launch block, so
+  two extensions claiming one contribution id would make "whose command gets spawned" depend on
+  directory-read order. Refusing the whole batch beats picking a winner.
+- A directory id and the manifest id it declares must agree, or `dir` would point somewhere the
+  manifest never claimed — silently breaking uninstall-by-id.
+- A `source-unavailable` entry (a dead linked path) is logged and SKIPPED; an invalid manifest,
+  an unsupported api version, or a duplicate id fails the whole `list()`.
+- `providerDescriptors` filters by `enabledIds`. That filter is NOT the whole enforcement of
+  `enabled`: `list()` reports everything installed, so every consumer that can reach a
+  contribution's `launch` block must apply `enabled` itself (`@spectrum/provider-host` takes an
+  injected `isEnabled` for exactly this).

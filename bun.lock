@@ -184,6 +184,17 @@
         "@spectrum/utils": "workspace:*",
       },
     },
+    "packages/extensions": {
+      "name": "@spectrum/extensions",
+      "version": "1.9.0",
+      "dependencies": {
+        "@spectrum/logger": "workspace:*",
+        "@spectrum/providers": "workspace:*",
+        "@spectrum/types": "workspace:*",
+        "@spectrum/utils": "workspace:*",
+        "zod": "catalog:",
+      },
+    },
     "packages/harnesses": {
       "name": "@spectrum/harnesses",
       "version": "1.9.0",
@@ -233,6 +244,17 @@
         "@spectrum/types": "workspace:*",
         "@spectrum/utils": "workspace:*",
         "drizzle-orm": "catalog:",
+      },
+    },
+    "packages/provider-host": {
+      "name": "@spectrum/provider-host",
+      "version": "1.9.0",
+      "dependencies": {
+        "@spectrum/extensions": "workspace:*",
+        "@spectrum/logger": "workspace:*",
+        "@spectrum/proc": "workspace:*",
+        "@spectrum/types": "workspace:*",
+        "@spectrum/utils": "workspace:*",
       },
     },
     "packages/providers": {
@@ -312,11 +334,13 @@
         "@spectrum/db": "workspace:*",
         "@spectrum/driver-acp": "workspace:*",
         "@spectrum/driver-runtime": "workspace:*",
+        "@spectrum/extensions": "workspace:*",
         "@spectrum/harnesses": "workspace:*",
         "@spectrum/logger": "workspace:*",
         "@spectrum/platform": "workspace:*",
         "@spectrum/proc": "workspace:*",
         "@spectrum/projects": "workspace:*",
+        "@spectrum/provider-host": "workspace:*",
         "@spectrum/providers": "workspace:*",
         "@spectrum/proxy": "workspace:*",
         "@spectrum/run-store": "workspace:*",
@@ -583,6 +607,8 @@
 
     "@spectrum/driver-runtime": ["@spectrum/driver-runtime@workspace:packages/driver-runtime"],
 
+    "@spectrum/extensions": ["@spectrum/extensions@workspace:packages/extensions"],
+
     "@spectrum/harnesses": ["@spectrum/harnesses@workspace:packages/harnesses"],
 
     "@spectrum/ipc": ["@spectrum/ipc@workspace:packages/ipc"],
@@ -594,6 +620,8 @@
     "@spectrum/proc": ["@spectrum/proc@workspace:packages/proc"],
 
     "@spectrum/projects": ["@spectrum/projects@workspace:packages/projects"],
+
+    "@spectrum/provider-host": ["@spectrum/provider-host@workspace:packages/provider-host"],
 
     "@spectrum/providers": ["@spectrum/providers@workspace:packages/providers"],
 

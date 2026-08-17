@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test"
+import { defaultConfig } from "@spectrum/config"
 import {
   claude,
   createInMemoryHarnessFileSource,
@@ -7,11 +8,15 @@ import {
 import { resolveAppPaths } from "@spectrum/platform"
 import { createFakeCommandResolver } from "@spectrum/proc"
 import { createProjectStore } from "@spectrum/projects"
-import { createInMemoryRuntimeState } from "@spectrum/proxy"
+import {
+  createInMemoryRuntimeState,
+  providerInstanceKey,
+} from "@spectrum/proxy"
 import type { HarnessId } from "@spectrum/types"
 import { err, ok } from "@spectrum/utils"
 import { createAppContext } from "./create-app-context"
 import type { CreateAppContextDeps } from "./deps"
+import { buildFakeAppContextDeps } from "./test-support"
 
 /** Record which constructor saw which argument, returning inert stand-ins. */
 const makeFakeDeps = (): {
@@ -38,7 +43,15 @@ const makeFakeDeps = (): {
     migrateProductionToCanary: record("migrateProductionToCanary") as never,
     createFsConfigFile: record("createFsConfigFile") as never,
     createFileConfigStore: record("createFileConfigStore") as never,
-    createCachedConfigStore: record("createCachedConfigStore") as never,
+    // Shaped, not `record(...)`: the composition root loads config during its initial
+    // extension refresh, so the stub needs a real `load`/`save`.
+    createCachedConfigStore: ((..._a: unknown[]) => {
+      calls.createCachedConfigStore = _a
+      return {
+        load: async () => ok(defaultConfig()),
+        save: async () => ok(undefined),
+      }
+    }) as never,
     createPlatformKeychainBackend: record(
       "createPlatformKeychainBackend",
     ) as never,
@@ -85,6 +98,41 @@ const makeFakeDeps = (): {
         catalog: () => [],
       }
     }) as never,
+    // Extension layer: shaped stubs — the composition root calls methods on these during its
+    // initial refresh, so `record(...)`'s `{ __stub }` would not do.
+    createDirExtensionFileSource: ((
+      root: string,
+      linkMap: Readonly<Record<string, string>>,
+    ) => {
+      calls.createDirExtensionFileSource = [root, linkMap]
+      return {
+        listExtensions: async () => ok([]),
+        readExtension: async () => err({ kind: "not-found", id: "none" }),
+        removeExtension: async () => ok(undefined),
+        extensionDir: (id: string) => `/plugins/${id}`,
+      }
+    }) as never,
+    createExtensionRegistry: ((..._a: unknown[]) => {
+      calls.createExtensionRegistry = _a
+      return {
+        list: async () => ok([]),
+        providerDescriptors: async () => ok([]),
+      }
+    }) as never,
+    createProviderHost: ((..._a: unknown[]) => {
+      calls.createProviderHost = _a
+      return {
+        ensureRunning: async () => err({ kind: "not-found", id: "none" }),
+        status: () => "stopped",
+        stop: async () => undefined,
+        stopAllFor: async () => undefined,
+        stopAll: async () => undefined,
+        retainOnly: async () => undefined,
+      }
+    }) as never,
+    createLoopbackPortAllocator: record("createLoopbackPortAllocator") as never,
+    createFetchHealthProbe: record("createFetchHealthProbe") as never,
+    createCryptoTokenGen: record("createCryptoTokenGen") as never,
     createProviderFactory: record("createProviderFactory") as never,
     loadSdk: (async () => ({ create: () => ({}) })) as never,
     createRealGateway: record("createRealGateway") as never,
@@ -125,6 +173,7 @@ describe("createAppContext listProviderModels wiring", () => {
         load: async () =>
           ok({
             version: 2,
+            providerPlugins: [],
             providers: [],
             models: [],
             settings: { proxyPort: 4000, proxyHost: "127.0.0.1" },
@@ -145,6 +194,7 @@ describe("createAppContext listProviderModels wiring", () => {
         load: async () =>
           ok({
             version: 2,
+            providerPlugins: [],
             providers: [
               {
                 id: "p_groq",
@@ -193,6 +243,7 @@ describe("createAppContext listProviderModels wiring", () => {
         load: async () =>
           ok({
             version: 2,
+            providerPlugins: [],
             providers: [
               {
                 id: "p_groq",
@@ -229,6 +280,7 @@ describe("createAppContext listProviderModels wiring", () => {
         load: async () =>
           ok({
             version: 2,
+            providerPlugins: [],
             providers: [
               {
                 id: "p_plugin",
@@ -435,6 +487,86 @@ describe("createAppContext wiring", () => {
     expect(typeof ctx.providerRegistry.get).toBe("function")
     expect(typeof ctx.providerRegistry.list).toBe("function")
     expect(typeof ctx.providerRegistry.catalog).toBe("function")
+  })
+
+  it("keeps resolving through the current registry after refreshExtensions swaps it", async () => {
+    // The exposed `providerRegistry` must be a façade over the mutable cell: handing out the
+    // cell's VALUE would pin consumers to the builtins-only registry built at construction and
+    // silently drop every plugin descriptor a later refresh installs.
+    const { deps } = makeFakeDeps()
+    const built: string[] = []
+    ;(deps as { createProviderRegistry: unknown }).createProviderRegistry =
+      () => {
+        const tag = `r${built.length + 1}`
+        built.push(tag)
+        return { get: () => ({ key: tag }), list: () => [], catalog: () => [] }
+      }
+    ;(deps as { createCachedConfigStore: unknown }).createCachedConfigStore =
+      () => ({
+        load: async () => ok(defaultConfig()),
+        save: async () => ok(undefined),
+      })
+
+    const ctx = createAppContext(deps)
+    await ctx.refreshExtensions()
+
+    const latest = built[built.length - 1] ?? ""
+    expect(built.length).toBeGreaterThan(1)
+    expect((ctx.providerRegistry.get("openai") as { key: string }).key).toBe(
+      latest,
+    )
+  })
+
+  it("builds a usable provider registry from the shared buildFakeAppContextDeps stand-ins", () => {
+    // `buildFakeAppContextDeps` is what apps/desktop and apps/cli construct contexts with, and
+    // the registry façade calls straight through to whatever its stub returns — so an inert
+    // `{ __stub }` there is a TypeError waiting for the first consumer that reads the field.
+    const ctx = createAppContext(buildFakeAppContextDeps())
+    expect(ctx.providerRegistry.list()).toEqual([])
+    expect(ctx.providerRegistry.catalog()).toEqual([])
+    expect(ctx.providerRegistry.get("openai")).toBeUndefined()
+  })
+
+  it("stops every supervised plugin process when shutdown is called", async () => {
+    const { deps } = makeFakeDeps()
+    let stopAllCalls = 0
+    ;(deps as { createProviderHost: unknown }).createProviderHost = () => ({
+      ensureRunning: async () => err({ kind: "not-found", id: "none" }),
+      status: () => "stopped",
+      stop: async () => undefined,
+      stopAllFor: async () => undefined,
+      stopAll: async () => {
+        stopAllCalls += 1
+      },
+      retainOnly: async () => undefined,
+    })
+
+    const ctx = createAppContext(deps)
+    await ctx.shutdown()
+
+    expect(stopAllCalls).toBe(1)
+  })
+
+  it("continues with builtins only when the extension registry fails to list", async () => {
+    // A broken manifest must not take startup down: the refresh logs and falls back.
+    const { deps } = makeFakeDeps()
+    ;(deps as { createExtensionRegistry: unknown }).createExtensionRegistry =
+      () => ({
+        list: async () => err({ kind: "invalid-manifest", detail: "boom" }),
+        providerDescriptors: async () =>
+          err({ kind: "invalid-manifest", detail: "boom" }),
+      })
+    ;(deps as { createCachedConfigStore: unknown }).createCachedConfigStore =
+      () => ({
+        load: async () => ok(defaultConfig()),
+        save: async () => ok(undefined),
+      })
+
+    const ctx = createAppContext(deps)
+    await ctx.refreshExtensions()
+
+    expect(typeof ctx.providerRegistry.get).toBe("function")
+    expect(ctx.providerRegistry.list()).toEqual([])
   })
 
   it("injects the registry's lookup as getDescriptor into the provider factory", () => {
@@ -786,6 +918,7 @@ describe("createAppContext resolveModelEnv wiring", () => {
         load: async () =>
           ok({
             version: 2,
+            providerPlugins: [],
             providers: [
               {
                 id: "p1",
@@ -827,6 +960,7 @@ describe("createAppContext resolveModelEnv wiring", () => {
         load: async () =>
           ok({
             version: 2,
+            providerPlugins: [],
             providers: [],
             models: [],
             settings: { proxyPort: 4000, proxyHost: "127.0.0.1" },
@@ -861,6 +995,7 @@ describe("createAppContext resolveModelEnv wiring", () => {
         load: async () =>
           ok({
             version: 2,
+            providerPlugins: [],
             providers: [],
             models: [],
             settings: { proxyPort: 4000, proxyHost: "127.0.0.1" },
@@ -909,6 +1044,7 @@ describe("createAppContext resolveModelEnv wiring", () => {
         load: async () =>
           ok({
             version: 2,
+            providerPlugins: [],
             providers: [
               {
                 id: "p1",
@@ -1076,5 +1212,589 @@ describe("createAppContext ACP driver wiring", () => {
       env: {},
     })
     expect(started).toBe(true)
+  })
+})
+
+/**
+ * The base-url resolver the composition root injects into the provider factory. It is the single
+ * point where a plugin-contributed provider's traffic is aimed, so every branch is asserted here
+ * through the recorded `createProviderFactory` argument.
+ */
+describe("createAppContext resolveBaseUrl", () => {
+  type ResolveResult = {
+    readonly ok: boolean
+    readonly value?: unknown
+    readonly error?: { readonly kind: string; readonly detail?: string }
+  }
+  type Resolve = (input: {
+    descriptor: unknown
+    config: Readonly<Record<string, string>>
+    secrets: Readonly<Record<string, string>>
+    instanceKey: string | undefined
+  }) => Promise<ResolveResult>
+
+  const resolveOf = (calls: Record<string, unknown[]>): Resolve =>
+    (calls.createProviderFactory?.[0] as { resolveBaseUrl: Resolve })
+      .resolveBaseUrl
+
+  /** A gate a test can hold a refresh open on. */
+  const makeGate = (): { wait: Promise<void>; open: () => void } => {
+    let open = (): void => {}
+    const wait = new Promise<void>((resolve) => {
+      open = () => {
+        resolve()
+      }
+    })
+    return { wait, open }
+  }
+
+  /** A LoadedExtension-shaped record; `launch` present ⇒ Spectrum supervises the contribution. */
+  const extension = (id: string, supervised: boolean): unknown => ({
+    manifest: {
+      id,
+      contributes: {
+        providers: [
+          {
+            id,
+            transport: {
+              kind: "http",
+              wire: "openai",
+              ...(supervised
+                ? { launch: { command: "srv", args: [], envTemplate: {} } }
+                : {}),
+            },
+          },
+        ],
+      },
+    },
+    ignoredContributions: [],
+    dir: `/plugins/${id}`,
+  })
+
+  /** A plugin descriptor: no `defaultBaseUrl`, exactly as `descriptorFromContribution` builds. */
+  const pluginDescriptor = (id: string): unknown => ({
+    key: `plugin:${id}`,
+    sdkMapping: { baseUrlOption: "baseURL", apiKey: { kind: "option" } },
+  })
+
+  /**
+   * Mark extensions enabled in the live config. `enabledIds` comes ONLY from
+   * `cfg.providerPlugins`, so an installed-but-not-enabled extension is not supervised.
+   */
+  const withEnabledPlugins = (
+    deps: CreateAppContextDeps,
+    ids: readonly string[],
+  ): void => {
+    ;(deps as { createCachedConfigStore: unknown }).createCachedConfigStore =
+      (() => ({
+        load: async () =>
+          ok({
+            ...defaultConfig(),
+            providerPlugins: ids.map((id) => ({
+              id,
+              source: { kind: "local" },
+              enabled: true,
+            })),
+          }),
+        save: async () => ok(undefined),
+      })) as never
+  }
+
+  /** Wire an extension registry whose `list` reports `extensions` (optionally behind a gate). */
+  const withExtensions = (
+    deps: CreateAppContextDeps,
+    extensions: () => readonly unknown[],
+    gate?: () => Promise<void> | undefined,
+  ): void => {
+    ;(deps as { createExtensionRegistry: unknown }).createExtensionRegistry =
+      (() => ({
+        list: async () => {
+          const held = gate?.()
+          if (held !== undefined) await held
+          return ok(extensions())
+        },
+        providerDescriptors: async () => ok([]),
+      })) as never
+  }
+
+  it("resolves a supervised extension to the live loopback url from the provider host", async () => {
+    const { deps, calls } = makeFakeDeps()
+    withEnabledPlugins(deps, ["acme"])
+    withExtensions(deps, () => [extension("acme", true)])
+    const seen: unknown[] = []
+    ;(deps as { createProviderHost: unknown }).createProviderHost = (() => ({
+      ensureRunning: async (input: unknown) => {
+        seen.push(input)
+        return ok({ baseUrl: "http://127.0.0.1:45001", pid: 7 })
+      },
+      status: () => "running",
+      stop: async () => undefined,
+      stopAllFor: async () => undefined,
+      stopAll: async () => undefined,
+      retainOnly: async () => undefined,
+    })) as never
+
+    const ctx = createAppContext(deps)
+    await ctx.refreshExtensions()
+    const r = await resolveOf(calls)({
+      descriptor: pluginDescriptor("acme"),
+      config: {},
+      secrets: { apiKey: "k" },
+      instanceKey: "inst-1",
+    })
+
+    expect(r.ok && r.value).toBe("http://127.0.0.1:45001")
+    expect(seen).toEqual([
+      { instanceKey: "inst-1", providerId: "acme", secrets: { apiKey: "k" } },
+    ])
+  })
+
+  it("never supervises a contribution from an extension that is not enabled", async () => {
+    // THE ATTACK: `providerDescriptors` filtered by `enabled`, but the supervised set scanned
+    // every installed extension. A disabled extension's launch block was therefore reachable —
+    // and it is spawned with the resolved secrets of whichever provider record named its id.
+    const { deps, calls } = makeFakeDeps()
+    withEnabledPlugins(deps, []) // installed, NOT enabled
+    withExtensions(deps, () => [extension("acme", true)])
+    let ensureRunningCalls = 0
+    ;(deps as { createProviderHost: unknown }).createProviderHost = (() => ({
+      ensureRunning: async () => {
+        ensureRunningCalls += 1
+        return ok({ baseUrl: "http://127.0.0.1:45009", pid: 4 })
+      },
+      status: () => "running",
+      stop: async () => undefined,
+      stopAllFor: async () => undefined,
+      stopAll: async () => undefined,
+      retainOnly: async () => undefined,
+    })) as never
+
+    const ctx = createAppContext(deps)
+    await ctx.refreshExtensions()
+    const r = await resolveOf(calls)({
+      descriptor: pluginDescriptor("acme"),
+      config: {},
+      secrets: { apiKey: "k" },
+      instanceKey: "inst-1",
+    })
+
+    expect(ensureRunningCalls).toBe(0)
+    expect(r.ok).toBe(false)
+    expect(r.error?.kind).toBe("bad-request")
+  })
+
+  it("refuses the draft-probe path for a supervised extension instead of spawning a process", async () => {
+    const { deps, calls } = makeFakeDeps()
+    withEnabledPlugins(deps, ["acme"])
+    withExtensions(deps, () => [extension("acme", true)])
+    let ensureRunningCalls = 0
+    ;(deps as { createProviderHost: unknown }).createProviderHost = (() => ({
+      ensureRunning: async () => {
+        ensureRunningCalls += 1
+        return err({ kind: "not-found", id: "acme" })
+      },
+      status: () => "stopped",
+      stop: async () => undefined,
+      stopAllFor: async () => undefined,
+      stopAll: async () => undefined,
+      retainOnly: async () => undefined,
+    })) as never
+
+    const ctx = createAppContext(deps)
+    await ctx.refreshExtensions()
+    const r = await resolveOf(calls)({
+      descriptor: pluginDescriptor("acme"),
+      config: {},
+      secrets: {},
+      instanceKey: undefined,
+    })
+
+    expect(r.ok).toBe(false)
+    expect(r.error?.kind).toBe("bad-request")
+    expect(ensureRunningCalls).toBe(0)
+  })
+
+  it("reports provider-failed when the supervised extension will not start", async () => {
+    const { deps, calls } = makeFakeDeps()
+    withEnabledPlugins(deps, ["acme"])
+    withExtensions(deps, () => [extension("acme", true)])
+    ;(deps as { createProviderHost: unknown }).createProviderHost = (() => ({
+      ensureRunning: async () => err({ kind: "spawn-failed", detail: "boom" }),
+      status: () => "failed",
+      stop: async () => undefined,
+      stopAllFor: async () => undefined,
+      stopAll: async () => undefined,
+      retainOnly: async () => undefined,
+    })) as never
+
+    const ctx = createAppContext(deps)
+    await ctx.refreshExtensions()
+    const r = await resolveOf(calls)({
+      descriptor: pluginDescriptor("acme"),
+      config: {},
+      secrets: {},
+      instanceKey: "inst-1",
+    })
+
+    expect(r.ok).toBe(false)
+    expect(r.error?.kind).toBe("provider-failed")
+  })
+
+  it("keeps the serverUrl path for a plugin server Spectrum does not launch", async () => {
+    // No `launch` block ⇒ a user-run server: its own `serverUrl` config field still works.
+    const { deps, calls } = makeFakeDeps()
+    withExtensions(deps, () => [extension("selfrun", false)])
+
+    const ctx = createAppContext(deps)
+    await ctx.refreshExtensions()
+    const r = await resolveOf(calls)({
+      descriptor: pluginDescriptor("selfrun"),
+      config: { serverUrl: "http://127.0.0.1:9999" },
+      secrets: {},
+      instanceKey: "inst-1",
+    })
+
+    // undefined ⇒ no override; buildSdkOptions applies config.serverUrl unchanged.
+    expect(r.ok).toBe(true)
+    expect(r.value).toBeUndefined()
+  })
+
+  it("refuses a plugin provider that resolves to no base url at all", async () => {
+    // Defence in depth: a plugin descriptor carries no defaultBaseUrl, so falling through with
+    // no serverUrl would let the AI SDK aim the request — and the plugin's secrets — at its own
+    // cloud endpoint. This guard turns that into a failed request.
+    const { deps, calls } = makeFakeDeps()
+    withExtensions(deps, () => [extension("acme", false)])
+
+    const ctx = createAppContext(deps)
+    await ctx.refreshExtensions()
+    const r = await resolveOf(calls)({
+      descriptor: pluginDescriptor("acme"),
+      config: {},
+      secrets: {},
+      instanceKey: "inst-1",
+    })
+
+    expect(r.ok).toBe(false)
+    expect(r.error?.kind).toBe("bad-request")
+  })
+
+  it("leaves a builtin provider on the ordinary serverUrl path", async () => {
+    const { deps, calls } = makeFakeDeps()
+    withExtensions(deps, () => [])
+    let hostTouched = false
+    ;(deps as { createProviderHost: unknown }).createProviderHost = (() => ({
+      ensureRunning: async () => {
+        hostTouched = true
+        return err({ kind: "not-found", id: "x" })
+      },
+      status: () => "stopped",
+      stop: async () => undefined,
+      stopAllFor: async () => undefined,
+      stopAll: async () => undefined,
+      retainOnly: async () => undefined,
+    })) as never
+
+    const ctx = createAppContext(deps)
+    await ctx.refreshExtensions()
+    const r = await resolveOf(calls)({
+      descriptor: { key: "openai", sdkMapping: { baseUrlOption: "baseURL" } },
+      config: {},
+      secrets: {},
+      instanceKey: "inst-1",
+    })
+
+    expect(r.ok).toBe(true)
+    expect(r.value).toBeUndefined()
+    expect(hostTouched).toBe(false)
+  })
+
+  it("waits for the refresh in flight before routing a supervised provider", async () => {
+    // `extensionsReady` must track the LATEST refresh. Pinned to the first one, this request
+    // would read the pre-refresh (empty) supervised set and fall through to the guard — the
+    // routing bug the atomic-swap work exists to prevent.
+    const { deps, calls } = makeFakeDeps()
+    const gate = makeGate()
+    let installed: readonly unknown[] = []
+    let held = false
+    withEnabledPlugins(deps, ["acme"])
+    withExtensions(
+      deps,
+      () => installed,
+      () => (held ? gate.wait : undefined),
+    )
+    ;(deps as { createProviderHost: unknown }).createProviderHost = (() => ({
+      ensureRunning: async () =>
+        ok({ baseUrl: "http://127.0.0.1:45002", pid: 9 }),
+      status: () => "running",
+      stop: async () => undefined,
+      stopAllFor: async () => undefined,
+      stopAll: async () => undefined,
+      retainOnly: async () => undefined,
+    })) as never
+
+    const ctx = createAppContext(deps)
+    await ctx.refreshExtensions()
+
+    // A second refresh installs the plugin, blocked partway through.
+    installed = [extension("acme", true)]
+    held = true
+    const refresh = ctx.refreshExtensions()
+    const pending = resolveOf(calls)({
+      descriptor: pluginDescriptor("acme"),
+      config: {},
+      secrets: {},
+      instanceKey: "inst-1",
+    })
+    gate.open()
+    await refresh
+
+    const r = await pending
+    expect(r.ok && r.value).toBe("http://127.0.0.1:45002")
+  })
+
+  it("never exposes a half-applied extension set while a refresh is in flight", async () => {
+    // The three cells swap in ONE synchronous block. Swapping the extension registry before the
+    // provider registry (the shape this replaced) publishes a view where a contribution is
+    // already gone from one cell and still present in the other.
+    const { deps } = makeFakeDeps()
+    const gate = makeGate()
+    // Signals that the refresh has actually entered its second await — without this the read
+    // below would happen before the refresh body ever ran, and observe nothing.
+    const parked = makeGate()
+    let made = 0
+    let held = false
+    ;(deps as { createExtensionRegistry: unknown }).createExtensionRegistry =
+      (() => {
+        made += 1
+        const tag = `r${made}`
+        return {
+          list: async () => ok([extension(tag, false)]),
+          providerDescriptors: async () => {
+            if (held) {
+              parked.open()
+              await gate.wait
+            }
+            return ok([])
+          },
+        }
+      }) as never
+
+    const ctx = createAppContext(deps)
+    await ctx.refreshExtensions()
+    const settled = await ctx.extensionRegistry.list()
+    const tagBefore = settled.ok ? settled.value[0]?.manifest.id : undefined
+
+    held = true
+    const refresh = ctx.refreshExtensions()
+    await parked.wait
+    const mid = await ctx.extensionRegistry.list()
+    gate.open()
+    await refresh
+    const done = await ctx.extensionRegistry.list()
+
+    // Mid-flight the PREVIOUS registry is still the published one; only afterwards does the new
+    // one become visible.
+    const tagMid = mid.ok ? mid.value[0]?.manifest.id : undefined
+    const tagDone = done.ok ? done.value[0]?.manifest.id : undefined
+    expect(tagMid).toBe(tagBefore)
+    expect(tagDone).not.toBe(tagBefore)
+  })
+
+  it("keeps the last good extension set when a later refresh fails", async () => {
+    // Falling back to builtins is right at STARTUP. On a re-refresh a momentary fs error must
+    // not demote a supervised plugin — that is precisely the mis-route the guard above catches.
+    const { deps, calls } = makeFakeDeps()
+    let failing = false
+    withEnabledPlugins(deps, ["acme"])
+    ;(deps as { createExtensionRegistry: unknown }).createExtensionRegistry =
+      (() => ({
+        list: async () =>
+          failing
+            ? err({ kind: "read-failed", detail: "transient" })
+            : ok([extension("acme", true)]),
+        providerDescriptors: async () => ok([]),
+      })) as never
+    ;(deps as { createProviderHost: unknown }).createProviderHost = (() => ({
+      ensureRunning: async () =>
+        ok({ baseUrl: "http://127.0.0.1:45003", pid: 3 }),
+      status: () => "running",
+      stop: async () => undefined,
+      stopAllFor: async () => undefined,
+      stopAll: async () => undefined,
+      retainOnly: async () => undefined,
+    })) as never
+
+    const ctx = createAppContext(deps)
+    await ctx.refreshExtensions()
+    failing = true
+    await ctx.refreshExtensions()
+
+    const r = await resolveOf(calls)({
+      descriptor: pluginDescriptor("acme"),
+      config: {},
+      secrets: {},
+      instanceKey: "inst-1",
+    })
+
+    expect(r.ok && r.value).toBe("http://127.0.0.1:45003")
+  })
+})
+
+/**
+ * A supervised child is keyed by the provider's CONFIGURATION, so every config edit mints a new
+ * key. Nothing retired the old one, so the previous child stayed `running` forever with the old
+ * secrets in its environment. Retention is asserted here, at the composition root, because that
+ * is the only layer that knows which keys are still backed by a configured provider.
+ */
+describe("createAppContext supervised instance retention", () => {
+  const PLUGIN_KEY = "plugin:acme"
+
+  /** A LoadedExtension whose one contribution declares a launch block. */
+  const supervisedExtension = (id: string): unknown => ({
+    manifest: {
+      id,
+      contributes: {
+        providers: [
+          {
+            id,
+            transport: {
+              kind: "http",
+              wire: "openai",
+              launch: { command: "srv", args: [], envTemplate: {} },
+            },
+          },
+        ],
+      },
+    },
+    ignoredContributions: [],
+    dir: `/plugins/${id}`,
+  })
+
+  const configWith = (
+    providerConfig: Record<string, string>,
+    enabled = true,
+  ): unknown => ({
+    ...defaultConfig(),
+    providerPlugins: [{ id: "acme", source: { kind: "local" }, enabled }],
+    providers: [
+      {
+        id: "p_acme",
+        name: "Acme",
+        sdkProvider: PLUGIN_KEY,
+        models: ["m"],
+        config: providerConfig,
+        secrets: { apiKey: { ref: "kc_1" } },
+      },
+    ],
+  })
+
+  const keyFor = (providerConfig: Record<string, string>): string =>
+    providerInstanceKey({
+      sdkProvider: PLUGIN_KEY,
+      config: providerConfig,
+      secretRefs: { apiKey: { ref: "kc_1" } },
+    })
+
+  /** Wires a config store over a mutable cell and a provider host that records retention. */
+  const wire = (
+    deps: CreateAppContextDeps,
+    initial: Record<string, string>,
+  ): { retained: Array<readonly string[]> } => {
+    let current = configWith(initial)
+    ;(deps as { createCachedConfigStore: unknown }).createCachedConfigStore =
+      (() => ({
+        load: async () => ok(current),
+        save: async (next: unknown) => {
+          current = next
+          return ok(undefined)
+        },
+      })) as never
+    ;(deps as { createExtensionRegistry: unknown }).createExtensionRegistry =
+      (() => ({
+        list: async () => ok([supervisedExtension("acme")]),
+        providerDescriptors: async () => ok([]),
+      })) as never
+    const retained: Array<readonly string[]> = []
+    ;(deps as { createProviderHost: unknown }).createProviderHost = (() => ({
+      ensureRunning: async () => err({ kind: "not-found", id: "acme" }),
+      status: () => "stopped",
+      stop: async () => undefined,
+      stopAllFor: async () => undefined,
+      stopAll: async () => undefined,
+      retainOnly: async (keys: ReadonlySet<string>) => {
+        retained.push([...keys])
+      },
+    })) as never
+    return { retained }
+  }
+
+  it("retains exactly the instance key of the configured supervised provider on refresh", async () => {
+    const { deps } = makeFakeDeps()
+    const { retained } = wire(deps, { region: "eu" })
+
+    const ctx = createAppContext(deps)
+    await ctx.refreshExtensions()
+
+    expect(retained.at(-1)).toEqual([keyFor({ region: "eu" })])
+  })
+
+  it("retires the previous child's instance key when the provider's config changes", async () => {
+    const { deps } = makeFakeDeps()
+    const { retained } = wire(deps, { region: "eu" })
+
+    const ctx = createAppContext(deps)
+    await ctx.refreshExtensions()
+    const before = keyFor({ region: "eu" })
+    expect(retained.at(-1)).toEqual([before])
+
+    const saved = await ctx.config.save(configWith({ region: "us" }) as never)
+    expect(saved.ok).toBe(true)
+
+    const after = keyFor({ region: "us" })
+    expect(after).not.toBe(before)
+    // The retired key is absent from the retention set, so its child is stopped rather than
+    // left running with the old secrets.
+    expect(retained.at(-1)).toEqual([after])
+  })
+
+  it("retires a supervised child when its extension is disabled by a config save", async () => {
+    // Disabling a plugin in the GUI is a `config.save`, not a refresh, so the sweep cannot read
+    // the supervised set alone — that set is only recomputed by `refreshExtensions`. Without
+    // consulting the enabled ids of the config BEING SAVED, the key stays retained and the
+    // child keeps running with its secrets: exactly the leak this sweep exists to close.
+    const { deps } = makeFakeDeps()
+    const { retained } = wire(deps, { region: "eu" })
+
+    const ctx = createAppContext(deps)
+    await ctx.refreshExtensions()
+    expect(retained.at(-1)).toEqual([keyFor({ region: "eu" })])
+
+    const saved = await ctx.config.save(
+      configWith({ region: "eu" }, false) as never,
+    )
+    expect(saved.ok).toBe(true)
+
+    expect(retained.at(-1)).toEqual([])
+  })
+
+  it("retires a supervised child whose extension a refresh dropped", async () => {
+    const { deps } = makeFakeDeps()
+    const { retained } = wire(deps, { region: "eu" })
+    let installed: readonly unknown[] = [supervisedExtension("acme")]
+    ;(deps as { createExtensionRegistry: unknown }).createExtensionRegistry =
+      (() => ({
+        list: async () => ok(installed),
+        providerDescriptors: async () => ok([]),
+      })) as never
+
+    const ctx = createAppContext(deps)
+    await ctx.refreshExtensions()
+    expect(retained.at(-1)).toEqual([keyFor({ region: "eu" })])
+
+    installed = []
+    await ctx.refreshExtensions()
+
+    expect(retained.at(-1)).toEqual([])
   })
 })

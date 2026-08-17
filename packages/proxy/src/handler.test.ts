@@ -57,6 +57,7 @@ const config = {
     },
   ],
   models: [{ id: "mdl_default", providerId: "p1", providerModel: "gpt-4o" }],
+  providerPlugins: [],
 } as unknown as Config
 
 const deps = (key: string) => ({
@@ -94,6 +95,7 @@ const makeDeps = ({ proxyKey, models }: MakeDepsOpts) => {
       },
     ],
     models,
+    providerPlugins: [],
   } as unknown as Config
   return {
     proxyKey,

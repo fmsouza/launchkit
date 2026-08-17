@@ -64,6 +64,13 @@ describe("buildRealDeps", () => {
     expect((deps as unknown as Record<string, unknown>).runCli).toBeUndefined()
   })
 
+  // The real entry must supply the quit gate: it is the ONLY caller of AppContext.shutdown(),
+  // so an omitted default orphans every supervised plugin process on quit.
+  it("produces a RunGuiDeps that carries a quit gate installer", () => {
+    const deps = buildRealDeps(fakeFactory as never)
+    expect(typeof deps.installQuitGate).toBe("function")
+  })
+
   it("calls reconcileOrphaned() on the session store when startProxy is invoked (GUI startup)", async () => {
     const reconcileOrphaned = mock(() => ({ ok: true as const, value: 0 }))
     const factoryWithSpy = (() =>
@@ -283,6 +290,19 @@ describe("main (entry wiring)", () => {
     const record: { guiOpened?: boolean } = {}
     await main([], recordingDeps(record))
     expect(record.guiOpened).toBe(true)
+  })
+
+  // Without this the app has NO exit path: nothing else calls AppContext.shutdown(), so every
+  // supervised plugin process survives the quit as an orphan.
+  it("installs the quit gate before the window opens when the GUI starts", async () => {
+    const order: string[] = []
+    await main([], {
+      startProxy: () => ({ stop: () => {}, ready: Promise.resolve() }),
+      openWindow: () => order.push("openWindow"),
+      ensureGuiPathResolved: async () => {},
+      installQuitGate: () => order.push("installQuitGate"),
+    })
+    expect(order).toEqual(["installQuitGate", "openWindow"])
   })
 })
 

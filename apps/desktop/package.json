@@ -10,6 +10,7 @@
     "start": "SPECTRUM_ENV=development electrobun dev",
     "dev": "SPECTRUM_ENV=development electrobun dev --watch",
     "smoke": "bun scripts/smoke.ts",
+    "quit-check": "bun scripts/quit-check.ts",
     "typecheck": "tsc --noEmit -p tsconfig.typecheck.json",
     "test": "bun test"
   },

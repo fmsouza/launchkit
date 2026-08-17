@@ -11,6 +11,10 @@ import {
 import { createDataAdmin } from "@spectrum/data-admin"
 import { createSqliteClient, runMigrations } from "@spectrum/db"
 import { createAcpDriver } from "@spectrum/driver-acp"
+import {
+  createDirExtensionFileSource,
+  createExtensionRegistry,
+} from "@spectrum/extensions"
 import { createRegistry, launchHarness } from "@spectrum/harnesses"
 import { detectPlatform, resolveAppPaths } from "@spectrum/platform"
 import {
@@ -18,6 +22,12 @@ import {
   createPathCommandResolver,
 } from "@spectrum/proc"
 import { createProjectStore } from "@spectrum/projects"
+import {
+  createCryptoTokenGen,
+  createFetchHealthProbe,
+  createLoopbackPortAllocator,
+  createProviderHost,
+} from "@spectrum/provider-host"
 import { createProviderRegistry } from "@spectrum/providers"
 import {
   createFileRuntimeState,
@@ -87,6 +97,17 @@ export interface CreateAppContextDeps {
    * factory, the model listers, and the proxy — never re-derives it.
    */
   readonly createProviderRegistry: typeof createProviderRegistry
+  /**
+   * Provider-plugin (extension) layer. The file source is rebuilt on every refresh because the
+   * link map is derived from config; the registry wraps it; the host supervises whatever the
+   * registry reports with a `launch` block.
+   */
+  readonly createDirExtensionFileSource: typeof createDirExtensionFileSource
+  readonly createExtensionRegistry: typeof createExtensionRegistry
+  readonly createProviderHost: typeof createProviderHost
+  readonly createLoopbackPortAllocator: typeof createLoopbackPortAllocator
+  readonly createFetchHealthProbe: typeof createFetchHealthProbe
+  readonly createCryptoTokenGen: typeof createCryptoTokenGen
   readonly createProviderFactory: typeof createProviderFactory
   readonly loadSdk: typeof loadSdk
   readonly createRealGateway: typeof createRealGateway
@@ -175,6 +196,12 @@ export const realDeps: CreateAppContextDeps = {
   createBunProcessSpawner,
   launchHarness,
   createProviderRegistry,
+  createDirExtensionFileSource,
+  createExtensionRegistry,
+  createProviderHost,
+  createLoopbackPortAllocator,
+  createFetchHealthProbe,
+  createCryptoTokenGen,
   createProviderFactory,
   loadSdk,
   createRealGateway,

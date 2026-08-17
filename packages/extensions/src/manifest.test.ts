@@ -1,0 +1,66 @@
+import { describe, expect, it } from "bun:test"
+import { ExtensionManifestSchema, parseManifest } from "./manifest"
+
+const valid = {
+  apiVersion: "spectrum.dev/v1",
+  id: "acme",
+  name: "Acme",
+  version: "1.0.0",
+  contributes: { providers: [] },
+}
+
+describe("ExtensionManifestSchema", () => {
+  it("accepts a manifest declaring a supported api version", () => {
+    expect(ExtensionManifestSchema.safeParse(valid).success).toBe(true)
+  })
+
+  it("rejects a manifest whose root carries an unknown key", () => {
+    expect(
+      ExtensionManifestSchema.safeParse({ ...valid, extra: 1 }).success,
+    ).toBe(false)
+  })
+
+  it("rejects a manifest whose id is not a lowercase slug", () => {
+    expect(
+      ExtensionManifestSchema.safeParse({ ...valid, id: "Acme" }).success,
+    ).toBe(false)
+  })
+
+  it("accepts a manifest contributing nothing at all", () => {
+    const parsed = ExtensionManifestSchema.safeParse({
+      ...valid,
+      contributes: {},
+    })
+    expect(parsed.success).toBe(true)
+  })
+})
+
+describe("parseManifest", () => {
+  it("keeps known contribution keys when the manifest declares them", () => {
+    const result = parseManifest({ ...valid, contributes: { providers: [] } })
+    expect(result.ok).toBe(true)
+    if (result.ok)
+      expect(result.value.manifest.contributes.providers).toEqual([])
+  })
+
+  it("ignores an unknown contribution key and reports it rather than failing", () => {
+    const result = parseManifest({
+      ...valid,
+      contributes: { providers: [], themes: [{ name: "midnight" }] },
+    })
+    expect(result.ok).toBe(true)
+    if (result.ok) expect(result.value.ignoredContributions).toEqual(["themes"])
+  })
+
+  it("rejects a manifest declaring a newer api major", () => {
+    const result = parseManifest({ ...valid, apiVersion: "spectrum.dev/v2" })
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.error.kind).toBe("unsupported-api-version")
+  })
+
+  it("rejects a manifest declaring an unrecognised api group", () => {
+    const result = parseManifest({ ...valid, apiVersion: "example.com/v1" })
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.error.kind).toBe("unsupported-api-version")
+  })
+})

@@ -4,7 +4,9 @@ import {
 } from "@spectrum/providers"
 import type { ProviderDescriptor } from "@spectrum/providers"
 import type { DiscoveredModel } from "@spectrum/types"
+import { isPluginKey } from "@spectrum/types"
 import { type Result, err, ok } from "@spectrum/utils"
+import type { ResolveBaseUrl } from "./providers/resolve-base-url"
 import type { ProxyError } from "./types"
 
 // ── HttpGet interface ─────────────────────────────────────────────────────────
@@ -148,6 +150,31 @@ export type ModelListerInput = {
   readonly config: Readonly<Record<string, string>>
   /** Resolved secret API key (absent for keyless providers like ollama). */
   readonly apiKey?: string
+  /**
+   * Every resolved secret, for the supervision seam: a supervised plugin renders these into
+   * its child process's environment. Discovery itself only ever uses `apiKey`.
+   */
+  readonly secrets?: Readonly<Record<string, string>>
+  /**
+   * The saved provider's instance key, or absent on the draft path. A supervising resolver
+   * keys one child process per instance, so it has nothing to key on without it.
+   */
+  readonly instanceKey?: string
+}
+
+/**
+ * True when `url`'s host is the local machine. A plugin-contributed provider is local BY
+ * DEFINITION, so this is the whole set of hosts discovery may reach for one.
+ */
+const isLoopbackUrl = (url: string): boolean => {
+  let parsed: URL
+  try {
+    parsed = new URL(url)
+  } catch {
+    return false
+  }
+  const host = parsed.hostname.replace(/^\[|\]$/g, "")
+  return host === "127.0.0.1" || host === "::1" || host === "localhost"
 }
 
 /**
@@ -172,8 +199,15 @@ export const createModelLister =
     readonly httpGet: HttpGet
     /** Resolve a provider key to its descriptor. Injected so plugin providers resolve too. */
     readonly getDescriptor: (key: string) => ProviderDescriptor | undefined
+    /**
+     * The SAME supervision seam the provider factory uses. Discovery must not compute its own
+     * base url: a supervised plugin's port is dynamic and known only to the supervisor, and a
+     * second, independent rule for where a plugin's traffic goes is a second place to get it
+     * wrong.
+     */
+    readonly resolveBaseUrl: ResolveBaseUrl
   }): ModelLister =>
-  async ({ sdkProvider, config, apiKey }) => {
+  async ({ sdkProvider, config, apiKey, secrets, instanceKey }) => {
     const descriptor = deps.getDescriptor(sdkProvider)
     if (descriptor === undefined)
       return err({ kind: "unsupported-provider", sdkProvider })
@@ -183,14 +217,41 @@ export const createModelLister =
       return err({ kind: "unsupported-model-discovery", sdkProvider })
     }
 
-    const base =
+    const resolved = await deps.resolveBaseUrl({
+      descriptor,
+      config,
+      secrets: secrets ?? {},
+      instanceKey,
+    })
+    if (!resolved.ok) return resolved
+
+    const isPlugin = isPluginKey(String(descriptor.key))
+    // SECURITY: `discovery.defaultBaseUrl` comes from the plugin's own manifest, and the
+    // openai-models branch below attaches `Authorization: Bearer <apiKey>`. Two rules, both
+    // applied to EVERY plugin-keyed descriptor — supervised or user-run, no distinction: the
+    // base url may only come from the supervision seam or the url the USER configured, and it
+    // must be loopback. A user-run plugin server on a LAN host can therefore serve chat but
+    // cannot list models here; that is a known gap, not an oversight.
+    const configured =
       config.serverUrl !== undefined && config.serverUrl !== ""
         ? config.serverUrl
-        : (discovery.defaultBaseUrl ?? "")
+        : isPlugin
+          ? // NOT redundant with the loopback check below: any local process can listen on a
+            // port, so a manifest declaring `http://127.0.0.1:9999` would pass that check and
+            // still receive the user's key. A plugin never names its own discovery host.
+            ""
+          : (discovery.defaultBaseUrl ?? "")
+    const base = resolved.value ?? configured
     if (base === "") {
       return err({
         kind: "provider-failed",
         detail: `no base URL configured for provider "${sdkProvider}" and no default is known`,
+      })
+    }
+    if (isPlugin && !isLoopbackUrl(base)) {
+      return err({
+        kind: "bad-request",
+        detail: `extension provider "${sdkProvider}" must be reached on loopback`,
       })
     }
 

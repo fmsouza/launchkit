@@ -14,6 +14,13 @@ export type {
   SdkModule,
   LoadSdk,
 } from "./providers/factory"
+export { providerInstanceKey } from "./providers/instance-key"
+export type { ProviderInstanceKeyInput } from "./providers/instance-key"
+export { defaultResolveBaseUrl } from "./providers/resolve-base-url"
+export type {
+  ResolveBaseUrl,
+  ResolveBaseUrlInput,
+} from "./providers/resolve-base-url"
 export { loadSdk } from "./providers/load-sdk"
 export { resolveTimeouts } from "./providers/resolve-timeouts"
 export { createRealGateway } from "./providers/real-gateway"

@@ -1,5 +1,6 @@
 import type { GuiContext } from "./composition"
 import { mountAppMenu } from "./gui/app-menu"
+import { mountQuitGate } from "./gui/quit-gate"
 import { enrichGuiPathAsync } from "./gui/resolve-path"
 import { mountTray } from "./gui/tray"
 import { openWindow } from "./gui/window"
@@ -85,6 +86,13 @@ export interface RunGuiDeps {
    * exists to avoid. Wired to a boundary warn so the next triage of this crash class can tell a
    * capped-open from a clean one. Optional so lightweight test deps can omit it. */
   readonly onStartupCapExpired?: () => void
+  /**
+   * Register the `before-quit` gate that stops supervised plugin processes before the app exits
+   * (see `gui/quit-gate.ts`). Optional so lightweight test deps can omit it — but the real entry MUST
+   * supply it: nothing else calls `AppContext.shutdown()`, so without it every plugin child
+   * survives the quit as an orphan.
+   */
+  readonly installQuitGate?: () => void
 }
 
 /**
@@ -221,6 +229,12 @@ export const buildRealDeps = (
       (async () => {
         await enrichGuiPathAsync()
       }),
+    installQuitGate:
+      overrides.installQuitGate ??
+      ((): void => {
+        // Registration is awaited only by `scripts/quit-check.ts`; startup must not block on it.
+        void mountQuitGate(ctx)
+      }),
     onStartupCapExpired:
       overrides.onStartupCapExpired ??
       ((): void => {
@@ -248,6 +262,9 @@ export const main = async (
   deps: RunGuiDeps,
   wait: StartupWait = defaultStartupWait,
 ): Promise<void> => {
+  // Registered FIRST: a quit arriving during the startup burst must still drain supervised
+  // children, and the gate needs no proxy or window to do its job.
+  deps.installQuitGate?.()
   const proxy = deps.startProxy()
   const outcome = await awaitReadyWithCap(proxy.ready, wait)
   if (outcome === "cap-expired") deps.onStartupCapExpired?.()

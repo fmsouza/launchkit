@@ -1,4 +1,8 @@
-import { ModelRouteSchema, ProviderSchema } from "@spectrum/types"
+import {
+  ModelRouteSchema,
+  PluginIdSchema,
+  ProviderSchema,
+} from "@spectrum/types"
 import { z } from "zod"
 
 /** Bump on any breaking config shape change; add a matching `Migration` (see migrations.ts). */
@@ -99,6 +103,42 @@ export const SettingsSchema = z
 
 export type Settings = z.infer<typeof SettingsSchema>
 
+/** An installed provider plugin and how it got here — spec §6.5. */
+export const PluginInstallSchema = z
+  .object({
+    id: PluginIdSchema,
+    source: z.discriminatedUnion("kind", [
+      /** Hand-placed directory under the plugin root; Spectrum did not install it. */
+      z
+        .object({ kind: z.literal("local") })
+        .strict(),
+      z
+        .object({
+          kind: z.literal("git"),
+          url: z.string(),
+          ref: z.string(),
+          commit: z.string(),
+        })
+        .strict(),
+      z
+        .object({
+          kind: z.literal("path"),
+          path: z.string(),
+          /**
+           * true  → the plugin is READ LIVE from `path`; editing the working copy takes
+           *         effect on the next reload, with no reinstall. The development mode.
+           * false → `path` was snapshotted into the plugin root at install time.
+           */
+          linked: z.boolean(),
+        })
+        .strict(),
+    ]),
+    enabled: z.boolean(),
+  })
+  .strict()
+
+export type PluginInstall = z.infer<typeof PluginInstallSchema>
+
 /** The on-disk config document. `providers`/`models` reuse the locked `@spectrum/types` schemas. */
 export const ConfigSchema = z
   .object({
@@ -106,6 +146,7 @@ export const ConfigSchema = z
     providers: z.array(ProviderSchema),
     models: z.array(ModelRouteSchema),
     settings: SettingsSchema,
+    providerPlugins: z.array(PluginInstallSchema).default([]),
   })
   .strict()
 
@@ -117,4 +158,5 @@ export const defaultConfig = (): Config => ({
   providers: [],
   models: [],
   settings: SettingsSchema.parse({}),
+  providerPlugins: [],
 })

@@ -1,5 +1,6 @@
 import {
   type Platform,
+  defaultTerminationSignal,
   detectPlatform,
   isAbsolutePath,
 } from "@spectrum/platform"
@@ -53,7 +54,20 @@ export const createBunProcessSpawner = (): ProcessSpawner => ({
         env: { ...process.env, ...env },
         stdio: ["inherit", "inherit", "inherit"],
       })
-      return ok({ pid: child.pid, exited: child.exited })
+      const signal = defaultTerminationSignal(detectPlatform())
+      return ok({
+        pid: child.pid,
+        exited: child.exited,
+        // Killing an already-exited child throws in some runtimes; a caller asking a dead
+        // process to die has already got what it wanted, so swallow that specific no-op.
+        kill: (): void => {
+          try {
+            child.kill(signal)
+          } catch {
+            /* already exited */
+          }
+        },
+      })
     } catch (cause) {
       const detail = cause instanceof Error ? cause.message : String(cause)
       return err({ kind: "spawn-failed", detail })

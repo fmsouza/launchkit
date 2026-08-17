@@ -1,0 +1,20 @@
+{
+  "name": "@spectrum/provider-host",
+  "version": "1.9.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@spectrum/extensions": "workspace:*",
+    "@spectrum/logger": "workspace:*",
+    "@spectrum/proc": "workspace:*",
+    "@spectrum/types": "workspace:*",
+    "@spectrum/utils": "workspace:*"
+  }
+}

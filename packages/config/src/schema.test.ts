@@ -3,6 +3,7 @@ import type { ModelId, ProviderId } from "@spectrum/types"
 import {
   CURRENT_CONFIG_VERSION,
   ConfigSchema,
+  PluginInstallSchema,
   SettingsSchema,
   defaultConfig,
 } from "./schema"
@@ -178,6 +179,7 @@ describe("ConfigSchema", () => {
     expect(ConfigSchema.parse(config)).toEqual({
       ...config,
       models: [{ ...firstModel, attachments: {} }],
+      providerPlugins: [],
     })
   })
 
@@ -288,6 +290,7 @@ describe("defaultConfig", () => {
         windowBounds: null,
         sessionNameModelId: null,
       },
+      providerPlugins: [],
     })
   })
   it("produces a config that satisfies ConfigSchema", () => {
@@ -321,5 +324,160 @@ describe("SettingsSchema sessionNameModelId", () => {
   it("defaults the new field in defaultConfig()", () => {
     expect(defaultConfig().settings.sessionNameModelId).toBeNull()
     expect(defaultConfig().version).toBe(13)
+  })
+})
+
+describe("providerPlugins", () => {
+  it("defaults to an empty array when a config omits the field", () => {
+    const config = {
+      version: CURRENT_CONFIG_VERSION,
+      providers: [],
+      models: [],
+      settings: {
+        proxyPort: 4000,
+        proxyHost: "127.0.0.1",
+        lastSelectedFolder: "",
+        lastSelectedHarnessId: "",
+        collapsedProjects: [],
+        lastByHarness: {},
+        updateChannel: "stable",
+        dismissedUpdateVersion: null,
+        dismissedUpdateHash: null,
+        firstTokenTimeoutMs: 120000,
+        interTokenTimeoutMs: 60000,
+        windowBounds: null,
+        sessionNameModelId: null,
+      },
+    }
+    const parsed = ConfigSchema.safeParse(config)
+    expect(parsed.success).toBe(true)
+    if (parsed.success) expect(parsed.data.providerPlugins).toEqual([])
+  })
+
+  it("accepts a git-sourced install record", () => {
+    expect(
+      PluginInstallSchema.safeParse({
+        id: "acme",
+        source: {
+          kind: "git",
+          url: "https://github.com/acme/spectrum-plugin.git",
+          ref: "main",
+          commit: "abc1234",
+        },
+        enabled: true,
+      }).success,
+    ).toBe(true)
+  })
+
+  it("accepts a linked path install record", () => {
+    expect(
+      PluginInstallSchema.safeParse({
+        id: "acme",
+        source: { kind: "path", path: "/home/me/acme", linked: true },
+        enabled: true,
+      }).success,
+    ).toBe(true)
+  })
+
+  it("accepts a copied path install record", () => {
+    const parsed = PluginInstallSchema.safeParse({
+      id: "acme-copy",
+      source: { kind: "path", path: "/home/me/acme", linked: false },
+      enabled: false,
+    })
+    expect(parsed.success).toBe(true)
+    if (parsed.success) {
+      expect(parsed.data.source).toEqual({
+        kind: "path",
+        path: "/home/me/acme",
+        linked: false,
+      })
+    }
+  })
+
+  it("accepts a local hand-placed install record", () => {
+    expect(
+      PluginInstallSchema.safeParse({
+        id: "handmade",
+        source: { kind: "local" },
+        enabled: true,
+      }).success,
+    ).toBe(true)
+  })
+
+  it("rejects an install record carrying an unknown source kind", () => {
+    const parsed = PluginInstallSchema.safeParse({
+      id: "acme",
+      source: { kind: "npm", name: "spectrum-plugin-acme" },
+      enabled: true,
+    })
+    expect(parsed.success).toBe(false)
+    if (!parsed.success) {
+      expect(
+        parsed.error.issues.some((i) => i.path.join(".") === "source.kind"),
+      ).toBe(true)
+      expect(
+        parsed.error.issues.some(
+          (i) => i.code === "invalid_union_discriminator",
+        ),
+      ).toBe(true)
+    }
+  })
+
+  it("rejects an install record carrying an unknown top-level key (strict)", () => {
+    expect(
+      PluginInstallSchema.safeParse({
+        id: "acme",
+        source: { kind: "local" },
+        enabled: true,
+        version: "1.0.0",
+      }).success,
+    ).toBe(false)
+  })
+
+  it("rejects a git source carrying an unknown key (strict)", () => {
+    expect(
+      PluginInstallSchema.safeParse({
+        id: "acme",
+        source: {
+          kind: "git",
+          url: "https://github.com/acme/spectrum-plugin.git",
+          ref: "main",
+          commit: "abc1234",
+          branch: "main",
+        },
+        enabled: true,
+      }).success,
+    ).toBe(false)
+  })
+
+  it("rejects an uppercase plugin id", () => {
+    expect(
+      PluginInstallSchema.safeParse({
+        id: "ACME",
+        source: { kind: "local" },
+        enabled: true,
+      }).success,
+    ).toBe(false)
+  })
+
+  it("rejects a plugin id starting with a dash", () => {
+    expect(
+      PluginInstallSchema.safeParse({
+        id: "-acme",
+        source: { kind: "local" },
+        enabled: true,
+      }).success,
+    ).toBe(false)
+  })
+
+  it("rejects an empty plugin id", () => {
+    expect(
+      PluginInstallSchema.safeParse({
+        id: "",
+        source: { kind: "local" },
+        enabled: true,
+      }).success,
+    ).toBe(false)
   })
 })

@@ -11,6 +11,7 @@ import {
   type HarnessId,
   type ModelId,
   type SessionId,
+  pluginIdOf,
   wireModelFor,
 } from "@spectrum/types"
 
@@ -23,6 +24,7 @@ import type {
 import { demoScript } from "@spectrum/agent-driver"
 import { ThinkingEffortSchema } from "@spectrum/agent-events"
 import { defaultConfig } from "@spectrum/config"
+import type { ExtensionRegistry } from "@spectrum/extensions"
 import {
   type LaunchParams,
   builtinHarnesses,
@@ -45,17 +47,20 @@ import {
 } from "@spectrum/platform"
 import type { ProviderDescriptor, ProviderRegistry } from "@spectrum/providers"
 import {
+  type ResolveBaseUrl,
   createDraftProviderTester,
   createFetchHttpGet,
   createModelLister,
   createProviderTester,
   createRouter,
+  defaultResolveBaseUrl,
   encodeSessionProxyKey,
   isProxyRunning,
+  providerInstanceKey,
   resolveTimeouts,
   startProxy,
 } from "@spectrum/proxy"
-import { err, redactSecrets } from "@spectrum/utils"
+import { err, ok, redactSecrets } from "@spectrum/utils"
 import type { AppContext } from "./app-context"
 import { withDemoHarness } from "./demo-harness"
 import { type CreateAppContextDeps, realDeps } from "./deps"
@@ -113,10 +118,12 @@ const createListProviderModels = (
   config: ConfigStore,
   secrets: SecretStore,
   getDescriptor: (key: string) => ProviderDescriptor | undefined,
+  resolveBaseUrl: ResolveBaseUrl,
 ): AppContext["listProviderModels"] => {
   const lister = createModelLister({
     httpGet: createFetchHttpGet(),
     getDescriptor,
+    resolveBaseUrl,
   })
   return async (providerId) => {
     const loaded = await config.load()
@@ -127,19 +134,29 @@ const createListProviderModels = (
     if (provider === undefined)
       return err({ kind: "unknown-provider", providerId })
 
-    // Resolve the apiKey from the keychain. Providers without secrets (e.g. ollama) have an
-    // empty secrets record, so apiKey stays undefined — the lister handles that gracefully.
-    let apiKey: string | undefined
-    const apiKeyRef = provider.secrets.apiKey
-    if (apiKeyRef !== undefined) {
-      const got = await secrets.get(apiKeyRef)
+    // Resolve EVERY secret from the keychain, not just the apiKey: a supervised extension
+    // renders its whole secret set into the child process's environment, and discovery goes
+    // through the same seam that starts it. Providers without secrets (e.g. ollama) have an
+    // empty record, so apiKey stays undefined — the lister handles that gracefully.
+    const resolvedSecrets: Record<string, string> = {}
+    for (const [field, ref] of Object.entries(provider.secrets)) {
+      const got = await secrets.get(ref)
       if (!got.ok) return got
-      apiKey = got.value
+      resolvedSecrets[field] = got.value
     }
+    const apiKey = resolvedSecrets.apiKey
 
     return lister({
       sdkProvider: provider.sdkProvider,
       config: provider.config,
+      secrets: resolvedSecrets,
+      // The SAME derivation the provider factory caches on, so discovery reaches the child
+      // process a request would reach rather than starting a second one.
+      instanceKey: providerInstanceKey({
+        sdkProvider: provider.sdkProvider,
+        config: provider.config,
+        secretRefs: provider.secrets,
+      }),
       ...(apiKey !== undefined ? { apiKey } : {}),
     })
   }
@@ -172,16 +189,21 @@ const createTestProviderDraft = (
  */
 const createListProviderModelsDraft = (
   getDescriptor: (key: string) => ProviderDescriptor | undefined,
+  resolveBaseUrl: ResolveBaseUrl,
 ): AppContext["listProviderModelsDraft"] => {
   const lister = createModelLister({
     httpGet: createFetchHttpGet(),
     getDescriptor,
+    resolveBaseUrl,
   })
+  // No `instanceKey`: a draft provider is unsaved, so the seam refuses a supervised extension
+  // here rather than spawning a throwaway child process per keystroke.
   return async ({ sdkProvider, config, secrets }) => {
     const apiKey = secrets.apiKey
     return lister({
       sdkProvider,
       config,
+      secrets,
       ...(apiKey !== undefined ? { apiKey } : {}),
     })
   }
@@ -329,7 +351,13 @@ export const createAppContext = (
     },
     save: async (next) => {
       const saved = await baseConfig.save(next)
-      if (saved.ok) liveConfig = next
+      if (saved.ok) {
+        liveConfig = next
+        // Every provider edit changes that provider's instance key, so the child serving the
+        // PREVIOUS configuration is now unreachable and must be stopped rather than left
+        // running with the superseded secrets.
+        await retainConfiguredInstances(next)
+      }
       return saved
     },
   }
@@ -459,18 +487,290 @@ export const createAppContext = (
   const resolveLaunchEnvOnly = (params: LaunchParams) =>
     resolveLaunchRaw(params)
 
-  // One registry for the process: builtins now, builtins ⊕ installed plugins in Plan 2. Built
-  // exactly once here and threaded into every consumer below (factory, model listers, the proxy's
-  // getDescriptor) — never re-derived.
-  const providerRegistry: ProviderRegistry = deps.createProviderRegistry()
+  // ---------------------------------------------------------------------------------------
+  // Provider registry ⊕ installed extensions.
+  //
+  // `createAppContext` is synchronous but reading extensions from disk is not, so the
+  // plugin-derived state lives in mutable cells that `refreshExtensions` swaps. Every consumer
+  // is handed a STABLE façade that delegates to the current cell — handing out the cell's value
+  // itself would go stale on the first swap.
+  // ---------------------------------------------------------------------------------------
+  const extensionsLog = log.child("extensions")
+
+  let providerRegistryCell: ProviderRegistry = deps.createProviderRegistry()
+  let extensionRegistryCell = deps.createExtensionRegistry({
+    fileSource: deps.createDirExtensionFileSource(paths.providerPluginDir, {}),
+    logger: extensionsLog,
+  })
+  /**
+   * Contribution ids of ENABLED extensions whose transport declares a `launch` block — the ones
+   * Spectrum supervises. Gated on `enabled` for the same reason `providerDescriptors` is: an
+   * installed-but-disabled extension must be inert, not merely unlisted.
+   */
+  let supervisedIds: ReadonlySet<string> = new Set<string>()
+  /** Manifest ids the user has enabled. The provider host consults this before spawning anything. */
+  let enabledExtensionIds: ReadonlySet<string> = new Set<string>()
+  /**
+   * Contribution id → the manifest id that declares it, for EVERY installed supervised
+   * contribution, enabled or not. The retention sweep needs this: a `config.save` that toggles
+   * `providerPlugins[].enabled` does not recompute `supervisedIds`, so the sweep re-evaluates
+   * `enabled` against the config it is handed and needs to know which extension owns a
+   * contribution to do it.
+   */
+  let supervisedOwners: ReadonlyMap<string, string> = new Map<string, string>()
+
+  const providerRegistry: ProviderRegistry = {
+    get: (key) => providerRegistryCell.get(key),
+    list: () => providerRegistryCell.list(),
+    catalog: () => providerRegistryCell.catalog(),
+  }
+  const extensionRegistry: ExtensionRegistry = {
+    list: () => extensionRegistryCell.list(),
+    providerDescriptors: (enabledIds) =>
+      extensionRegistryCell.providerDescriptors(enabledIds),
+  }
   const getDescriptor = (key: string): ProviderDescriptor | undefined =>
     providerRegistry.get(key)
+
+  /** False until one refresh has produced a complete, consistent view of the installed set. */
+  let haveGoodExtensionState = false
+
+  /**
+   * Give up on this refresh. At startup (no good state yet) that means falling back to builtins
+   * only; on a LATER refresh the last known-good view is KEPT — a momentary fs error must not
+   * silently demote a supervised plugin to "not supervised", which is how plugin traffic would
+   * end up resolved against an SDK's cloud default.
+   */
+  const abandonRefresh = (msg: string, kind: string): void => {
+    extensionsLog.error(msg, { kind })
+    if (haveGoodExtensionState) return
+    supervisedIds = new Set<string>()
+    enabledExtensionIds = new Set<string>()
+    supervisedOwners = new Map<string, string>()
+    providerRegistryCell = deps.createProviderRegistry()
+  }
+
+  /**
+   * Re-read the installed extensions and rebuild everything derived from them. A failure is
+   * logged (`{ kind }` only) and swallowed: a broken plugin manifest must never stop the app
+   * from starting.
+   *
+   * Everything is computed into locals and all FIVE cells (`extensionRegistryCell`,
+   * `enabledExtensionIds`, `supervisedIds`, `supervisedOwners`, `providerRegistryCell`) are
+   * swapped in ONE synchronous block at the end. A torn intermediate state — a new supervised
+   * set against the previous provider registry — would make a supervised contribution look
+   * unsupervised for the width of an await, and an unsupervised plugin resolves to no base url
+   * at all.
+   */
+  const runRefresh = async (): Promise<void> => {
+    try {
+      const loaded = await config.load()
+      const cfg = loaded.ok ? loaded.value : (liveConfig ?? defaultConfig())
+      // Only a LINKED path install is read live from its source dir; every other install mode
+      // lives under the plugin root and needs no link entry.
+      const linkMap: Record<string, string> = Object.fromEntries(
+        cfg.providerPlugins.flatMap((p) =>
+          p.source.kind === "path" && p.source.linked
+            ? [[String(p.id), p.source.path] as const]
+            : [],
+        ),
+      )
+      const nextRegistry = deps.createExtensionRegistry({
+        fileSource: deps.createDirExtensionFileSource(
+          paths.providerPluginDir,
+          linkMap,
+        ),
+        logger: extensionsLog,
+      })
+
+      const listed = await nextRegistry.list()
+      if (!listed.ok) {
+        abandonRefresh("extension load failed", listed.error.kind)
+        return
+      }
+      const enabledIds = cfg.providerPlugins
+        .filter((p) => p.enabled)
+        .map((p) => String(p.id))
+      const nextEnabled = new Set<string>(enabledIds)
+      // SECURITY: only an ENABLED extension's contribution is supervised — the same filter
+      // `providerDescriptors` applies. A disabled extension that reached this set would have
+      // its `launch.command` spawned with the secrets of whatever provider named its id.
+      const nextSupervised = new Set<string>(
+        listed.value
+          .filter((e) => nextEnabled.has(String(e.manifest.id)))
+          .flatMap((e) =>
+            e.manifest.contributes.providers
+              .filter((p) => p.transport.launch !== undefined)
+              .map((p) => String(p.id)),
+          ),
+      )
+      // Ownership is recorded for every INSTALLED supervised contribution, enabled or not —
+      // the sweep applies `enabled` itself, against the config it is given.
+      const nextOwners = new Map<string, string>(
+        listed.value.flatMap((e) =>
+          e.manifest.contributes.providers
+            .filter((p) => p.transport.launch !== undefined)
+            .map((p) => [String(p.id), String(e.manifest.id)] as const),
+        ),
+      )
+
+      const descriptors = await nextRegistry.providerDescriptors(enabledIds)
+      if (!descriptors.ok) {
+        abandonRefresh(
+          "extension descriptors unavailable",
+          descriptors.error.kind,
+        )
+        return
+      }
+      const nextProviders = deps.createProviderRegistry(descriptors.value)
+
+      // The atomic swap. No await may appear between these assignments.
+      extensionRegistryCell = nextRegistry
+      enabledExtensionIds = nextEnabled
+      supervisedIds = nextSupervised
+      supervisedOwners = nextOwners
+      providerRegistryCell = nextProviders
+      haveGoodExtensionState = true
+
+      // AFTER the swap, so retention is judged against the view that is now live: a plugin this
+      // refresh dropped or disabled is no longer supervised, so its child is retired here.
+      await retainConfiguredInstances(cfg)
+    } catch (cause) {
+      // Defensive: every adapter above returns a Result, so this is unreachable by design.
+      // It exists so an unexpected throw degrades gracefully instead of rejecting
+      // `extensionsReady` — which the proxy's routing path awaits on every request.
+      abandonRefresh(
+        "extension refresh failed",
+        cause instanceof Error ? cause.name : "unknown",
+      )
+    }
+  }
+
+  /**
+   * The most recent refresh. Reassigned on every call so the routing path always awaits the
+   * refresh actually in flight — pinning it to the first one would let a request read the state
+   * a later refresh is midway through replacing.
+   */
+  let extensionsReady: Promise<void> = Promise.resolve()
+
+  /** Refreshes are SERIALIZED: two overlapping calls must not interleave their reads. */
+  const refreshExtensions = (): Promise<void> => {
+    const next = extensionsReady.then(runRefresh)
+    extensionsReady = next
+    return next
+  }
+
+  /** The initial load, started at construction and awaited by the routing path below. */
+  refreshExtensions()
+
+  const providerHost = deps.createProviderHost({
+    registry: extensionRegistry,
+    // Reads the CELL, not a snapshot: the host is built once and must see every later refresh.
+    isEnabled: (extensionId: string) => enabledExtensionIds.has(extensionId),
+    resolver,
+    spawner: deps.createBunProcessSpawner(),
+    allocator: deps.createLoopbackPortAllocator(),
+    probe: deps.createFetchHealthProbe(),
+    sleep: (ms: number) => new Promise((resolve) => setTimeout(resolve, ms)),
+    now: () => Date.now(),
+    tokenGen: deps.createCryptoTokenGen(),
+    logger: log.child("provider-host"),
+  })
+
+  /**
+   * Retire every supervised child that no longer belongs to a configured, supervised provider.
+   *
+   * A child is keyed by the provider's CONFIGURATION (`providerInstanceKey` — the SAME
+   * derivation the proxy factory caches on, deliberately not a second copy of the formula), so
+   * editing any field in the GUI mints a new key and spawns a new child. Without this sweep the
+   * previous child stays `running` for the life of the app, still holding the old secrets in its
+   * environment. The same sweep retires a plugin an extension refresh dropped or disabled.
+   */
+  const retainConfiguredInstances = async (
+    cfg: import("@spectrum/config").Config,
+  ): Promise<void> => {
+    // `enabled` is read from the config being swept, NOT from `supervisedIds`: disabling a
+    // plugin in the GUI is a `config.save`, which does not recompute the supervised set. Reading
+    // the stale set would retain the key and leave the disabled extension's child running.
+    const enabled = new Set(
+      cfg.providerPlugins.filter((p) => p.enabled).map((p) => String(p.id)),
+    )
+    const keys = new Set(
+      cfg.providers
+        .filter((p) => {
+          const id = pluginIdOf(p.sdkProvider)
+          if (id === undefined) return false
+          const owner = supervisedOwners.get(id)
+          return owner !== undefined && enabled.has(owner)
+        })
+        .map((p) =>
+          providerInstanceKey({
+            sdkProvider: p.sdkProvider,
+            config: p.config,
+            secretRefs: p.secrets,
+          }),
+        ),
+    )
+    await providerHost.retainOnly(keys)
+  }
+
+  /**
+   * Base-url resolution for the proxy factory. A supervised contribution resolves to its live
+   * loopback port (starting the process if needed); everything else — builtins AND user-run
+   * plugin servers with no `launch` block — falls through to the ordinary `serverUrl` path.
+   */
+  const resolveBaseUrl: ResolveBaseUrl = async (input) => {
+    // Await the refresh IN FLIGHT, not merely the first one: `supervisedIds` is empty until the
+    // initial load resolves, and a later refresh replaces it wholesale.
+    await extensionsReady
+    const id = pluginIdOf(String(input.descriptor.key))
+    if (id === undefined) return defaultResolveBaseUrl(input) // builtin
+
+    if (supervisedIds.has(id)) {
+      // Draft probe: refusing beats spawning a throwaway child process per keystroke.
+      if (input.instanceKey === undefined)
+        return err({
+          kind: "bad-request",
+          detail: "save the provider before testing a supervised extension",
+        })
+      const running = await providerHost.ensureRunning({
+        instanceKey: input.instanceKey,
+        providerId: id,
+        secrets: input.secrets,
+      })
+      if (!running.ok)
+        return err({
+          kind: "provider-failed",
+          detail: `extension ${id} not running`,
+        })
+      return ok(running.value.baseUrl)
+    }
+
+    // A user-run plugin server: no launch block, so its url comes from the `serverUrl` config
+    // field as for any builtin.
+    //
+    // SECURITY (defence in depth): a plugin-contributed provider is local BY DEFINITION, and
+    // plugin descriptors carry no `defaultBaseUrl`. If it resolves to no url at all, the AI SDK
+    // would silently fall back to its own cloud endpoint (e.g. api.openai.com) and send the
+    // plugin's secrets there. Refuse instead — any bug that lands here becomes a failed request
+    // rather than an exfiltration.
+    const hasUrl =
+      (input.config.serverUrl ?? "") !== "" ||
+      (input.descriptor.sdkMapping.defaultBaseUrl ?? "") !== ""
+    if (!hasUrl)
+      return err({
+        kind: "bad-request",
+        detail: `extension ${id} has no server url`,
+      })
+    return defaultResolveBaseUrl(input)
+  }
 
   // proxy provider layer: factory (secrets + lazy SDK loader) + real streamText gateway
   const factory = deps.createProviderFactory({
     secretStore: secrets,
     loadSdk: deps.loadSdk,
     getDescriptor,
+    resolveBaseUrl,
   })
   const gateway = deps.createRealGateway({
     getTimeouts: (ctx) => {
@@ -738,6 +1038,9 @@ export const createAppContext = (
     factory,
     gateway,
     providerRegistry,
+    extensionRegistry,
+    providerHost,
+    refreshExtensions,
     runtime,
     testProvider: createTestProvider(config, factory, gateway, () =>
       deps.createSystemClock(),
@@ -746,11 +1049,15 @@ export const createAppContext = (
       config,
       secrets,
       getDescriptor,
+      resolveBaseUrl,
     ),
     testProviderDraft: createTestProviderDraft(factory, gateway, () =>
       deps.createSystemClock(),
     ),
-    listProviderModelsDraft: createListProviderModelsDraft(getDescriptor),
+    listProviderModelsDraft: createListProviderModelsDraft(
+      getDescriptor,
+      resolveBaseUrl,
+    ),
     proxyPort,
     proxyBaseUrl,
     genProxyKey,
@@ -774,6 +1081,11 @@ export const createAppContext = (
     // fake clock in tests instead of constructing `{ now: () => new Date() }` inline.
     closeDb: (): void => {
       dbClient.connection.close()
+    },
+    // Process exit: stop every supervised plugin child process. Deliberately NOT folded into
+    // `closeDb`, which is the narrow GUI factory-reset hook.
+    shutdown: async (): Promise<void> => {
+      await providerHost.stopAll()
     },
     clock: deps.createSystemClock(),
   }
