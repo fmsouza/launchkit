@@ -1,5 +1,20 @@
 export type { FlowClient, FlowHttp } from "./flow-client"
 export { createFetchFlowHttp, createFlowClient } from "./flow-client"
+export type {
+  FlowSessionId,
+  RunnerStep,
+  FlowCompletion,
+  FlowStartInput,
+  FlowAdvanceInput,
+  FlowAbandonReason,
+  FlowRunner,
+  FlowRunnerDeps,
+} from "./flow-runner"
+export {
+  createFlowRunner,
+  flowContributionIdOf,
+  flowInstanceKey,
+} from "./flow-runner"
 export type { OpenExternal } from "./open-external"
 export { createGuardedOpenExternal } from "./open-external"
 export type { PortAllocator } from "./port"

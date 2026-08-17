@@ -31,6 +31,17 @@ and stopping it on demand.
 - `PluginStatus = "stopped" | "starting" | "running" | "failed"`,
   `RunningPlugin = { baseUrl; pid; hostToken }`, `EnsureRunningInput`
 
+### Setup flows
+- `createFlowRunner(deps: { host, client, idGen, now, logger? }): FlowRunner` with
+  `start`, `advance`, `takeCompletion`, `cancel`, `activeInstanceKeys()`,
+  `abandon(keys, reason)` — drives one multi-step provider setup exchange over a DEDICATED
+  supervised instance and enforces `FLOW_LIMITS` itself
+- `flowInstanceKey(providerId, nonce)` / `flowContributionIdOf(key)` — the one definition of
+  the `flow:<contribution id>:<nonce>` key format; `flowContributionIdOf` yields the provider
+  CONTRIBUTION id (not an extension manifest id, and not a Spectrum `ProviderId`)
+- `RunnerStep`, `FlowCompletion`, `FlowSessionId`, `FlowStartInput`, `FlowAdvanceInput`,
+  `FlowAbandonReason`, `FlowRunner`, `FlowRunnerDeps`
+
 ## Local invariants
 - `waitForReady` takes `probe`, `sleep`, and `now` as injected dependencies — no real
   timers, network, or clock in its own logic.
@@ -77,6 +88,25 @@ and stopping it on demand.
   exit handler restarts only a `running` instance; marking after the kill would race the
   handler into a zombie restart loop on shutdown. Same reason readiness failure marks
   `failed` before killing.
+- A flow runs on its OWN instance, never the serving one: in `context: "create"` there is no
+  provider record yet, and a flow that hangs must not take a working provider down with it.
+  The flow instance is stopped on EVERY terminal path — done, error, cancel, timeout,
+  step-cap exhaustion, a failed or unparseable response.
+- Caps are the RUNNER's, never the plugin's: 50 steps, a 10-minute total budget measured with
+  the injected `now`, and an `await` step's `pollMs` replaced by `clampPollMs` before the step
+  leaves the runner. A UI that trusted the plugin's number would poll at the plugin's rate.
+- Two session ids, never interchanged: the runner mints the Spectrum-side `FlowSessionId` it
+  hands its caller; the plugin mints its own, kept as `pluginSessionId` and echoed back to the
+  plugin only.
+- `done.secrets` never rides the returned step's path to the keychain — it is stashed and
+  drained by exactly one `takeCompletion`, so a replayed IPC call cannot re-read it.
+- `abandon` exists because `retainOnly` stops and forgets an instance with no callback and no
+  reason code, and `status` cannot tell a swept instance from a crashed one: the composition
+  root TELLS the runner which keys it is about to sweep, immediately before sweeping them, so
+  a mid-flow "disable this extension" surfaces a named error step instead of a flow that hangs
+  until its timeout.
+- Flow logs carry `{ providerId, flowId, outcome }` and a step's `{ kind }` — never field
+  values, `config`, `secrets`, the host token, the base URL's port, or the instance key.
 - Logs `envKeys` (`Object.keys(env)`) and the UNRENDERED `launch.args` on spawn — never env
   values, never rendered args (a manifest may write `--key {{apiKey}}`), never the host
   token, never the instance key (itself a hash of the provider's secret refs). The resolved
