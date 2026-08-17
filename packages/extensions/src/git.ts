@@ -35,8 +35,8 @@ const redactUrlCredentials = (url: string): string =>
 /**
  * Overrides for the vars that turn env inheritance into command execution or a stuck
  * credential prompt. This is NOT a minimal env in the strict sense: the only real
- * `ProcessSpawner` (`createBunProcessSpawner`, shared with `@spectrum/harnesses`,
- * `@spectrum/pty`, and `@spectrum/provider-host`) merges the ambient process env
+ * `ProcessSpawner` (`createBunProcessSpawner`, shared with `@spectrum/harnesses` and
+ * `@spectrum/provider-host`) merges the ambient process env
  * UNDERNEATH whatever is passed here (`{ ...process.env, ...env }`), so an ambient
  * `SECRET_TOKEN` or similar still reaches the child. What this map guarantees is narrower
  * but load-bearing: `GIT_ASKPASS`/`SSH_ASKPASS`/`GIT_PROXY_COMMAND` are forced empty so an
