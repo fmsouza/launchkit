@@ -1,9 +1,33 @@
-export * from "./adapters"
-export * from "./api-version"
-export * from "./descriptor"
-export * from "./env-template"
-export * from "./errors"
-export * from "./file-source"
-export * from "./manifest"
-export * from "./provider-contribution"
-export * from "./registry"
+export { createDirExtensionFileSource } from "./adapters"
+export {
+  SUPPORTED_API_MAJOR,
+  isSupportedApiVersion,
+  parseApiVersion,
+} from "./api-version"
+export { descriptorFromContribution } from "./descriptor"
+export {
+  RUNTIME_TOKENS,
+  allowedTokensFor,
+  renderPluginArgs,
+  renderPluginEnv,
+  validateContributionTemplates,
+} from "./env-template"
+export type { PluginError } from "./errors"
+export { createInMemoryExtensionFileSource } from "./file-source"
+export type { ExtensionEntry, ExtensionFileSource } from "./file-source"
+export {
+  ExtensionManifestSchema,
+  KNOWN_CONTRIBUTION_KEYS,
+  parseManifest,
+} from "./manifest"
+export type { ExtensionManifest, ParsedManifest } from "./manifest"
+export {
+  PluginLaunchSchema,
+  ProviderContributionSchema,
+} from "./provider-contribution"
+export type {
+  PluginLaunch,
+  ProviderContribution,
+} from "./provider-contribution"
+export { createExtensionRegistry } from "./registry"
+export type { ExtensionRegistry, LoadedExtension } from "./registry"

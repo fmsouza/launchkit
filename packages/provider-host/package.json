@@ -13,7 +13,6 @@
   "dependencies": {
     "@spectrum/extensions": "workspace:*",
     "@spectrum/logger": "workspace:*",
-    "@spectrum/platform": "workspace:*",
     "@spectrum/proc": "workspace:*",
     "@spectrum/types": "workspace:*",
     "@spectrum/utils": "workspace:*"
