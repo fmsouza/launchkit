@@ -132,7 +132,10 @@ const runList = async (deps: CliDeps): Promise<Result<void, CliError>> => {
     return err({ kind: "failed", detail: "could not load config" })
   const installs = loaded.value.providerPlugins
 
+  const listedIds = new Set<string>()
+
   for (const extension of listed.value) {
+    listedIds.add(String(extension.manifest.id))
     const install = installs.find(
       (p) => String(p.id) === String(extension.manifest.id),
     )
@@ -146,6 +149,17 @@ const runList = async (deps: CliDeps): Promise<Result<void, CliError>> => {
       deps.out.write(line)
     }
   }
+
+  // Mirrors the GUI handler's reconstructed rows (`listExtensionViews`): the registry skips
+  // an install whose source it could not read (a dead linked path, a manually deleted
+  // clone), but the install record is still there and `plugin remove <id>` still works on
+  // it. Printing nothing would leave a user unable to see — and so unable to recover — an
+  // extension the GUI shows them.
+  for (const install of installs) {
+    if (listedIds.has(String(install.id))) continue
+    deps.out.write(`${install.id}\t(unreadable source)\tunavailable`)
+  }
+
   return ok(undefined)
 }
 

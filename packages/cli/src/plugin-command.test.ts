@@ -77,6 +77,9 @@ const acmeInstall = {
 const harness = (opts?: {
   removeRefused?: boolean
   listError?: PluginError
+  /** Install records the registry does NOT list — a dead linked source, or a clone the
+   * user deleted by hand. The GUI reconstructs a row for each; the CLI must too. */
+  extraInstalls?: readonly (typeof acmeInstall)[]
 }) => {
   const writer = createMemoryWriter()
   const calls: { op: string; arg: unknown }[] = []
@@ -121,7 +124,10 @@ const harness = (opts?: {
     },
     config: {
       load: async (): Promise<Result<Config, unknown>> =>
-        ok({ ...defaultConfig(), providerPlugins: [acmeInstall] }),
+        ok({
+          ...defaultConfig(),
+          providerPlugins: [acmeInstall, ...(opts?.extraInstalls ?? [])],
+        }),
       save: async () => ok(undefined),
     },
   }
@@ -137,6 +143,31 @@ describe("pluginCommand", () => {
     expect(r.ok).toBe(true)
     expect(writer.lines.join("\n")).toContain("acme")
     expect(writer.lines.join("\n")).toMatch(/enabled/i)
+  })
+
+  /** `plugin remove <id>` still works on these, so a user who cannot see one cannot
+   * recover it. The handler already reconstructs an `unavailable` row for each. */
+  it("lists an install record the registry skipped, tagged unavailable", async () => {
+    const { run, writer } = harness({
+      extraInstalls: [
+        {
+          id: "ghost" as PluginId,
+          source: { kind: "path" as const, path: "/gone/ghost", linked: true },
+          enabled: true,
+        },
+      ],
+    })
+    const r = await run(["list"])
+    expect(r.ok).toBe(true)
+    const out = writer.lines.join("\n")
+    expect(out).toContain("ghost")
+    expect(out).toMatch(/unavailable/i)
+  })
+
+  it("does not tag a listed extension as unavailable", async () => {
+    const { run, writer } = harness()
+    await run(["list"])
+    expect(writer.lines.join("\n")).not.toMatch(/unavailable/i)
   })
 
   it("installs from a git url when given install", async () => {
