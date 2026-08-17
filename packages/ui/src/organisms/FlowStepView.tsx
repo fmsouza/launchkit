@@ -36,7 +36,7 @@ export type FlowMessageStepView = {
   readonly kind: "message"
   readonly title: string
   readonly body: string
-  readonly tone?: "info" | "success" | "warning"
+  readonly tone: "info" | "success" | "warning"
   readonly continueLabel?: string
 }
 
@@ -52,7 +52,7 @@ export type FlowAwaitStepView = {
   readonly kind: "await"
   readonly title: string
   readonly description?: string
-  readonly pollMs?: number
+  readonly pollMs: number
 }
 
 export type FlowDoneStepView = {
@@ -93,7 +93,7 @@ export type FlowStepViewProps = {
   readonly busy: boolean
 }
 
-const MESSAGE_TONE_TO_BADGE: Record<string, BadgeTone> = {
+const MESSAGE_TONE_TO_BADGE: Record<FlowMessageStepView["tone"], BadgeTone> = {
   info: "info",
   success: "success",
   warning: "warning",
@@ -233,13 +233,7 @@ const MessageStep = ({
   readonly busy: boolean
 }): ReactElement => (
   <div>
-    {step.tone !== undefined ? (
-      <Badge tone={MESSAGE_TONE_TO_BADGE[step.tone] ?? "info"}>
-        {step.title}
-      </Badge>
-    ) : (
-      <h3>{step.title}</h3>
-    )}
+    <Badge tone={MESSAGE_TONE_TO_BADGE[step.tone]}>{step.title}</Badge>
     <p>{step.body}</p>
     <Button onClick={onAck} disabled={busy}>
       {step.continueLabel ?? "Continue"}

@@ -47,6 +47,34 @@ describe("FlowStepView", () => {
     expect(screen.getByLabelText("Token")).toBeInTheDocument()
   })
 
+  it("renders every field of a multi-field form, not just the first", () => {
+    render(
+      <FlowStepView
+        step={{
+          kind: "form",
+          title: "Sign in",
+          fields: [
+            {
+              name: "clientId",
+              label: "Client ID",
+              kind: "text",
+              required: true,
+            },
+            {
+              name: "token",
+              label: "Token",
+              kind: "password",
+              required: true,
+            },
+          ],
+        }}
+        {...noops}
+      />,
+    )
+    expect(screen.getByLabelText("Client ID")).toBeInTheDocument()
+    expect(screen.getByLabelText("Token")).toBeInTheDocument()
+  })
+
   it("masks a password field so a pasted token is not shoulder-readable", () => {
     render(<FlowStepView step={passwordFormStep} {...noops} />)
     expect(screen.getByLabelText("Token")).toHaveAttribute("type", "password")
