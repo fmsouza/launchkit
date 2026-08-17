@@ -873,11 +873,14 @@ describe("createFlowRunner concurrency", () => {
 
     expect(raced.ok).toBe(false)
     if (!raced.ok) expect(raced.error.kind).toBe("not-found")
-    // The named cause is still waiting for the next call.
+    // The named cause is still waiting for the next call. Asserted unconditionally: a
+    // combined `if (after.ok && kind === "error")` would pass vacuously on any other kind.
     const after = await runner.advance({ sessionId, result: { kind: "ack" } })
     expect(after.ok).toBe(true)
-    if (after.ok && after.value.step.kind === "error")
-      expect(after.value.step.message).toContain("no longer enabled")
+    if (!after.ok) return
+    expect(after.value.step.kind).toBe("error")
+    if (after.value.step.kind === "error")
+      expect(after.value.step.message).toContain("no longer available")
   })
 })
 
@@ -1001,8 +1004,15 @@ describe("createFlowRunner abandon", () => {
     expect(second.ok).toBe(true)
     if (!second.ok) return
     expect(second.value.step.kind).toBe("error")
-    if (second.value.step.kind === "error")
-      expect(second.value.step.message).toContain("no longer enabled")
+    if (second.value.step.kind === "error") {
+      expect(second.value.step.message).toContain("no longer available")
+      // The ONE reason covers three causes — the user disabling the extension, an uninstall
+      // (`ExtensionAdmin.remove`), and a refresh that dropped the contribution — so the copy
+      // must name both, not just the disable it is named after.
+      expect(second.value.step.message).toContain("disabled or removed")
+      // And it must still say the half-finished exchange was not persisted.
+      expect(second.value.step.message).toContain("were not saved")
+    }
   })
 
   it("drops an abandoned flow's key from the active set", async () => {
@@ -1066,7 +1076,7 @@ describe("createFlowRunner abandon", () => {
     if (!r.ok) return
     expect(r.value.step.kind).toBe("error")
     if (r.value.step.kind === "error")
-      expect(r.value.step.message).toContain("no longer enabled")
+      expect(r.value.step.message).toContain("no longer available")
   })
 
   it("ends a flow abandoned while its instance is still spawning", async () => {
@@ -1084,7 +1094,7 @@ describe("createFlowRunner abandon", () => {
     if (!r.ok) return
     expect(r.value.step.kind).toBe("error")
     if (r.value.step.kind === "error")
-      expect(r.value.step.message).toContain("no longer enabled")
+      expect(r.value.step.message).toContain("no longer available")
     // Nothing was ever said to the child: it is about to be swept, and the opening call
     // would have carried the host token to a process that is being killed.
     expect(calls.length).toBe(0)
@@ -1113,7 +1123,7 @@ describe("createFlowRunner abandon", () => {
     if (!r.ok) return
     expect(r.value.step.kind).toBe("error")
     if (r.value.step.kind === "error")
-      expect(r.value.step.message).toContain("no longer enabled")
+      expect(r.value.step.message).toContain("no longer available")
     expect([...runner.activeInstanceKeys()]).toEqual([])
   })
 

@@ -2478,6 +2478,62 @@ describe("createAppContext supervised instance retention", () => {
     })
   })
 
+  it("retains a live flow whose contribution id differs from its extension's manifest id", async () => {
+    // The guard the fixtures above CANNOT exercise: every one of them uses the same string for
+    // the manifest id, the contribution id, and the `providerPlugins` key, so collapsing the
+    // `supervisedOwners` lookup to `enabled.has(contributionId)` — dropping the id-space
+    // translation entirely — passes all eight. Here the spaces are genuinely distinct:
+    // `enabled` holds "acme-ext", the flow key names the contribution "acme", and only the
+    // translation connects them.
+    const { deps } = makeFakeDeps()
+    const flowKey = flowInstanceKey("acme", "n0")
+    const { retained } = wire(deps, { region: "eu" }, always(flowKey))
+    ;(deps as { createExtensionRegistry: unknown }).createExtensionRegistry =
+      (() => ({
+        list: async () =>
+          ok([
+            {
+              manifest: {
+                id: "acme-ext",
+                contributes: {
+                  providers: [
+                    {
+                      id: "acme",
+                      transport: {
+                        kind: "http",
+                        wire: "openai",
+                        launch: { command: "srv", args: [], envTemplate: {} },
+                      },
+                    },
+                  ],
+                },
+              },
+              ignoredContributions: [],
+              dir: "/plugins/acme-ext",
+            },
+          ]),
+        providerDescriptors: async () => ok([]),
+      })) as never
+    ;(deps as { createCachedConfigStore: unknown }).createCachedConfigStore =
+      (() => ({
+        load: async () =>
+          ok({
+            ...defaultConfig(),
+            providerPlugins: [
+              { id: "acme-ext", source: { kind: "local" }, enabled: true },
+            ],
+          }),
+        save: async () => ok(undefined),
+      })) as never
+
+    const ctx = createAppContext(deps)
+    await ctx.refreshExtensions()
+
+    // No provider records at all, so the flow key is the WHOLE retain-set — nothing else can
+    // make this assertion pass.
+    expect(retained.at(-1)).toEqual([flowKey])
+  })
+
   it("tells the flow runner about dropped flows BEFORE stopping their children", async () => {
     // `retainOnly` stops AND forgets, with no callback and no reason code, and `host.status`
     // reports "stopped" identically for a swept, a crashed, and a never-existing instance — so

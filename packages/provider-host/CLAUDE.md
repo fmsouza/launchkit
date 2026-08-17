@@ -41,8 +41,10 @@ and stopping it on demand.
   CONTRIBUTION id (not an extension manifest id, and not a Spectrum `ProviderId`)
 - `RunnerStep`, `FlowCompletion`, `FlowSessionId`, `FlowStartInput`, `FlowAdvanceInput`,
   `FlowAbandonReason`, `FlowTimerHandle`, `FlowRunner`, `FlowRunnerDeps` — `FlowTimerHandle`
-  is exported so a composition root can name the handle its `clearTimer` receives instead of
-  casting it
+  is `unknown`, so a composition root CAN name the type in its `setTimer`/`clearTimer`
+  signatures but still needs one narrowing cast to hand the handle back to `clearTimeout`.
+  Opaque on purpose: the runner never inspects a handle, only round-trips it, so nothing here
+  should depend on whether the host's timer returns a number or a `Timeout` object
 - `FetchLike` — the slice of `fetch` `createFetchFlowHttp` uses, injectable so the per-call
   abort deadline is testable (Bun's test runner does not deliver a fetch abort)
 
@@ -124,7 +126,13 @@ and stopping it on demand.
   reason code, and `status` cannot tell a swept instance from a crashed one: the composition
   root TELLS the runner which keys it is about to sweep, immediately before sweeping them, so
   a mid-flow "disable this extension" surfaces a named error step instead of a flow that hangs
-  until its timeout.
+  until its timeout. EVERY caller that kills a flow child owes the same pairing, not just the
+  sweep — `ExtensionAdmin.remove` abandons before its `stopAll`/`stopAllFor` too. Abandon
+  exactly what you are about to kill: narrower leaks a hung session, wider ends a flow whose
+  child is still running.
+- `FlowAbandonReason` is a closed union of ONE member covering three causes (disabled,
+  uninstalled, contribution no longer installed), so `ABANDON_MESSAGE`'s copy says "disabled
+  or removed". Splitting the reason would buy nothing the user can act on differently.
 - Flow logs carry `{ providerId, flowId, outcome }` and a step's `{ kind }` — never field
   values, `config`, `secrets`, the host token, the base URL's port, or the instance key.
 - Logs `envKeys` (`Object.keys(env)`) and the UNRENDERED `launch.args` on spawn — never env

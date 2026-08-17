@@ -972,6 +972,10 @@ export const createAppContext = (
     // read after a failed refresh would compute zero contributed keys and refuse nothing.
     registry: async () => extensionRegistry,
     providerHost,
+    // `remove` kills supervised children directly (`stopAll` on the degraded path,
+    // `stopAllFor` per contribution otherwise), neither of which is a sweep — so the admin
+    // needs the runner to abandon the doomed flows first, exactly as the sweep does.
+    flowRunner,
     refresh: refreshExtensions,
     logger: extensionsLog,
   })

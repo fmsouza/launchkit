@@ -123,10 +123,19 @@ export const flowContributionIdOf = (key: string): string | undefined => {
   return rest.slice(0, split)
 }
 
+/**
+ * One member, three causes. The composition root uses `extension-disabled` for a flow the
+ * user disabled, for one whose contribution is no longer installed (an uninstall, or a
+ * refresh that dropped it), and for a key that names no contribution at all — and
+ * `ExtensionAdmin.remove` uses it for an uninstall too. The copy therefore has to be true of
+ * all of them, so it says "disabled or removed" rather than naming only the disable. Widening
+ * `FlowAbandonReason` to distinguish them would buy nothing the user can act on differently:
+ * the action is the same in every case, and it is their own click either way.
+ */
 const ABANDON_MESSAGE: Record<FlowAbandonReason, string> = {
   "extension-disabled":
-    "This extension is no longer enabled — it was disabled while this setup was running, " +
-    "so it was stopped. Any credentials it had already exchanged were not saved.",
+    "This extension is no longer available — it was disabled or removed while this setup " +
+    "was running, so it was stopped. Any credentials it had already exchanged were not saved.",
 }
 
 const TIMEOUT_DETAIL = `flow exceeded its ${FLOW_LIMITS.totalTimeoutMs} ms total timeout`
