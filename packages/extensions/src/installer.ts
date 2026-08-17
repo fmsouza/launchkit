@@ -1,5 +1,6 @@
 import type { PluginInstall } from "@spectrum/config"
 import { type Logger, createNoopLogger } from "@spectrum/logger"
+import type { Platform } from "@spectrum/platform"
 import type { PluginId } from "@spectrum/types"
 import { type Result, err, isErr, ok } from "@spectrum/utils"
 import { validateContributionTemplates } from "./env-template"
@@ -176,6 +177,7 @@ export const createExtensionInstaller = (deps: {
   readonly pluginRoot: string
   readonly existingInstalls: () => readonly PluginInstall[]
   readonly logger?: Logger
+  readonly platform?: Platform
 }): ExtensionInstaller => {
   const logger = deps.logger ?? createNoopLogger()
   const validateRaw = validateManifest({ fileSource: deps.fileSource })
@@ -210,6 +212,7 @@ export const createExtensionInstaller = (deps: {
       ...(input.mode === undefined ? {} : { mode: input.mode }),
       pluginRoot: deps.pluginRoot,
       existingIds: deps.existingInstalls().map((i) => String(i.id)),
+      ...(deps.platform === undefined ? {} : { platform: deps.platform }),
     })
     if (isErr(plan)) {
       logger.error("extension install failed", {

@@ -909,6 +909,7 @@ export const createAppContext = (
         pluginRoot: paths.providerPluginDir,
         existingInstalls: () => cfg.providerPlugins,
         logger: extensionsLog,
+        platform: deps.platform,
       }),
     )
   }

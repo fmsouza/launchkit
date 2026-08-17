@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test"
 import type { PluginInstall } from "@spectrum/config"
+import type { Platform } from "@spectrum/platform"
 import { PluginIdSchema } from "@spectrum/types"
 import { err, ok } from "@spectrum/utils"
 import { createInMemoryExtensionFileSource } from "./file-source"
@@ -71,6 +72,12 @@ const harness = (opts: {
   installed?: readonly PluginInstall[]
   gitFailure?: { kind: "git-failed"; detail: string }
   commit?: string
+  /** Fixed so `planInstall`'s path-joining behaviour does not depend on the host running the
+   * suite — without this, the installer falls back to `detectPlatform()` and the POSIX path
+   * literals throughout this file (e.g. `/data/providers/acme`) are only correct by accident
+   * of running on a POSIX host. Override to `"windows"` to pin the win32-path-joining case. */
+  platform?: Platform
+  pluginRoot?: string
 }) => {
   const copier = createInMemoryDirCopier(opts.present ?? [])
   const git = createFakeGitClient({
@@ -99,15 +106,16 @@ const harness = (opts: {
   const fileSource = createInMemoryExtensionFileSource(
     Object.entries(opts.onDisk ?? {}).map(([id, raw]) => ({ id, raw })),
   )
+  const pluginRoot = opts.pluginRoot ?? "/data/providers"
   const removed: string[] = []
   const wrapped = {
     ...fileSource,
     removeExtension: async (id: string) => {
       removed.push(id)
-      copier.drop(`/data/providers/${id}`)
+      copier.drop(`${pluginRoot}/${id}`)
       return ok(undefined)
     },
-    // Deliberately NOT `/data/providers/${id}` (== `join(pluginRoot, id)`) — a
+    // Deliberately NOT `${pluginRoot}/${id}` (== `join(pluginRoot, id)`) — a
     // byte-identical override would make `update` calling `fileSource.extensionDir(id)`
     // indistinguishable from re-deriving `pluginRoot/id` itself, so sabotaging that wiring
     // would break zero tests. `/fs/<id>` is a distinct layout the two definitions could
@@ -124,7 +132,8 @@ const harness = (opts: {
       Object.hasOwn(manifests, dir)
         ? ok(manifests[dir])
         : err({ kind: "not-found", id: dir }),
-    pluginRoot: "/data/providers",
+    pluginRoot,
+    platform: opts.platform ?? "macos",
     existingInstalls: () => opts.installed ?? [],
   })
   return { installer, git, copier, removed }
@@ -369,6 +378,30 @@ describe("install — git", () => {
     expect(r.ok).toBe(false)
     if (!r.ok) expect(r.error.kind).toBe("git-failed")
     expect(await copier.exists("/data/providers/acme")).toBe(false)
+  })
+
+  /** Pins the installer's Windows path behaviour explicitly, rather than relying on it only
+   * running correctly by accident of `detectPlatform()` matching whatever host runs the
+   * suite. Without `platform` threaded from `createExtensionInstaller` into `planInstall`,
+   * this fails on any non-Windows host that forces `platform: "windows"`, exactly as it fails
+   * for real on Windows CI when the host platform IS windows but the test's directory
+   * literals are POSIX. */
+  it("clones into a backslash-joined write dir when the platform is windows", async () => {
+    const { installer, git } = harness({
+      platform: "windows",
+      pluginRoot: "C:\\data\\providers",
+      manifests: { "C:\\data\\providers\\acme": validManifest("acme") },
+      commit: "abc123",
+    })
+    const r = await installer.install({
+      source: "https://example.com/acme.git",
+    })
+    expect(r.ok).toBe(true)
+    const clone = git.calls.find((c) => c.op === "clone")
+    expect(clone?.args).toEqual([
+      "https://example.com/acme.git",
+      "C:\\data\\providers\\acme",
+    ])
   })
 })
 
