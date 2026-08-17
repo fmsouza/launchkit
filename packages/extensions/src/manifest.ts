@@ -17,6 +17,26 @@ export const KNOWN_CONTRIBUTION_KEYS = ["providers"] as const
 const ContributesSchema = z
   .object({ providers: z.array(ProviderContributionSchema).default([]) })
   .passthrough()
+  .superRefine((c, ctx) => {
+    // A manifest colliding with ITSELF is worse than colliding with a neighbour: the
+    // registry's `list()` dedupes contribution ids across the whole installed set in one
+    // pass (registry.ts:91), so a self-colliding manifest that ever reached disk would
+    // brick every other installed plugin on the next load, not just itself. Reject it
+    // here, at the one seam every manifest source (git clone, copy, link, and a
+    // hand-placed directory the installer never touched) passes through.
+    const seen = new Set<string>()
+    for (const provider of c.providers) {
+      const id = String(provider.id)
+      if (seen.has(id)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `contributes.providers declares the id "${id}" more than once`,
+          path: ["providers"],
+        })
+      }
+      seen.add(id)
+    }
+  })
 
 export const ExtensionManifestSchema = z
   .object({

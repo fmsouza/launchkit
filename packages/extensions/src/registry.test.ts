@@ -161,7 +161,15 @@ describe("createExtensionRegistry", () => {
       }
     })
 
-    it("fails with duplicate-id when one extension contributes the same provider id twice", async () => {
+    it("fails to even parse when one extension contributes the same provider id twice", async () => {
+      // A manifest that collides with ITSELF is now rejected by the manifest schema
+      // (`ContributesSchema`'s `superRefine`), before `list()`'s own cross-manifest
+      // `seenContributionIds` dedupe ever runs — so this reports `invalid-manifest` from
+      // `parseManifest`, not the `duplicate-id` `list()` reports for two DIFFERENT
+      // extensions colliding (see the test above). Catching it at parse time means a
+      // self-colliding manifest is rejected for every source it could arrive from — git
+      // clone, copy, link, AND a hand-placed directory the installer never touches —
+      // not just the ones that pass through the installer.
       const registry = createExtensionRegistry({
         fileSource: createInMemoryExtensionFileSource([
           ext("alpha", { providers: [provider("acme"), provider("acme")] }),
@@ -170,7 +178,7 @@ describe("createExtensionRegistry", () => {
       const result = await registry.list()
       expect(result.ok).toBe(false)
       if (!result.ok) {
-        expect(result.error).toEqual({ kind: "duplicate-id", id: "acme" })
+        expect(result.error.kind).toBe("invalid-manifest")
       }
     })
 
