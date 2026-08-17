@@ -1,4 +1,4 @@
-export type { FlowClient, FlowHttp } from "./flow-client"
+export type { FetchLike, FlowClient, FlowHttp } from "./flow-client"
 export { createFetchFlowHttp, createFlowClient } from "./flow-client"
 export type {
   FlowSessionId,
@@ -7,6 +7,7 @@ export type {
   FlowStartInput,
   FlowAdvanceInput,
   FlowAbandonReason,
+  FlowTimerHandle,
   FlowRunner,
   FlowRunnerDeps,
 } from "./flow-runner"

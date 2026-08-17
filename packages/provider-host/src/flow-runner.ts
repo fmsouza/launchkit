@@ -172,8 +172,10 @@ type Outcome =
  *
  * The instance is separate from any serving instance because in `context: "create"` there
  * is no provider record yet — no config, no secrets — and because a flow that hangs must
- * never take a working provider down with it. It is stopped on done, error, cancel,
- * timeout, step-cap exhaustion, and on a failed or unparseable response, on every path.
+ * never take a working provider down with it. It is stopped on done, error, cancel, the
+ * deadline, the elapsed-budget check, step-cap exhaustion, a moved address, and a failed or
+ * unparseable response. `abandon` is the single exception: its caller stops the instances
+ * itself (see `abandon` below), which is the whole reason it exists.
  *
  * A flow does not survive its child. The supervisor restarts a crashed instance on a NEW
  * port with a NEW host token, so an address captured at `start` is not a fact that stays
@@ -339,7 +341,12 @@ export const createFlowRunner = (deps: FlowRunnerDeps): FlowRunner => {
     })
     if (!running.ok) {
       starting.delete(instanceKey)
-      interrupted.delete(instanceKey)
+      // An interrupt recorded while the spawn was still in flight OUTRANKS the supervisor's
+      // error. `waitForReady` polls for seconds, and the sweep that killed this child is
+      // precisely why `ensureRunning` then failed — reporting the raw supervisor error here
+      // would send the user hunting a bug that is their own "disable extension" click.
+      const interruptedSpawn = resolveInterrupt(instanceKey)
+      if (interruptedSpawn !== undefined) return interruptedSpawn
       logEnd(input.providerId, input.flowId, "failed")
       return running
     }

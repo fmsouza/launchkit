@@ -40,7 +40,11 @@ and stopping it on demand.
   the `flow:<contribution id>:<nonce>` key format; `flowContributionIdOf` yields the provider
   CONTRIBUTION id (not an extension manifest id, and not a Spectrum `ProviderId`)
 - `RunnerStep`, `FlowCompletion`, `FlowSessionId`, `FlowStartInput`, `FlowAdvanceInput`,
-  `FlowAbandonReason`, `FlowRunner`, `FlowRunnerDeps`
+  `FlowAbandonReason`, `FlowTimerHandle`, `FlowRunner`, `FlowRunnerDeps` — `FlowTimerHandle`
+  is exported so a composition root can name the handle its `clearTimer` receives instead of
+  casting it
+- `FetchLike` — the slice of `fetch` `createFetchFlowHttp` uses, injectable so the per-call
+  abort deadline is testable (Bun's test runner does not deliver a fetch abort)
 
 ## Local invariants
 - `waitForReady` takes `probe`, `sleep`, and `now` as injected dependencies — no real

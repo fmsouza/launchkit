@@ -1090,6 +1090,33 @@ describe("createFlowRunner abandon", () => {
     expect(calls.length).toBe(0)
   })
 
+  it("names the abandon even when the spawn it interrupted then fails", async () => {
+    // `retainOnly` lands while `ensureRunning` is still inside `waitForReady` (which polls
+    // for seconds): the host's generation guard fails the start, so the flow sees a
+    // supervisor error whose actual cause was the user's own "disable extension" click.
+    const gate = deferred()
+    const { runner, started } = harness({
+      steps: [formStep],
+      ensureGate: gate.promise,
+      ensureFails: {
+        kind: "write-failed",
+        detail: "start superseded by a stop or a newer start",
+      },
+    })
+    const pending = runner.start(startInput)
+    await flush()
+    runner.abandon([started[0]?.instanceKey ?? ""], "extension-disabled")
+    gate.release()
+    const r = await pending
+
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.value.step.kind).toBe("error")
+    if (r.value.step.kind === "error")
+      expect(r.value.step.message).toContain("no longer enabled")
+    expect([...runner.activeInstanceKeys()]).toEqual([])
+  })
+
   it("registers no session for a flow abandoned while starting", async () => {
     const gate = deferred()
     const { runner, started } = harness({
