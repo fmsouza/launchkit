@@ -551,7 +551,16 @@ export const createAppContext = (
     list: () => providerRegistryCell.list(),
     catalog: () => providerRegistryCell.catalog(),
   }
-  const extensionRegistry: ExtensionRegistry = {
+  /**
+   * Raw, NON-awaiting delegator straight to the cell — used ONLY by `providerHost` below.
+   * `providerHost.retainOnly` is invoked FROM INSIDE `runRefresh` (via
+   * `retainConfiguredInstances`, after the atomic swap but before `runRefresh`'s own promise
+   * resolves), so a registry that awaits `extensionsReady` here would deadlock: `extensionsReady`
+   * cannot resolve until this very `runRefresh` call returns, and `runRefresh` cannot return
+   * until whatever `providerHost` awaits resolves. The public `extensionRegistry` below (which
+   * DOES await readiness) must never be handed to `providerHost`.
+   */
+  const rawExtensionRegistry: ExtensionRegistry = {
     list: () => extensionRegistryCell.list(),
     providerDescriptors: (enabledIds) =>
       extensionRegistryCell.providerDescriptors(enabledIds),
@@ -561,6 +570,24 @@ export const createAppContext = (
 
   /** False until one refresh has produced a complete, consistent view of the installed set. */
   let haveGoodExtensionState = false
+
+  /**
+   * Resolves once (never rejects) after the FIRST `runRefresh()` call settles, success or
+   * failure — set in a `finally` below, so it resolves even if `abandonRefresh` itself throws.
+   * Deliberately DISTINCT from `extensionsReady` (declared further down, reassigned on every
+   * `refreshExtensions()` call to track whichever refresh is CURRENTLY in flight): a cold-start
+   * reader of the extension registry needs to wait for the app to have tried at least once, but
+   * a WARM reader must NOT block on a LATER refresh that happens to be in flight — the registry
+   * is a stable façade over the last COMMITTED cell (proven by
+   * "never exposes a half-applied extension set while a refresh is in flight"), not a promise a
+   * request-in-progress waits out. Awaiting `extensionsReady` here would make every call block
+   * until the CURRENT refresh finishes, deadlocking a test (and, in production, a caller) that
+   * reads the registry while a refresh it does not control is intentionally slow.
+   */
+  let resolveFirstRefreshSettled: () => void = () => {}
+  const firstRefreshSettled: Promise<void> = new Promise((resolve) => {
+    resolveFirstRefreshSettled = resolve
+  })
 
   /**
    * Give up on this refresh. At startup (no good state yet) that means falling back to builtins
@@ -662,6 +689,10 @@ export const createAppContext = (
         "extension refresh failed",
         cause instanceof Error ? cause.name : "unknown",
       )
+    } finally {
+      // Runs on every path — success, an early `abandonRefresh` + return, or the catch above —
+      // and even if `abandonRefresh` itself throws, so `firstRefreshSettled` can never hang.
+      resolveFirstRefreshSettled()
     }
   }
 
@@ -682,8 +713,53 @@ export const createAppContext = (
   /** The initial load, started at construction and awaited by the routing path below. */
   refreshExtensions()
 
+  /**
+   * Returned by `liveExtensionRegistry` whenever there is no good extension state — either no
+   * refresh has EVER succeeded (`!haveGoodExtensionState`) or `firstRefreshSettled` itself is
+   * somehow a rejected promise (it should never be — see its own doc comment — but a consumer
+   * calling through here must never inherit a rejection). Returning an ERRORING registry rather
+   * than an empty-but-`ok` one matters: `extensionRegistryCell` in the "no good state" case is
+   * still the wiring-time cell built with an EMPTY link map, so an `ok([])` here would be read
+   * as "nothing is installed" rather than "the real answer is unavailable" — `remove`'s `in-use`
+   * guard, reading `ok([])`, would compute zero contributed keys and refuse nothing, silently
+   * deleting an install record a provider still references.
+   */
+  const noGoodStateRegistry: ExtensionRegistry = {
+    list: async () =>
+      err({ kind: "read-failed", detail: "no good extension state" }),
+    providerDescriptors: async () =>
+      err({ kind: "read-failed", detail: "no good extension state" }),
+  }
+
+  /**
+   * The registry every EXTERNAL consumer (the public `AppContext.extensionRegistry` and
+   * `ExtensionAdmin`'s `registry` accessor) reads through: waits for the FIRST refresh to have
+   * settled (cold-start protection — see `firstRefreshSettled`'s doc comment for why this is
+   * NOT `extensionsReady`), then returns the live cell ONLY if some refresh has ever actually
+   * succeeded. Never `providerHost`'s dependency (see `rawExtensionRegistry` above) and never
+   * called from inside `runRefresh` itself.
+   */
+  const liveExtensionRegistry = async (): Promise<ExtensionRegistry> => {
+    try {
+      await firstRefreshSettled
+    } catch {
+      // `firstRefreshSettled` should never actually reject — it is resolved directly by its own
+      // resolver in a `finally`, never chained off another promise's rejection. This exists so a
+      // consumer calling through here gets a `Result`, never an uncaught throw, even if that
+      // invariant is ever violated.
+      return noGoodStateRegistry
+    }
+    return haveGoodExtensionState ? extensionRegistryCell : noGoodStateRegistry
+  }
+
+  const extensionRegistry: ExtensionRegistry = {
+    list: async () => (await liveExtensionRegistry()).list(),
+    providerDescriptors: async (enabledIds) =>
+      (await liveExtensionRegistry()).providerDescriptors(enabledIds),
+  }
+
   const providerHost = deps.createProviderHost({
-    registry: extensionRegistry,
+    registry: rawExtensionRegistry,
     // Reads the CELL, not a snapshot: the host is built once and must see every later refresh.
     isEnabled: (extensionId: string) => enabledExtensionIds.has(extensionId),
     resolver,
@@ -785,15 +861,13 @@ export const createAppContext = (
   const extensions = createExtensionAdmin({
     config,
     installer: extensionInstaller,
-    // Live, not the wiring-time `extensionRegistryCell` (built with an empty link map): await
-    // whichever refresh is IN FLIGHT — the same pattern `resolveBaseUrl` uses — then read the
-    // cell. On a cold start (this is the FIRST call of the process, before the constructor's own
-    // initial refresh has resolved) a plain snapshot would leave `remove`'s `in-use` guard
-    // reading an empty registry, unable to see any contribution at all.
-    registry: async () => {
-      await extensionsReady
-      return extensionRegistryCell
-    },
+    // The SAME live, good-state-aware façade `AppContext.extensionRegistry` uses — not the
+    // wiring-time `extensionRegistryCell` (empty link map) and not merely "await readiness":
+    // `liveExtensionRegistry` also refuses to hand back the cell after a FAILED refresh (see its
+    // doc comment), which an `await extensionsReady`-only accessor cannot tell apart from "no
+    // extensions installed". `remove`'s `in-use` guard depends on that distinction — an `ok([])`
+    // read after a failed refresh would compute zero contributed keys and refuse nothing.
+    registry: async () => extensionRegistry,
     providerHost,
     refresh: refreshExtensions,
     logger: extensionsLog,

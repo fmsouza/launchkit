@@ -389,6 +389,7 @@ describe("cold start (no refresh awaited before the first extensions call)", () 
         PluginIdSchema.parse("shared-plugin"),
       )
       expect(removed.ok).toBe(false)
+      if (!removed.ok) expect(removed.error.kind).toBe("in-use")
       if (!removed.ok && removed.error.kind === "in-use")
         expect(removed.error.providerIds).toEqual(["prv_1"])
 
