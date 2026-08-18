@@ -2281,6 +2281,9 @@ describe("createAppContext supervised instance retention", () => {
         order.push("abandon")
         abandoned.push({ keys: [...keys], reason })
       },
+      // Latent today — nothing in this describe calls `shutdown()` — but the `as never` hides
+      // the missing member, so the first shutdown assertion added here would fail confusingly.
+      dispose: () => undefined,
     })) as never
     return { retained, abandoned, order }
   }

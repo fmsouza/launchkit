@@ -289,20 +289,20 @@ fixture's own refusals").
 **you** minted in your `start` response, echoed back; it is never Spectrum's own
 session handle (see "Two session-id spaces" below). Both must be answered with a
 `FlowResponse`: `{ sessionId: string, step: FlowStep, toast?: FlowToast }`
-(`packages/extensions/src/flow.ts:143-150`).
+(`packages/extensions/src/flow.ts:177-184`).
 
 ### Step and result kinds
 
 Every object in the protocol is `.strict()` — a property your response includes that
 the schema doesn't declare is a hard parse failure, not a warning. `FlowStepSchema`
-(`packages/extensions/src/flow.ts:64-119`) is a discriminated union on `kind`:
+(`packages/extensions/src/flow.ts:98-153`) is a discriminated union on `kind`:
 
 | `kind` | Fields | Notes |
 |---|---|---|
 | `form` | `title`, `description?`, `fields: FlowField[]`, `submitLabel?` | Each field has `name`, `label`, `kind: "text" \| "url" \| "password" \| "select"`, `required`, `placeholder?`, `options?` (required and non-empty when `kind: "select"`, rejected at parse time otherwise) |
 | `message` | `title`, `body`, `tone: "info" \| "success" \| "warning"`, `continueLabel?` | Never `"error"` — that's the `error` step kind below |
 | `open-external` | `title`, `description?`, `url`, `buttonLabel?` | `url` must be `http:`/`https:` (see "The browser opens on delivery" below) |
-| `await` | `title`, `description?`, `pollMs` | **`pollMs` defaults to `1000` even though the spec text declares it required** — omitting it is accepted, not an error (`packages/extensions/src/flow.ts:99-102`) |
+| `await` | `title`, `description?`, `pollMs` | **`pollMs` defaults to `1000` even though the spec text declares it required** — omitting it is accepted, not an error (`packages/extensions/src/flow.ts:133-136`) |
 | `done` | `message?`, `config?: Record<string,string>`, `secrets?: Record<string,string>` | Terminal — see "`done` handling" below |
 | `error` | `message` | Terminal; ends the flow |
 
@@ -342,7 +342,7 @@ process sends (`FLOW_LIMITS`, `packages/extensions/src/flow.ts:11-17`):
 - **256 KB per response body.** The HTTP adapter aborts a response mid-stream once it
   crosses this, rather than buffering whatever a hung or hostile process sends first.
 - **200 characters per title or button label, 2000 per body, message or toast**
-  (`FLOW_TEXT_LIMITS`, `packages/extensions/src/flow.ts`). Spectrum renders these strings
+  (`FLOW_TEXT_LIMITS`, `packages/extensions/src/flow.ts:33-36`). Spectrum renders these strings
   verbatim, so without a bound the only limit on a "title" would be the 256 KB body cap — and
   a step that shipped one would push the setup modal's own cancel button off the screen. Over
   the bound is a parse failure like any other, not a truncation.
@@ -385,7 +385,7 @@ already happened (or is already in progress) by the time it's visible.
 The url is validated `http:`/`https:` only before the OS is ever asked to open
 anything: `FlowStepSchema`'s own `.refine(isSafeExternalUrl, …)` on the `url` field
 means a step carrying a `file:` or custom-scheme url normally fails to parse as
-`open-external` at all (`packages/extensions/src/flow.ts:26-33,88-90`); and even if a
+`open-external` at all (`packages/extensions/src/flow.ts:59-66,122-124`); and even if a
 step somehow reached the opener with an unsafe scheme,
 `createGuardedOpenExternal` checks `isSafeExternalUrl` again immediately before
 calling the injected opener — that is the actual gate on the call, not anything
