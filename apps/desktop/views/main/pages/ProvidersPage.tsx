@@ -253,6 +253,11 @@ export const ProvidersPage = (): ReactElement => {
       return
     }
     if (action.kind === "set-secrets") {
+      // Symmetric with `edit-config` above, and for the same reason: `setSecretFor(undefined)`
+      // is how this modal CLOSES, so an undefined provider here would silently shut the sheet
+      // instead of opening it. Unreachable today — the create-context action bar only ever
+      // feeds this a `flow` action — but the two branches must fail the same way.
+      if (provider === undefined) return
       setSecretFor(provider)
       setSecretValues({})
       return
