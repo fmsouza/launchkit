@@ -65,8 +65,13 @@ import { buildFakeAppContextDeps } from "./test-support"
  * (a cell, so a test can hand the sweep an exact config without an fs round trip — the store
  * wrapper that triggers the sweep is the composition root's own); the keychain BACKEND (in
  * memory — the real one prompts and pollutes the developer's OS keychain; the `SecretStore`
- * logic over it is real); and, in one case only, the flow deadline's timer, so the runner's
- * 10-minute budget can be observed without waiting 10 minutes.
+ * logic over it is real).
+ *
+ * NOT faked, though one case bends it: the flow deadline. The composition root's real
+ * `setTimeout` is armed at the real `FLOW_LIMITS.totalTimeoutMs`; the deadline case merely
+ * also holds the callback so it can pull a 10-minute wait forward to the instant the fixture
+ * confirms a call is hanging — and cancels the real timer when it does, which the runner
+ * itself would not (see `Harness.fireDeadline`).
  *
  * The fixture VALIDATES what Spectrum sends it (401 without the host token, 400 on a malformed
  * `start`/`next` body or a session id it never minted). A fixture that answered every request
@@ -170,11 +175,19 @@ type Harness = {
   /** Where the linked manifest lives, so a case can rebuild the same config it was given. */
   readonly extensionDir: string
   /**
-   * Fire the runner's armed deadline NOW. The real 10-minute timer is armed as production
-   * arms it and is cleared by the ordinary disarm path; this just pulls its callback forward,
-   * so a case can time the expiry against an observed fact rather than a wall clock.
+   * Fire the runner's armed deadline NOW, so a case can time the expiry against an observed
+   * fact rather than a wall clock. The timer is armed exactly as production arms it — real
+   * `setTimeout`, real `FLOW_LIMITS.totalTimeoutMs` — and this CLEARS it before invoking its
+   * callback, because the runner will not: `expire` deletes its own `deadlines` entry first,
+   * so the `end` → `disarm` that follows finds no handle and never calls `clearTimer`.
    */
   readonly fireDeadline: () => void
+  /**
+   * Whether `fireDeadline` cleared the real timer it pulled forward. Exposed so the claim
+   * above is ASSERTED by the case that relies on it rather than merely written down — the
+   * first version of this harness leaked that timer while its comment said it did not.
+   */
+  readonly deadlineTimerCleared: () => boolean
 }
 
 /** Every harness built by the current test, torn down unconditionally in `afterEach`. */
@@ -191,7 +204,11 @@ const buildHarness = async (): Promise<Harness> => {
   )
 
   let current = configWith({ extensionDir, enabled: true })
-  let armed: (() => void) | undefined
+  /** The most recently armed deadline: its callback, and how to cancel the real timer. */
+  let armed:
+    | { readonly fire: () => void; readonly clear: () => void }
+    | undefined
+  let cleared = false
 
   const deps = buildFakeAppContextDeps({
     homeDir: () => home,
@@ -236,8 +253,17 @@ const buildHarness = async (): Promise<Harness> => {
       createFlowRunner({
         ...runnerDeps,
         setTimer: (ms: number, onFire: () => void) => {
-          armed = onFire
-          return runnerDeps.setTimer(ms, onFire)
+          const handle = runnerDeps.setTimer(ms, onFire)
+          // Cancelled through the composition root's OWN `clearTimer`, so the test needs no
+          // cast and cannot cancel it in a way production could not.
+          armed = {
+            fire: onFire,
+            clear: () => {
+              cleared = true
+              runnerDeps.clearTimer(handle)
+            },
+          }
+          return handle
         },
       }),
     createProviderFactory,
@@ -255,15 +281,20 @@ const buildHarness = async (): Promise<Harness> => {
     extensionDir,
     fireDeadline: () => {
       if (armed === undefined) throw new Error("no flow deadline is armed")
-      armed()
+      // Cleared BEFORE firing: `expire` runs asynchronously off this callback, and clearing
+      // afterwards would race the very handler that makes the runner forget the handle.
+      armed.clear()
+      armed.fire()
     },
+    deadlineTimerCleared: () => cleared,
   }
 }
 
-// UNCONDITIONAL: a failing assertion must never leave a spawned plugin process behind. Each
-// entry's `rm` sits in its own `finally` and the loop never short-circuits: a `stopAll` that
-// rejected would otherwise strand that context's temp dir AND skip every context after it,
-// which is precisely the case this teardown exists for.
+// UNCONDITIONAL: a failing assertion must never leave a spawned plugin process behind. BOTH
+// halves of every entry are guarded, so the loop genuinely cannot short-circuit: a rejecting
+// `stopAll` must not strand its own temp dir, and a rejecting `rm` must not skip the `stopAll`
+// of every context after it — that would leak the children this block exists to kill. Failures
+// are collected and the first is rethrown once every entry has been cleaned.
 afterEach(async () => {
   const built = [...live]
   live.length = 0
@@ -273,8 +304,11 @@ afterEach(async () => {
       await ctx.providerHost.stopAll()
     } catch (cause) {
       failures.push(cause)
-    } finally {
+    }
+    try {
       await rm(home, { recursive: true, force: true })
+    } catch (cause) {
+      failures.push(cause)
     }
   }
   if (failures.length > 0) throw failures[0]
@@ -569,7 +603,7 @@ describe("extension setup flow, end to end", () => {
   }, 60_000)
 
   it("kills the flow's child when the total-timeout deadline fires on a flow that never answers", async () => {
-    const { ctx, fireDeadline } = await buildHarness()
+    const { ctx, fireDeadline, deadlineTimerCleared } = await buildHarness()
 
     const opened = unwrap(await ctx.flowRunner.start(startInput("hang")))
     if (opened.step.kind !== "open-external") throw new Error("no redirect")
@@ -592,6 +626,10 @@ describe("extension setup flow, end to end", () => {
       "the plugin to receive the hanging step call",
     )
     fireDeadline()
+    // This case is the one that pulls a 10-minute timer forward, so it is the one that has to
+    // prove the timer did not survive it. The runner cannot do this itself — `expire` drops
+    // its `deadlines` entry before `end` → `disarm` looks for a handle to clear.
+    expect(deadlineTimerCleared()).toBe(true)
 
     // Named, not `not-found`: the deadline is the only thing that knows this flow was killed
     // for running too long, and the caller awaiting this call is the one who has to be told.
