@@ -361,7 +361,49 @@ describe("useProviderFlow", () => {
     expect(cancelled).toEqual(["sess_1"])
   })
 
-  it("ignores a start response that resolves after cancel (cancel raced the very first start)", async () => {
+  it("cancels the session when an advance fails at the transport", async () => {
+    const cancelled: string[] = []
+    const client = createFakeIpcClient({
+      startProviderFlow: async () => ({
+        ok: true,
+        value: {
+          sessionId: "sess_1",
+          step: { kind: "form", title: "Sign in", fields: [] },
+        },
+      }),
+      advanceProviderFlow: async () => ({
+        ok: false,
+        error: { kind: "handler-failed", detail: "boom" },
+      }),
+      cancelProviderFlow: async (params) => {
+        cancelled.push(params.sessionId)
+        return { ok: true, value: null }
+      },
+    })
+    const hookRef: { current: UseProviderFlow } = {
+      current: undefined as unknown as UseProviderFlow,
+    }
+    const Probe = (): JSX.Element => {
+      hookRef.current = useProviderFlow()
+      return null as unknown as JSX.Element
+    }
+    renderWithProviders(<Probe />, client)
+
+    await act(async () => {
+      await hookRef.current.start(startParams)
+    })
+    await act(async () => {
+      await hookRef.current.submit({ token: "t" })
+    })
+
+    // The hook ends the session locally and forgets the id, so neither the unmount cleanup
+    // nor `closeFlowModal` can ever reach it again. A transport failure says nothing about
+    // whether the main-side session died with it — so tell it to, before letting go.
+    expect(cancelled).toEqual(["sess_1"])
+    expect(hookRef.current.sessionId).toBeUndefined()
+  })
+
+  it("cancels the session a superseded start response carried when cancel raced the very first start", async () => {
     type StartResult = Result<
       IpcMethods["startProviderFlow"]["result"],
       IpcError
@@ -389,7 +431,8 @@ describe("useProviderFlow", () => {
 
     // Don't await: `start` is left in flight while we cancel underneath it. There is no
     // session yet, so `cancel` has nothing to tell the server about, but it must still
-    // invalidate whatever `start` eventually resolves with.
+    // invalidate whatever `start` eventually resolves with — and hand the session that
+    // response carries back to the main process, which is already supervising a child for it.
     let startPromise: Promise<void> = Promise.resolve()
     act(() => {
       startPromise = hookRef.current.start(startParams)
@@ -411,5 +454,9 @@ describe("useProviderFlow", () => {
     })
     expect(hookRef.current.sessionId).toBeUndefined()
     expect(hookRef.current.step).toBeUndefined()
+    // Discarding the response is not enough: the main process minted a real session for it
+    // and spawned the extension's child. Nothing else will ever reference that id, so the
+    // only thing that can stop the child before its ten-minute deadline is this hook.
+    expect(cancelled).toEqual(["sess_1"])
   })
 })

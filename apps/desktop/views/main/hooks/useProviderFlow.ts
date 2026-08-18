@@ -124,6 +124,11 @@ export const useProviderFlow = (): UseProviderFlow => {
     if (generationRef.current !== gen) return
     if (!r.ok) {
       notify({ tone: "error", message: "Couldn't continue the setup flow" })
+      // A transport failure says nothing about the MAIN-side session: it may well still be
+      // live, with the extension's child still running. `endSession` forgets the id, after
+      // which neither the unmount cleanup nor the modal's close can reach it — so this is the
+      // last chance to stop the child before the runner's deadline does.
+      void client.cancelProviderFlow({ sessionId: sid })
       endSession()
       return
     }
@@ -148,8 +153,16 @@ export const useProviderFlow = (): UseProviderFlow => {
     const r = await client.startProviderFlow(input)
     setBusy(false)
     // Superseded by a later start/cancel while this call was in flight (e.g. the modal was
-    // cancelled, or a different flow was started) — its response is stale.
-    if (generationRef.current !== gen) return
+    // cancelled, or a different flow was started) — its response is stale. Discarding it is
+    // only half the job: a successful start means the main process minted a session and the
+    // supervisor already spawned the extension's child. This response is the ONLY place that
+    // session id is ever seen renderer-side, so dropping it silently strands the child until
+    // the runner's ten-minute deadline reaps it.
+    if (generationRef.current !== gen) {
+      if (r.ok && r.value.sessionId !== undefined)
+        void client.cancelProviderFlow({ sessionId: r.value.sessionId })
+      return
+    }
     if (!r.ok) {
       notify({ tone: "error", message: "Couldn't start the setup flow" })
       return
