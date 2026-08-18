@@ -8,6 +8,7 @@ import {
 import type { Config, PluginInstall } from "@spectrum/config"
 import type {
   FlowStep,
+  FlowToast,
   LoadedExtension,
   PluginError,
 } from "@spectrum/extensions"
@@ -19,7 +20,7 @@ import type {
   IpcHandlers,
   ProviderView,
 } from "@spectrum/ipc"
-import { FlowStepViewSchema } from "@spectrum/ipc"
+import { FlowStepViewSchema, FlowToastViewSchema } from "@spectrum/ipc"
 import type { FlowCompletion, RunnerStep } from "@spectrum/provider-host"
 import { FLOW_IN_FLIGHT_DETAIL } from "@spectrum/provider-host"
 import {
@@ -330,6 +331,31 @@ export const createIpcHandlers = (ctx: GuiContext): IpcHandlers => {
   }
 
   /**
+   * Project the banner riding alongside a step, or drop it.
+   *
+   * The toast is NOT part of the step, so `sanitizeFlowStep` never sees it — and the ipc
+   * result schema validates the WHOLE result, toast included. An unprojectable toast would
+   * therefore fail `startProviderFlow` outright, and that failure reaches the renderer as a
+   * transport error carrying no `sessionId`: nothing would be left holding a handle to cancel
+   * the flow's child with. `FlowToastViewSchema` is a hand-written duplicate of
+   * `FlowToastSchema`, so the two CAN drift — widening the extension side alone is invisible
+   * to the mirror test until a real extension sends the new field. Dropping the banner is the
+   * strictly better failure: a missing toast instead of a leaked credential-bearing process.
+   */
+  const projectFlowToast = (
+    toast: FlowToast | undefined,
+  ): { readonly toast?: FlowToastViewData } => {
+    if (toast === undefined) return {}
+    const parsed = FlowToastViewSchema.safeParse({ ...toast })
+    if (!parsed.success) {
+      // Tone only — a toast message is extension-controlled text and never reaches the log.
+      flowLog.warn("flow toast dropped", { tone: typeof toast.tone })
+      return {}
+    }
+    return { toast: parsed.data }
+  }
+
+  /**
    * End a session the HANDLER — not the runner — just declared terminal.
    *
    * Every terminal step the runner produces has already ended its own session and stopped the
@@ -468,8 +494,7 @@ export const createIpcHandlers = (ctx: GuiContext): IpcHandlers => {
     readonly step: FlowStepViewData
     readonly toast?: FlowToastViewData
   }> => {
-    const toast =
-      stepped.toast === undefined ? {} : { toast: { ...stepped.toast } }
+    const toast = projectFlowToast(stepped.toast)
     const step = stepped.step
     flowLog.debug("flow step delivered", { kind: step.kind })
 

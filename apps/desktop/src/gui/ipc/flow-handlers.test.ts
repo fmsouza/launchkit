@@ -287,6 +287,36 @@ describe("createIpcHandlers.startProviderFlow", () => {
     expect(started.toast).toEqual({ tone: "warning", message: "slow" })
   })
 
+  it("drops a toast the view schema refuses and still delivers the step", async () => {
+    // The toast rides ALONGSIDE the step and is not projected the way the step is, so a
+    // toast shape `FlowToastViewSchema` refuses would fail the whole IPC RESULT — which
+    // reaches the renderer as a transport failure carrying no `sessionId`, leaving nothing
+    // able to cancel the flow's child. A missing banner is the strictly better outcome.
+    const { handlers } = harness({
+      steps: [formStep],
+      toast: {
+        tone: "warning",
+        message: "slow",
+        // A field a future `FlowToastSchema` might add and the ipc duplicate not yet know.
+        detail: "extra",
+      } as unknown as FlowToast,
+    })
+    const started = await handlers.startProviderFlow(startParams)
+    expect(started.toast).toBeUndefined()
+    expect(started.step).toMatchObject({ kind: "form" })
+  })
+
+  it("logs that it dropped an unprojectable toast", async () => {
+    const h = harness({
+      steps: [formStep],
+      toast: { tone: "nope", message: "slow" } as unknown as FlowToast,
+    })
+    await h.handlers.startProviderFlow(startParams)
+    // The MESSAGE only — a toast is extension-controlled text and never reaches the log.
+    expect(h.logLines.some((l) => l.includes("flow toast dropped"))).toBe(true)
+    expect(h.logLines.join("\n")).not.toContain("slow")
+  })
+
   it("persists flow secrets to the secret store and never returns them", async () => {
     const h = harness({ steps: [doneStepWithSecret] })
     const started = await h.handlers.startProviderFlow(startParams)
