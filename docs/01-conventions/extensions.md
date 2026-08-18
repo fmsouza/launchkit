@@ -247,9 +247,16 @@ paths described below.
 **A flow needs a supervised contribution.** It runs on your `transport.launch` process
 — there is nothing to talk to otherwise. A contribution with no `launch` block cannot
 offer a `flow` action; asking Spectrum to start one on such a contribution fails with
-`invalid-manifest` ("declares no launch block"), surfaced to the user as "this step
-needs a newer Spectrum" (`packages/provider-host/src/host.ts:179-184`,
-`apps/desktop/src/gui/ipc/flow-errors.ts`).
+`invalid-manifest` (`NO_LAUNCH_BLOCK_DETAIL`, `packages/provider-host/src/host.ts:157-158,199`),
+surfaced to the user verbatim as:
+
+> Setup cannot continue: this extension offers a setup flow but declares no server
+> for Spectrum to start, so there is nothing to run it. Its manifest needs a launch
+> block.
+
+(`apps/desktop/src/gui/ipc/flow-errors.ts`, matched on the exported
+`NO_LAUNCH_BLOCK_DETAIL` constant rather than on `kind` alone — `invalid-manifest`
+also covers an unparseable step from a live flow, and the two need different copy.)
 
 ### The endpoints
 
@@ -263,8 +270,9 @@ POST /spectrum/v1/flow/{flowId}/next
 ```
 
 (`FLOW_PATH_PREFIX`, `packages/extensions/src/flow.ts:5`; the client builds the url as
-`${baseUrl}${FLOW_PATH_PREFIX}/${flowId}/${op}`,
-`packages/provider-host/src/flow-client.ts:131`.) Every request carries
+`${baseUrl.replace(/\/$/, "")}${FLOW_PATH_PREFIX}/${flowId}/${op}` — a trailing slash on
+your base url is stripped first, `packages/provider-host/src/flow-client.ts:131`.)
+Every request carries
 `x-spectrum-host-token`, the same header your process echoes back on `healthPath` — a
 launched plugin must check it on every flow request and refuse with `401` on a
 missing or mismatched value. It is the only thing standing between your credential
@@ -348,7 +356,7 @@ written; an undeclared field in `done.secrets` is silently dropped.
   back" path.
 - In `context: "provider"`, completing the flow **updates the existing record** —
   the same one whose secrets your child was started with (see "Two session-id
-  spaces" and the `context` note below).
+  spaces" below).
 
 ### The browser opens on step delivery, not on click
 
@@ -358,11 +366,19 @@ the user clicks the step's button
 (`apps/desktop/src/gui/ipc/handlers.ts`, `deliverFlowStep`). **By the time the user
 sees the step at all, the browser is already open.** Design your copy accordingly:
 the button means "I'm done" or "continue," never "authorize" — the authorization
-already happened (or is already in progress) by the time it's visible. The url is
-validated `http:`/`https:` only, both by your own schema (`isSafeExternalUrl`,
-`packages/extensions/src/flow.ts:26-33`) and again by the GUI's own view schema
-before rendering — a `file:` or custom-scheme url is refused before the OS opener is
-ever asked to do anything with it.
+already happened (or is already in progress) by the time it's visible.
+
+The url is validated `http:`/`https:` only before the OS is ever asked to open
+anything: `FlowStepSchema`'s own `.refine(isSafeExternalUrl, …)` on the `url` field
+means a step carrying a `file:` or custom-scheme url normally fails to parse as
+`open-external` at all (`packages/extensions/src/flow.ts:26-33,88-90`); and even if a
+step somehow reached the opener with an unsafe scheme,
+`createGuardedOpenExternal` checks `isSafeExternalUrl` again immediately before
+calling the injected opener — that is the actual gate on the call, not anything
+downstream of it (`packages/provider-host/src/open-external.ts`). Separately,
+`FlowStepViewSchema` re-validates the same scheme on the sanitized step that crosses
+IPC to the renderer — real, but it runs *after* delivery and only bounds what the
+webview is shown, not whether the OS was asked to open the url.
 
 ### The config-field token limitation
 
