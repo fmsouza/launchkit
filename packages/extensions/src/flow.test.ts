@@ -10,6 +10,16 @@ import {
 } from "./flow"
 
 describe("FlowStepSchema", () => {
+  it("caps a title at 200 characters and a body at 2000", () => {
+    // Pinned as LITERALS, and every case below is written against literals too. Asserting
+    // against `FLOW_TEXT_LIMITS.maxTitleChars + 1` would pass for any finite value the
+    // constant ever grows to, including one large enough to be no bound at all.
+    expect(FLOW_TEXT_LIMITS).toEqual({
+      maxTitleChars: 200,
+      maxBodyChars: 2_000,
+    })
+  })
+
   it("rejects a title longer than the title bound", () => {
     // Extension-controlled and rendered verbatim. React escapes it, so the risk is layout,
     // not injection: unbounded, a "title" is capped only by the 256 KB body limit and buries
@@ -17,7 +27,7 @@ describe("FlowStepSchema", () => {
     expect(
       FlowStepSchema.safeParse({
         kind: "form",
-        title: "t".repeat(FLOW_TEXT_LIMITS.maxTitleChars + 1),
+        title: "t".repeat(201),
         fields: [],
       }).success,
     ).toBe(false)
@@ -27,7 +37,7 @@ describe("FlowStepSchema", () => {
     expect(
       FlowStepSchema.safeParse({
         kind: "form",
-        title: "t".repeat(FLOW_TEXT_LIMITS.maxTitleChars),
+        title: "t".repeat(200),
         fields: [],
       }).success,
     ).toBe(true)
@@ -37,7 +47,7 @@ describe("FlowStepSchema", () => {
     expect(
       FlowStepSchema.safeParse({
         kind: "error",
-        message: "m".repeat(FLOW_TEXT_LIMITS.maxBodyChars + 1),
+        message: "m".repeat(2001),
       }).success,
     ).toBe(false)
   })
@@ -47,7 +57,7 @@ describe("FlowStepSchema", () => {
       FlowStepSchema.safeParse({
         kind: "message",
         title: "Hi",
-        body: "b".repeat(FLOW_TEXT_LIMITS.maxBodyChars + 1),
+        body: "b".repeat(2001),
         tone: "info",
       }).success,
     ).toBe(false)
@@ -61,7 +71,7 @@ describe("FlowStepSchema", () => {
         fields: [
           {
             name: "token",
-            label: "l".repeat(FLOW_TEXT_LIMITS.maxTitleChars + 1),
+            label: "l".repeat(201),
             kind: "text",
             required: true,
           },
