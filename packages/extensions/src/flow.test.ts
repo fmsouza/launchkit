@@ -20,6 +20,67 @@ describe("FlowStepSchema", () => {
     })
   })
 
+  it("accepts an empty optional label on every step kind that has one", () => {
+    // These four carried NO minimum before the text caps landed. Minor 9 asked for an upper
+    // bound to stop a layout nuisance; a lower one is a behaviour change that turns
+    // `submitLabel: ""` into a `FlowResponseSchema` parse failure, which the GUI reports as
+    // "this step needs a newer Spectrum" — naming entirely the wrong cause.
+    expect(
+      FlowStepSchema.safeParse({
+        kind: "form",
+        title: "Sign in",
+        fields: [],
+        submitLabel: "",
+      }).success,
+    ).toBe(true)
+    expect(
+      FlowStepSchema.safeParse({
+        kind: "message",
+        title: "Hi",
+        body: "b",
+        tone: "info",
+        continueLabel: "",
+      }).success,
+    ).toBe(true)
+    expect(
+      FlowStepSchema.safeParse({
+        kind: "open-external",
+        title: "Go",
+        url: "https://e.com/a",
+        buttonLabel: "",
+      }).success,
+    ).toBe(true)
+    expect(
+      FlowStepSchema.safeParse({
+        kind: "form",
+        title: "Pick",
+        fields: [
+          {
+            name: "region",
+            label: "Region",
+            kind: "select",
+            required: true,
+            options: [{ value: "eu", label: "" }],
+          },
+        ],
+      }).success,
+    ).toBe(true)
+  })
+
+  it("still requires a non-empty title and field label", () => {
+    // The four above lost their minimum; these two never had one to lose.
+    expect(
+      FlowStepSchema.safeParse({ kind: "form", title: "", fields: [] }).success,
+    ).toBe(false)
+    expect(
+      FlowStepSchema.safeParse({
+        kind: "form",
+        title: "Sign in",
+        fields: [{ name: "t", label: "", kind: "text", required: true }],
+      }).success,
+    ).toBe(false)
+  })
+
   it("rejects a title longer than the title bound", () => {
     // Extension-controlled and rendered verbatim. React escapes it, so the risk is layout,
     // not injection: unbounded, a "title" is capped only by the 256 KB body limit and buries

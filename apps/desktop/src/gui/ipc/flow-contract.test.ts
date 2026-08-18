@@ -208,6 +208,45 @@ const stepFixtures: readonly {
       ],
     },
   },
+  {
+    label: "a form step with an empty submitLabel",
+    raw: { kind: "form", title: "Sign in", fields: [], submitLabel: "" },
+  },
+  {
+    label: "a message step with an empty continueLabel",
+    raw: {
+      kind: "message",
+      title: "Hi",
+      body: "b",
+      tone: "info",
+      continueLabel: "",
+    },
+  },
+  {
+    label: "an open-external step with an empty buttonLabel",
+    raw: {
+      kind: "open-external",
+      title: "Go",
+      url: "https://e.com/a",
+      buttonLabel: "",
+    },
+  },
+  {
+    label: "a form step whose select option has an empty label",
+    raw: {
+      kind: "form",
+      title: "Pick",
+      fields: [
+        {
+          name: "region",
+          label: "Region",
+          kind: "select",
+          required: true,
+          options: [{ value: "eu", label: "" }],
+        },
+      ],
+    },
+  },
   { label: "a step of an unknown kind", raw: { kind: "reboot", title: "x" } },
   { label: "a step that is not an object", raw: "form" },
 ]

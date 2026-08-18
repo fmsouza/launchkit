@@ -40,6 +40,8 @@ const MAX_TITLE_CHARS = 200
 const MAX_BODY_CHARS = 2_000
 
 const titleText = (): z.ZodString => z.string().min(1).max(MAX_TITLE_CHARS)
+/** Capped like a title but with no minimum — mirrors `labelText` on the extensions side. */
+const labelText = (): z.ZodString => z.string().max(MAX_TITLE_CHARS)
 const bodyText = (): z.ZodString => z.string().max(MAX_BODY_CHARS)
 
 export const FlowFieldViewSchema = z
@@ -50,7 +52,7 @@ export const FlowFieldViewSchema = z
     required: z.boolean(),
     placeholder: z.string().max(MAX_TITLE_CHARS).optional(),
     options: z
-      .array(z.object({ value: z.string(), label: titleText() }).strict())
+      .array(z.object({ value: z.string(), label: labelText() }).strict())
       .optional(),
   })
   .strict()
@@ -76,7 +78,7 @@ export const FlowStepViewSchema = z.discriminatedUnion("kind", [
       title: titleText(),
       description: bodyText().optional(),
       fields: z.array(FlowFieldViewSchema),
-      submitLabel: titleText().optional(),
+      submitLabel: labelText().optional(),
     })
     .strict(),
   z
@@ -85,7 +87,7 @@ export const FlowStepViewSchema = z.discriminatedUnion("kind", [
       title: titleText(),
       body: bodyText(),
       tone: z.enum(MESSAGE_TONE),
-      continueLabel: titleText().optional(),
+      continueLabel: labelText().optional(),
     })
     .strict(),
   z
@@ -96,7 +98,7 @@ export const FlowStepViewSchema = z.discriminatedUnion("kind", [
       url: z.string().refine(isSafeFlowUrl, {
         message: "url must be http or https",
       }),
-      buttonLabel: titleText().optional(),
+      buttonLabel: labelText().optional(),
     })
     .strict(),
   z

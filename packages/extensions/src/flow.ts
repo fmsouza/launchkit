@@ -35,9 +35,17 @@ export const FLOW_TEXT_LIMITS = {
   maxBodyChars: 2_000,
 } as const
 
-/** A heading or button label: non-empty, and short enough to stay a label. */
+/** A heading: non-empty, and short enough to stay a heading. */
 const titleText = (): z.ZodString =>
   z.string().min(1).max(FLOW_TEXT_LIMITS.maxTitleChars)
+/**
+ * A button or option label. Capped like a title but with NO minimum: these fields carried
+ * none before the caps landed, and adding one would turn `submitLabel: ""` — which parsed
+ * fine — into a `FlowResponseSchema` failure the GUI reports as "this step needs a newer
+ * Spectrum", naming entirely the wrong cause.
+ */
+const labelText = (): z.ZodString =>
+  z.string().max(FLOW_TEXT_LIMITS.maxTitleChars)
 /** Prose. May be empty (a `message` body legitimately is), but never unbounded. */
 const bodyText = (): z.ZodString =>
   z.string().max(FLOW_TEXT_LIMITS.maxBodyChars)
@@ -66,7 +74,7 @@ export const FlowFieldSchema = z
     required: z.boolean(),
     placeholder: z.string().max(FLOW_TEXT_LIMITS.maxTitleChars).optional(),
     options: z
-      .array(z.object({ value: z.string(), label: titleText() }).strict())
+      .array(z.object({ value: z.string(), label: labelText() }).strict())
       .optional(),
   })
   .strict()
@@ -94,7 +102,7 @@ export const FlowStepSchema = z.discriminatedUnion("kind", [
       title: titleText(),
       description: bodyText().optional(),
       fields: z.array(FlowFieldSchema),
-      submitLabel: titleText().optional(),
+      submitLabel: labelText().optional(),
     })
     .strict(),
   z
@@ -103,7 +111,7 @@ export const FlowStepSchema = z.discriminatedUnion("kind", [
       title: titleText(),
       body: bodyText(),
       tone: z.enum(MESSAGE_TONE),
-      continueLabel: titleText().optional(),
+      continueLabel: labelText().optional(),
     })
     .strict(),
   z
@@ -114,7 +122,7 @@ export const FlowStepSchema = z.discriminatedUnion("kind", [
       url: z.string().refine(isSafeExternalUrl, {
         message: "url must be http or https",
       }),
-      buttonLabel: titleText().optional(),
+      buttonLabel: labelText().optional(),
     })
     .strict(),
   z
