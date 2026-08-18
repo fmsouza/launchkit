@@ -6,6 +6,7 @@ export {
 export {
   FLOW_LIMITS,
   FLOW_PATH_PREFIX,
+  FLOW_TEXT_LIMITS,
   FlowFieldSchema,
   FlowResponseSchema,
   FlowResultSchema,

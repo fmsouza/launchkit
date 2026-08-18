@@ -168,6 +168,37 @@ const stepFixtures: readonly {
     raw: { kind: "error", message: "Auth denied" },
   },
   { label: "an error step with no message", raw: { kind: "error" } },
+  {
+    label: "a form step whose title is past the title bound",
+    raw: { kind: "form", title: "t".repeat(201), fields: [] },
+  },
+  {
+    label: "a form step whose title is exactly at the title bound",
+    raw: { kind: "form", title: "t".repeat(200), fields: [] },
+  },
+  {
+    label: "an error step whose message is past the body bound",
+    raw: { kind: "error", message: "m".repeat(2001) },
+  },
+  {
+    label: "a message step whose body is past the body bound",
+    raw: { kind: "message", title: "Hi", body: "b".repeat(2001), tone: "info" },
+  },
+  {
+    label: "a form step whose field label is past the title bound",
+    raw: {
+      kind: "form",
+      title: "Sign in",
+      fields: [
+        {
+          name: "token",
+          label: "l".repeat(201),
+          kind: "text",
+          required: true,
+        },
+      ],
+    },
+  },
   { label: "a step of an unknown kind", raw: { kind: "reboot", title: "x" } },
   { label: "a step that is not an object", raw: "form" },
 ]

@@ -32,15 +32,25 @@ const isSafeFlowUrl = (url: string): boolean => {
   }
 }
 
+/**
+ * Mirrors `FLOW_TEXT_LIMITS` (`@spectrum/extensions`); duplicated for the leaf-package reason
+ * above, and held honest by the same `apps/desktop` contract test as the rest of this file.
+ */
+const MAX_TITLE_CHARS = 200
+const MAX_BODY_CHARS = 2_000
+
+const titleText = (): z.ZodString => z.string().min(1).max(MAX_TITLE_CHARS)
+const bodyText = (): z.ZodString => z.string().max(MAX_BODY_CHARS)
+
 export const FlowFieldViewSchema = z
   .object({
     name: z.string().min(1),
-    label: z.string().min(1),
+    label: titleText(),
     kind: z.enum(["text", "url", "password", "select"]),
     required: z.boolean(),
-    placeholder: z.string().optional(),
+    placeholder: z.string().max(MAX_TITLE_CHARS).optional(),
     options: z
-      .array(z.object({ value: z.string(), label: z.string() }).strict())
+      .array(z.object({ value: z.string(), label: titleText() }).strict())
       .optional(),
   })
   .strict()
@@ -63,37 +73,37 @@ export const FlowStepViewSchema = z.discriminatedUnion("kind", [
   z
     .object({
       kind: z.literal("form"),
-      title: z.string().min(1),
-      description: z.string().optional(),
+      title: titleText(),
+      description: bodyText().optional(),
       fields: z.array(FlowFieldViewSchema),
-      submitLabel: z.string().optional(),
+      submitLabel: titleText().optional(),
     })
     .strict(),
   z
     .object({
       kind: z.literal("message"),
-      title: z.string().min(1),
-      body: z.string(),
+      title: titleText(),
+      body: bodyText(),
       tone: z.enum(MESSAGE_TONE),
-      continueLabel: z.string().optional(),
+      continueLabel: titleText().optional(),
     })
     .strict(),
   z
     .object({
       kind: z.literal("open-external"),
-      title: z.string().min(1),
-      description: z.string().optional(),
+      title: titleText(),
+      description: bodyText().optional(),
       url: z.string().refine(isSafeFlowUrl, {
         message: "url must be http or https",
       }),
-      buttonLabel: z.string().optional(),
+      buttonLabel: titleText().optional(),
     })
     .strict(),
   z
     .object({
       kind: z.literal("await"),
-      title: z.string().min(1),
-      description: z.string().optional(),
+      title: titleText(),
+      description: bodyText().optional(),
       pollMs: z.number().default(1000),
     })
     .strict(),
@@ -101,13 +111,13 @@ export const FlowStepViewSchema = z.discriminatedUnion("kind", [
   z
     .object({
       kind: z.literal("done"),
-      message: z.string().optional(),
+      message: bodyText().optional(),
     })
     .strict(),
   z
     .object({
       kind: z.literal("error"),
-      message: z.string(),
+      message: bodyText(),
     })
     .strict(),
 ])
@@ -138,7 +148,7 @@ export type FlowResultViewData = z.infer<typeof FlowResultViewSchema>
 export const FlowToastViewSchema = z
   .object({
     tone: z.enum(["info", "success", "warning", "error"]),
-    message: z.string(),
+    message: bodyText(),
   })
   .strict()
 export type FlowToastViewData = z.infer<typeof FlowToastViewSchema>

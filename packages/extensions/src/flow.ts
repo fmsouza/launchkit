@@ -16,6 +16,32 @@ export const FLOW_LIMITS = {
   maxBodyBytes: 262_144,
 } as const
 
+/**
+ * Caps on the extension-controlled strings Spectrum renders VERBATIM.
+ *
+ * Not an injection boundary — React escapes every one of them — a LAYOUT one. Without a bound
+ * the only limit on a step's title, body or error message is `maxBodyBytes` (256 KB), and a
+ * step that ships a quarter-megabyte "title" pushes the setup modal's own cancel button off
+ * the screen with nothing but the window chrome left to escape by.
+ *
+ * `maxTitleChars` covers the strings that render as a heading or a button label: 200
+ * characters is already about two full lines at the modal's width, so a real title never
+ * comes near it. `maxBodyChars` covers prose — a `message` body, an `error`, an OAuth step's
+ * "here is what happens next" paragraph: 2000 characters is roughly a printed page, which is
+ * more than any of them needs and still finite.
+ */
+export const FLOW_TEXT_LIMITS = {
+  maxTitleChars: 200,
+  maxBodyChars: 2_000,
+} as const
+
+/** A heading or button label: non-empty, and short enough to stay a label. */
+const titleText = (): z.ZodString =>
+  z.string().min(1).max(FLOW_TEXT_LIMITS.maxTitleChars)
+/** Prose. May be empty (a `message` body legitimately is), but never unbounded. */
+const bodyText = (): z.ZodString =>
+  z.string().max(FLOW_TEXT_LIMITS.maxBodyChars)
+
 export const clampPollMs = (ms: number): number =>
   Math.min(Math.max(ms, FLOW_LIMITS.minPollMs), FLOW_LIMITS.maxPollMs)
 
@@ -35,12 +61,12 @@ export const isSafeExternalUrl = (url: string): boolean => {
 export const FlowFieldSchema = z
   .object({
     name: z.string().min(1),
-    label: z.string().min(1),
+    label: titleText(),
     kind: z.enum(["text", "url", "password", "select"]),
     required: z.boolean(),
-    placeholder: z.string().optional(),
+    placeholder: z.string().max(FLOW_TEXT_LIMITS.maxTitleChars).optional(),
     options: z
-      .array(z.object({ value: z.string(), label: z.string() }).strict())
+      .array(z.object({ value: z.string(), label: titleText() }).strict())
       .optional(),
   })
   .strict()
@@ -65,37 +91,37 @@ export const FlowStepSchema = z.discriminatedUnion("kind", [
   z
     .object({
       kind: z.literal("form"),
-      title: z.string().min(1),
-      description: z.string().optional(),
+      title: titleText(),
+      description: bodyText().optional(),
       fields: z.array(FlowFieldSchema),
-      submitLabel: z.string().optional(),
+      submitLabel: titleText().optional(),
     })
     .strict(),
   z
     .object({
       kind: z.literal("message"),
-      title: z.string().min(1),
-      body: z.string(),
+      title: titleText(),
+      body: bodyText(),
       tone: z.enum(MESSAGE_TONE),
-      continueLabel: z.string().optional(),
+      continueLabel: titleText().optional(),
     })
     .strict(),
   z
     .object({
       kind: z.literal("open-external"),
-      title: z.string().min(1),
-      description: z.string().optional(),
+      title: titleText(),
+      description: bodyText().optional(),
       url: z.string().refine(isSafeExternalUrl, {
         message: "url must be http or https",
       }),
-      buttonLabel: z.string().optional(),
+      buttonLabel: titleText().optional(),
     })
     .strict(),
   z
     .object({
       kind: z.literal("await"),
-      title: z.string().min(1),
-      description: z.string().optional(),
+      title: titleText(),
+      description: bodyText().optional(),
       // Spec §10.2 declares `pollMs` required, but a default of 1000 accepts every message
       // a conforming plugin can send (whether or not it sets `pollMs`) plus omission, so it
       // is strictly more permissive than the spec text and never rejects a conforming plugin.
@@ -105,7 +131,7 @@ export const FlowStepSchema = z.discriminatedUnion("kind", [
   z
     .object({
       kind: z.literal("done"),
-      message: z.string().optional(),
+      message: bodyText().optional(),
       config: z.record(z.string(), z.string()).optional(),
       secrets: z.record(z.string(), z.string()).optional(),
     })
@@ -113,7 +139,7 @@ export const FlowStepSchema = z.discriminatedUnion("kind", [
   z
     .object({
       kind: z.literal("error"),
-      message: z.string(),
+      message: bodyText(),
     })
     .strict(),
 ])
@@ -135,7 +161,7 @@ export type FlowResult = z.infer<typeof FlowResultSchema>
 export const FlowToastSchema = z
   .object({
     tone: z.enum(["info", "success", "warning", "error"]),
-    message: z.string(),
+    message: bodyText(),
   })
   .strict()
 export type FlowToast = z.infer<typeof FlowToastSchema>

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test"
 import {
   FLOW_LIMITS,
+  FLOW_TEXT_LIMITS,
   FlowResponseSchema,
   FlowResultSchema,
   FlowStepSchema,
@@ -9,6 +10,66 @@ import {
 } from "./flow"
 
 describe("FlowStepSchema", () => {
+  it("rejects a title longer than the title bound", () => {
+    // Extension-controlled and rendered verbatim. React escapes it, so the risk is layout,
+    // not injection: unbounded, a "title" is capped only by the 256 KB body limit and buries
+    // the modal's own cancel button under a wall of text.
+    expect(
+      FlowStepSchema.safeParse({
+        kind: "form",
+        title: "t".repeat(FLOW_TEXT_LIMITS.maxTitleChars + 1),
+        fields: [],
+      }).success,
+    ).toBe(false)
+  })
+
+  it("accepts a title exactly at the title bound", () => {
+    expect(
+      FlowStepSchema.safeParse({
+        kind: "form",
+        title: "t".repeat(FLOW_TEXT_LIMITS.maxTitleChars),
+        fields: [],
+      }).success,
+    ).toBe(true)
+  })
+
+  it("rejects an error message longer than the body bound", () => {
+    expect(
+      FlowStepSchema.safeParse({
+        kind: "error",
+        message: "m".repeat(FLOW_TEXT_LIMITS.maxBodyChars + 1),
+      }).success,
+    ).toBe(false)
+  })
+
+  it("rejects a message step body longer than the body bound", () => {
+    expect(
+      FlowStepSchema.safeParse({
+        kind: "message",
+        title: "Hi",
+        body: "b".repeat(FLOW_TEXT_LIMITS.maxBodyChars + 1),
+        tone: "info",
+      }).success,
+    ).toBe(false)
+  })
+
+  it("rejects a form field label longer than the title bound", () => {
+    expect(
+      FlowStepSchema.safeParse({
+        kind: "form",
+        title: "Sign in",
+        fields: [
+          {
+            name: "token",
+            label: "l".repeat(FLOW_TEXT_LIMITS.maxTitleChars + 1),
+            kind: "text",
+            required: true,
+          },
+        ],
+      }).success,
+    ).toBe(false)
+  })
+
   it("accepts a form step with fields", () => {
     expect(
       FlowStepSchema.safeParse({
