@@ -34,8 +34,11 @@ and stopping it on demand.
 ### Setup flows
 - `createFlowRunner(deps: { host, client, idGen, now, setTimer, clearTimer, logger? }): FlowRunner`
   with `start`, `advance`, `takeCompletion`, `cancel`, `activeInstanceKeys()`,
-  `abandon(keys, reason)` — drives one multi-step provider setup exchange over a DEDICATED
-  supervised instance and enforces `FLOW_LIMITS` itself
+  `abandon(keys, reason)`, `dispose()` — drives one multi-step provider setup exchange over a
+  DEDICATED supervised instance and enforces `FLOW_LIMITS` itself. `dispose()` is teardown
+  only: it releases every armed deadline (each live flow holds a ten-minute one-shot timer
+  nothing else can reach) and stops no child, because its caller — `AppContext.shutdown` —
+  stops the supervisor itself immediately after
 - `flowInstanceKey(providerId, nonce)` / `flowContributionIdOf(key)` — the one definition of
   the `flow:<contribution id>:<nonce>` key format; `flowContributionIdOf` yields the provider
   CONTRIBUTION id (not an extension manifest id, and not a Spectrum `ProviderId`)

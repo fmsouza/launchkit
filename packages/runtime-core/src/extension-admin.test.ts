@@ -59,6 +59,7 @@ const inertFlowRunner = {
   cancel: async () => {},
   activeInstanceKeys: () => new Set<string>(),
   abandon: () => {},
+  dispose: () => {},
 }
 
 type LogEntry = {
@@ -180,6 +181,7 @@ const harness = (opts?: {
         order.push("abandon")
         abandoned.push({ keys: [...keys], reason })
       },
+      dispose: () => {},
     },
     refresh: async () => {
       refreshes.push(Date.now())

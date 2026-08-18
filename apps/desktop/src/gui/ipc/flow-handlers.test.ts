@@ -177,6 +177,7 @@ const harness = (
     },
     activeInstanceKeys: () => new Set<string>(),
     abandon: () => {},
+    dispose: () => {},
   }
 
   const record =

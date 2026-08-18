@@ -290,18 +290,21 @@ const buildHarness = async (): Promise<Harness> => {
   }
 }
 
-// UNCONDITIONAL: a failing assertion must never leave a spawned plugin process behind. BOTH
-// halves of every entry are guarded, so the loop genuinely cannot short-circuit: a rejecting
-// `stopAll` must not strand its own temp dir, and a rejecting `rm` must not skip the `stopAll`
-// of every context after it — that would leak the children this block exists to kill. Failures
-// are collected and the first is rethrown once every entry has been cleaned.
+// UNCONDITIONAL: a failing assertion must never leave a spawned plugin process behind. Goes
+// through `ctx.shutdown()` — the real teardown entry point — rather than reaching past it to
+// `providerHost.stopAll()`, so an armed ten-minute deadline is disarmed here too instead of
+// holding this test file'''s event loop open. BOTH halves of every entry are guarded, so the
+// loop genuinely cannot short-circuit: a rejecting `shutdown` must not strand its own temp
+// dir, and a rejecting `rm` must not skip the `shutdown` of every context after it — that
+// would leak the children this block exists to kill. Failures are collected and the first is
+// rethrown once every entry has been cleaned.
 afterEach(async () => {
   const built = [...live]
   live.length = 0
   const failures: unknown[] = []
   for (const { ctx, home } of built) {
     try {
-      await ctx.providerHost.stopAll()
+      await ctx.shutdown()
     } catch (cause) {
       failures.push(cause)
     }

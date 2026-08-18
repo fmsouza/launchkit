@@ -165,6 +165,7 @@ const makeFakeDeps = (): {
         cancel: async () => undefined,
         activeInstanceKeys: () => new Set<string>(),
         abandon: () => undefined,
+        dispose: () => undefined,
       }
     }) as never,
     createProviderFactory: record("createProviderFactory") as never,
@@ -579,6 +580,39 @@ describe("createAppContext wiring", () => {
     await ctx.shutdown()
 
     expect(stopAllCalls).toBe(1)
+  })
+
+  it("disposes the flow runner before stopping the plugin processes on shutdown", async () => {
+    const { deps } = makeFakeDeps()
+    const order: string[] = []
+    ;(deps as { createProviderHost: unknown }).createProviderHost = () => ({
+      ensureRunning: async () => err({ kind: "not-found", id: "none" }),
+      status: () => "stopped",
+      stop: async () => undefined,
+      stopAllFor: async () => undefined,
+      stopAll: async () => {
+        order.push("stopAll")
+      },
+      retainOnly: async () => undefined,
+    })
+    ;(deps as { createFlowRunner: unknown }).createFlowRunner = (() => ({
+      start: async () => err({ kind: "not-found", id: "flow" }),
+      advance: async () => err({ kind: "not-found", id: "flow" }),
+      takeCompletion: () => undefined,
+      cancel: async () => undefined,
+      activeInstanceKeys: () => new Set<string>(),
+      abandon: () => undefined,
+      dispose: () => {
+        order.push("dispose")
+      },
+    })) as never
+
+    const ctx = createAppContext(deps)
+    await ctx.shutdown()
+
+    // Disarm first: a deadline that fires mid-teardown would call `host.stop` on a
+    // supervisor that `stopAll` is already tearing down.
+    expect(order).toEqual(["dispose", "stopAll"])
   })
 
   it("wires the extension installer with the resolved plugin root and the CURRENT config's link map, not an empty one", async () => {
@@ -1226,6 +1260,7 @@ describe("createAppContext setup flow runner wiring", () => {
       cancel: async () => undefined,
       activeInstanceKeys: () => new Set<string>(),
       abandon: () => undefined,
+      dispose: () => undefined,
     }
     let captured: Record<string, unknown> = {}
     ;(deps as { createFlowRunner: unknown }).createFlowRunner = ((

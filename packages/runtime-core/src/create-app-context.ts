@@ -1416,9 +1416,12 @@ export const createAppContext = (
     closeDb: (): void => {
       dbClient.connection.close()
     },
-    // Process exit: stop every supervised plugin child process. Deliberately NOT folded into
-    // `closeDb`, which is the narrow GUI factory-reset hook.
+    // Process exit: disarm the flow runner's deadlines, then stop every supervised plugin
+    // child process. Deliberately NOT folded into `closeDb`, which is the narrow GUI
+    // factory-reset hook. Order matters: a deadline firing mid-teardown would call
+    // `host.stop` on a supervisor `stopAll` is already draining.
     shutdown: async (): Promise<void> => {
+      flowRunner.dispose()
       await providerHost.stopAll()
     },
     clock: deps.createSystemClock(),

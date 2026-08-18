@@ -285,6 +285,7 @@ export const buildFakeAppContextDeps = (
           cancel: async () => undefined,
           activeInstanceKeys: () => new Set<string>(),
           abandon: () => undefined,
+          dispose: () => undefined,
         }
       }) as never),
     createProviderFactory:

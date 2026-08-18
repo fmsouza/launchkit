@@ -223,6 +223,17 @@ const harness = (opts: {
 }
 
 describe("createFlowRunner", () => {
+  it("clears every armed deadline when disposed", async () => {
+    // A ten-minute one-shot timer per live flow keeps an event loop alive on its own. The
+    // desktop app exits natively so it never notices, but `AppContext.shutdown` is the
+    // documented teardown for any embedder, and nothing else can reach these handles.
+    const { runner, timers } = harness({ steps: [formStep] })
+    await runner.start(startInput)
+    expect(timers).toHaveLength(1)
+    runner.dispose()
+    expect(timers).toHaveLength(0)
+  })
+
   it("starts a dedicated flow instance and returns the first step", async () => {
     const { runner, started } = harness({ steps: [formStep] })
     const r = await runner.start(startInput)

@@ -76,6 +76,15 @@ export interface FlowRunner {
    * the same named error rather than the raw transport failure of talking to a killed child.
    */
   abandon(keys: readonly string[], reason: FlowAbandonReason): void
+  /**
+   * Release every armed deadline. Teardown only — it stops no child and ends no session,
+   * because the caller (`AppContext.shutdown`) stops the supervisor itself immediately after.
+   *
+   * Each live flow holds a ten-minute one-shot timer, and nothing else can reach those
+   * handles. The desktop app exits the process natively so it never notices, but an embedder
+   * that only tears the context down is left with an event loop that will not drain.
+   */
+  dispose(): void
 }
 
 export type FlowRunnerDeps = {
@@ -567,6 +576,10 @@ export const createFlowRunner = (deps: FlowRunnerDeps): FlowRunner => {
         ...starting.keys(),
         ...[...sessions.values()].map((session) => session.instanceKey),
       ]),
+    dispose: (): void => {
+      for (const handle of deadlines.values()) deps.clearTimer(handle)
+      deadlines.clear()
+    },
     abandon: (keys: readonly string[], reason: FlowAbandonReason): void => {
       const dropped = new Set(keys)
       for (const [sessionId, session] of [...sessions])
