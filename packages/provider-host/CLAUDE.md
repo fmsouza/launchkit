@@ -47,6 +47,13 @@ and stopping it on demand.
   should depend on whether the host's timer returns a number or a `Timeout` object
 - `FetchLike` — the slice of `fetch` `createFetchFlowHttp` uses, injectable so the per-call
   abort deadline is testable (Bun's test runner does not deliver a fetch abort)
+- `NO_LAUNCH_BLOCK_DETAIL` — the `detail` on the `invalid-manifest` returned when a
+  contribution something asked to RUN declares no `launch` block. Exported for the same reason
+  as `FLOW_IN_FLIGHT_DETAIL`: `@spectrum/extensions`'s flow client reports an unparseable or
+  newer-than-us step with the same `kind`, so a caller writing user-facing copy must tell "this
+  manifest offers a setup flow but no server to run it" apart from "this step needs a newer
+  Spectrum". Carries NO contribution id — an interpolated id would defeat exact matching, and
+  `invalid-manifest.id` means the EXTENSION a manifest was read from, a different id space
 - `FLOW_IN_FLIGHT_DETAIL` — the `detail` on the `read-failed` that refuses a SECOND concurrent
   `advance`. Exported because that refusal alone is non-terminal while every other
   `read-failed` ends the flow, and `kind` cannot tell them apart: a caller that surfaces
@@ -99,6 +106,10 @@ and stopping it on demand.
   exit handler restarts only a `running` instance; marking after the kill would race the
   handler into a zombie restart loop on shutdown. Same reason readiness failure marks
   `failed` before killing.
+- Nothing ties a `flow` action to a `launch` block at manifest-parse time, so a contribution
+  that offers a setup flow with no launch block installs cleanly and fails only when the flow
+  starts. That refusal is `invalid-manifest` + `NO_LAUNCH_BLOCK_DETAIL`; the detail is the only
+  thing separating it from an unparseable step, and both halves import the constant.
 - A flow runs on its OWN instance, never the serving one: in `context: "create"` there is no
   provider record yet, and a flow that hangs must not take a working provider down with it.
   The flow instance is stopped on EVERY terminal path — done, error, cancel, the deadline,

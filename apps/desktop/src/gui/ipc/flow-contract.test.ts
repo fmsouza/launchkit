@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test"
+import type { ExtensionRegistry } from "@spectrum/extensions"
 import {
   FlowResultSchema,
   FlowStepSchema,
@@ -6,11 +7,19 @@ import {
 } from "@spectrum/extensions"
 import { FlowResultViewSchema, FlowStepViewSchema } from "@spectrum/ipc"
 import { createNoopLogger } from "@spectrum/logger"
+import {
+  createControllableProcessSpawner,
+  createFakeCommandResolver,
+} from "@spectrum/proc"
 import type { FlowClient, ProviderHost } from "@spectrum/provider-host"
 import {
   FLOW_IN_FLIGHT_DETAIL,
+  NO_LAUNCH_BLOCK_DETAIL,
   createFlowRunner,
+  createProviderHost,
 } from "@spectrum/provider-host"
+import type { PluginId } from "@spectrum/types"
+import { ok } from "@spectrum/utils"
 import { flowErrorMessage } from "./flow-errors"
 
 /**
@@ -349,5 +358,106 @@ describe("the runner's already-in-flight detail", () => {
     }
     releaseNext()
     await first
+  })
+})
+
+// ── The no-launch-block sentinel ─────────────────────────────────────────────
+// A contribution can declare a `flow` action and no `launch` block: nothing gates the action
+// on one, and `ProviderContributionSchema` has no cross-field rule tying them together, so
+// such a manifest installs cleanly and fails only when the flow starts. The supervisor reports
+// that as `invalid-manifest` — the SAME kind `flow-client.ts` uses for a step this Spectrum
+// cannot parse — so `kind` alone would tell an author with a missing launch block to go and
+// upgrade Spectrum. `NO_LAUNCH_BLOCK_DETAIL` is what separates them, and it is exported by
+// `@spectrum/provider-host` and imported by both sides so a reword cannot split the pair.
+//
+// Held HERE, in the one place that depends on both, and against the REAL host: a test that
+// asserted the copy alone would still pass if the host stopped producing that detail.
+
+const launchlessRegistry = (): ExtensionRegistry => ({
+  list: async () =>
+    ok([
+      {
+        manifest: {
+          apiVersion: "1",
+          id: "acme-ext" as PluginId,
+          name: "Acme",
+          version: "1.0.0",
+          contributes: {
+            providers: [
+              {
+                id: "acme" as PluginId,
+                descriptor: {
+                  label: "Acme",
+                  configFields: [],
+                  secretFields: [],
+                  supportsCustomHeaders: false,
+                  streaming: "incremental" as const,
+                  reasoning: { shape: "none" as const, supportedTiers: [] },
+                  discovery: { strategy: "none" as const },
+                  // Offers the flow, and declares no server to run it.
+                  actions: [
+                    {
+                      kind: "flow" as const,
+                      id: "signin",
+                      label: "Sign in",
+                      context: "both" as const,
+                    },
+                  ],
+                },
+                transport: { kind: "http" as const, wire: "openai" as const },
+              },
+            ],
+          },
+        },
+        ignoredContributions: [],
+        dir: "/ext/acme",
+      },
+    ]),
+  providerDescriptors: async () => ok([]),
+})
+
+describe("the host's no-launch-block detail", () => {
+  const hostForLaunchless = (): ProviderHost =>
+    createProviderHost({
+      registry: launchlessRegistry(),
+      isEnabled: () => true,
+      resolver: createFakeCommandResolver({}),
+      spawner: createControllableProcessSpawner(),
+      allocator: { allocate: async () => ok(9001) },
+      probe: async () => ({ ok: true, token: undefined }),
+      sleep: async () => {},
+      now: () => 0,
+      tokenGen: () => "tok",
+      logger: createNoopLogger(),
+    })
+
+  it("is what the real supervisor reports for a contribution with no launch block", async () => {
+    const result = await hostForLaunchless().ensureRunning({
+      instanceKey: "flow:acme:n0",
+      providerId: "acme",
+      secrets: {},
+    })
+    expect(result.ok).toBe(false)
+    if (result.ok || result.error.kind !== "invalid-manifest") return
+    expect(result.error.detail).toBe(NO_LAUNCH_BLOCK_DETAIL)
+  })
+
+  it("becomes copy naming the missing launch block rather than the upgrade copy", () => {
+    const message = flowErrorMessage(
+      { kind: "invalid-manifest", detail: NO_LAUNCH_BLOCK_DETAIL },
+      "start",
+    )
+    expect(message).toContain("no server for Spectrum to start")
+    expect(message).not.toContain("newer Spectrum")
+  })
+
+  it("leaves an unparseable step's copy alone", () => {
+    // The two causes share a kind; distinguishing one must not swallow the other.
+    const message = flowErrorMessage(
+      { kind: "invalid-manifest", detail: "unrecognized_keys: step.kind" },
+      "start",
+    )
+    expect(message).toContain("newer Spectrum")
+    expect(message).not.toContain("no server for Spectrum to start")
   })
 })

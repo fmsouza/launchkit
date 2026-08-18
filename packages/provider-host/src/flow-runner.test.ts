@@ -13,6 +13,7 @@ import {
   flowContributionIdOf,
   flowInstanceKey,
 } from "./flow-runner"
+import { NO_LAUNCH_BLOCK_DETAIL } from "./host"
 import type { EnsureRunningInput, PluginStatus } from "./host"
 
 const formStep: FlowStep = { kind: "form", title: "Sign in", fields: [] }
@@ -543,7 +544,7 @@ describe("createFlowRunner", () => {
       steps: [formStep],
       ensureFails: {
         kind: "invalid-manifest",
-        detail: 'provider contribution "acme" declares no launch block',
+        detail: NO_LAUNCH_BLOCK_DETAIL,
       },
     })
     const r = await runner.start(startInput)
@@ -556,7 +557,7 @@ describe("createFlowRunner", () => {
       steps: [formStep],
       ensureFails: {
         kind: "invalid-manifest",
-        detail: 'provider contribution "acme" declares no launch block',
+        detail: NO_LAUNCH_BLOCK_DETAIL,
       },
     })
     await runner.start(startInput)

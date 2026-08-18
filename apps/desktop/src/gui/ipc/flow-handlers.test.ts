@@ -10,6 +10,7 @@ import type {
   FlowStartInput,
   RunnerStep,
 } from "@spectrum/provider-host"
+import { NO_LAUNCH_BLOCK_DETAIL } from "@spectrum/provider-host"
 import { createProviderRegistry, getDescriptor } from "@spectrum/providers"
 import type { ProviderDescriptor } from "@spectrum/providers"
 import type { Provider, ProviderId, SecretRef } from "@spectrum/types"
@@ -613,6 +614,42 @@ describe("createIpcHandlers.startProviderFlow", () => {
         message: expect.stringContaining("this step needs a newer Spectrum"),
       },
     })
+  })
+
+  it("names the missing launch block rather than telling the author to upgrade Spectrum", async () => {
+    // A manifest that offers a `flow` action but declares no `launch` block installs fine and
+    // fails only here — nothing gates the action on a launch block. It reaches this handler as
+    // `invalid-manifest`, the SAME kind an unparseable step uses, and the shared copy told the
+    // author their Spectrum was too old. Matched on the constant `@spectrum/provider-host`
+    // exports, never on a hand-copied sentence.
+    const { handlers } = harness({
+      startFails: {
+        kind: "invalid-manifest",
+        detail: NO_LAUNCH_BLOCK_DETAIL,
+      },
+    })
+    const started = await handlers.startProviderFlow(startParams)
+    const step = started.step
+    if (step?.kind !== "error") return
+    expect(step.message).toContain("no server for Spectrum to start")
+    expect(step.message).not.toContain("newer Spectrum")
+  })
+
+  it("still tells a genuinely unparseable step to upgrade Spectrum", async () => {
+    // The distinguishing check must not swallow the case it shares a `kind` with: an
+    // extension that sends a step this Spectrum cannot parse keeps the upgrade copy.
+    const { handlers } = harness({
+      startFails: {
+        kind: "invalid-manifest",
+        detail: "unrecognized_keys: step.kind",
+      },
+    })
+    const started = await handlers.startProviderFlow(startParams)
+    const step = started.step
+    expect(step?.kind).toBe("error")
+    if (step?.kind !== "error") return
+    expect(step.message).toContain("newer Spectrum")
+    expect(step.message).not.toContain("no server for Spectrum to start")
   })
 
   it("names the extension in the message when the failure knows which one it was", async () => {

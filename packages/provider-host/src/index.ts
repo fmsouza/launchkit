@@ -32,4 +32,4 @@ export type {
   ProviderHost,
   ProviderHostDeps,
 } from "./host"
-export { createProviderHost } from "./host"
+export { NO_LAUNCH_BLOCK_DETAIL, createProviderHost } from "./host"

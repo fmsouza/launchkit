@@ -140,6 +140,24 @@ const backoffFor = (attempt: number): number =>
   Math.min(RESTART_BACKOFF_MS * 2 ** (attempt - 1), MAX_RESTART_BACKOFF_MS)
 
 /**
+ * The `detail` on the `invalid-manifest` produced when a contribution that something asked to
+ * RUN declares no `launch` block.
+ *
+ * Exported for the same reason as `FLOW_IN_FLIGHT_DETAIL`, and it is the same trap: `kind`
+ * alone cannot separate this from a genuinely unparseable or newer-than-us step, which the
+ * flow client also reports as `invalid-manifest`. A caller that turns errors into user-facing
+ * copy has to tell "this manifest offers a setup flow but no server to run it" apart from
+ * "this step needs a newer Spectrum" — and must not hand-copy the sentence to do it, or the
+ * two halves drift apart on the next reword with nothing to catch it.
+ *
+ * Carries no contribution id, deliberately: an interpolated id would make exact matching
+ * impossible, and `invalid-manifest.id` means the EXTENSION a manifest was read from, which
+ * is a different id space from the contribution id this path has.
+ */
+export const NO_LAUNCH_BLOCK_DETAIL =
+  "provider contribution declares no launch block"
+
+/**
  * Supervises plugin-contributed provider servers as local child processes on loopback:
  * one process per `instanceKey`, restarted with a FRESH port and host token when it exits
  * unexpectedly, and stopped on demand.
@@ -178,10 +196,7 @@ export const createProviderHost = (deps: ProviderHostDeps): ProviderHost => {
 
     const launch = contribution.transport.launch
     if (launch === undefined)
-      return err({
-        kind: "invalid-manifest",
-        detail: `provider contribution "${providerId}" declares no launch block`,
-      })
+      return err({ kind: "invalid-manifest", detail: NO_LAUNCH_BLOCK_DETAIL })
 
     // Guard BEFORE resolution: a relative path or a `..` segment is rejected outright,
     // never handed to the resolver. A manifest is untrusted input.
