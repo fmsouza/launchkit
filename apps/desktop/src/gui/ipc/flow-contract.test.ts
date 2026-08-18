@@ -3,9 +3,14 @@ import type { ExtensionRegistry } from "@spectrum/extensions"
 import {
   FlowResultSchema,
   FlowStepSchema,
+  FlowToastSchema,
   type PluginError,
 } from "@spectrum/extensions"
-import { FlowResultViewSchema, FlowStepViewSchema } from "@spectrum/ipc"
+import {
+  FlowResultViewSchema,
+  FlowStepViewSchema,
+  FlowToastViewSchema,
+} from "@spectrum/ipc"
 import { createNoopLogger } from "@spectrum/logger"
 import {
   createControllableProcessSpawner,
@@ -177,6 +182,10 @@ const stepFixtures: readonly {
     raw: { kind: "form", title: "t".repeat(200), fields: [] },
   },
   {
+    label: "an error step whose message is exactly at the body bound",
+    raw: { kind: "error", message: "m".repeat(2000) },
+  },
+  {
     label: "an error step whose message is past the body bound",
     raw: { kind: "error", message: "m".repeat(2001) },
   },
@@ -234,6 +243,49 @@ describe("FlowStepViewSchema mirrors FlowStepSchema", () => {
     expect(FlowStepSchema.safeParse(raw).success).toBe(true)
     expect(FlowStepViewSchema.safeParse(raw).success).toBe(false)
   })
+})
+
+const toastFixtures: readonly {
+  readonly label: string
+  readonly raw: unknown
+}[] = [
+  { label: "a well-formed toast", raw: { tone: "info", message: "Saved" } },
+  { label: "an error-toned toast", raw: { tone: "error", message: "Nope" } },
+  {
+    label: "a toast with an unknown tone",
+    raw: { tone: "fatal", message: "x" },
+  },
+  {
+    label: "a toast carrying an unknown key",
+    raw: { tone: "info", message: "x", url: "u" },
+  },
+  { label: "a toast with no message", raw: { tone: "info" } },
+  {
+    label: "a toast whose message is exactly at the body bound",
+    raw: { tone: "info", message: "m".repeat(2000) },
+  },
+  {
+    label: "a toast whose message is past the body bound",
+    raw: { tone: "info", message: "m".repeat(2001) },
+  },
+]
+
+/**
+ * The toast rides ALONGSIDE the step, and the IPC handler passes the runner's copy through
+ * without projecting it. So a toast the extension schema accepts and the view schema refuses
+ * does not fail the toast — it fails the whole IPC RESULT, which reaches the renderer as a
+ * transport failure carrying no `sessionId`, leaving nothing able to cancel the flow's child.
+ * That makes this mirror load-bearing in exactly the way the step mirror is.
+ */
+describe("FlowToastViewSchema mirrors FlowToastSchema", () => {
+  for (const { label, raw } of toastFixtures) {
+    it(`reaches the same verdict as the extension schema for ${label}`, () => {
+      const source = FlowToastSchema.safeParse(raw)
+      const view = FlowToastViewSchema.safeParse(raw)
+      expect(view.success).toBe(source.success)
+      if (source.success && view.success) expect(view.data).toEqual(source.data)
+    })
+  }
 })
 
 const resultFixtures: readonly {
