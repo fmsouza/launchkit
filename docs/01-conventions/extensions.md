@@ -277,9 +277,12 @@ Every request carries
 launched plugin must check it on every flow request and refuse with `401` on a
 missing or mismatched value. It is the only thing standing between your credential
 exchange and any other local process that might have raced you for the port. The
-worked example below rejects exactly this, and the fixture's refusals are exercised
-against the real client in `packages/runtime-core/src/extension-flow.integration.test.ts`
-(describe block "the oauth fixture's own refusals").
+worked example below rejects exactly this. The happy-path cases above that block do
+drive the fixture through the real `FlowClient`; the refusals themselves are probed with raw
+`fetch`, which is the point — they prove the FIXTURE rejects a bad token or a forged session
+id, not merely that the client never sends one
+(`packages/runtime-core/src/extension-flow.integration.test.ts`, describe block "the oauth
+fixture's own refusals").
 
 `start` receives `{ context: "create" | "provider", config: Record<string, string> }`.
 `next` receives `{ sessionId: string, result: FlowResult }` — `sessionId` is the id
@@ -307,6 +310,12 @@ the schema doesn't declare is a hard parse failure, not a warning. `FlowStepSche
 `{ kind: "form", values: Record<string,string> }`, `{ kind: "ack" }`,
 `{ kind: "poll" }`, or `{ kind: "cancel" }` — also each `.strict()`.
 
+**Spectrum does not currently send `{ kind: "cancel" }`.** The schema carries it because
+the protocol declares it, but a cancelled flow is ended by KILLING your process, not by
+calling `next` first — the same is true of the 10-minute deadline, a disabled extension, and
+every error path. Write your cleanup so it does not depend on a cancel callback ever firing:
+anything your process must release, it has to release on exit.
+
 **An unknown `kind` anywhere in your response is a contract violation Spectrum treats
 as "you're ahead of me," not "you sent garbage."** The client's `FlowResponseSchema`
 parse fails with `invalid-manifest`, and the runner turns that into an `error` step
@@ -332,6 +341,11 @@ process sends (`FLOW_LIMITS`, `packages/extensions/src/flow.ts:11-17`):
   the renderer to a faster rate than Spectrum allows.
 - **256 KB per response body.** The HTTP adapter aborts a response mid-stream once it
   crosses this, rather than buffering whatever a hung or hostile process sends first.
+- **200 characters per title or button label, 2000 per body, message or toast**
+  (`FLOW_TEXT_LIMITS`, `packages/extensions/src/flow.ts`). Spectrum renders these strings
+  verbatim, so without a bound the only limit on a "title" would be the 256 KB body cap — and
+  a step that shipped one would push the setup modal's own cancel button off the screen. Over
+  the bound is a parse failure like any other, not a truncation.
 
 ### `done` handling
 
@@ -411,8 +425,9 @@ example below does exactly this, with a `400`).
 ### A complete worked example: the OAuth fixture
 
 The fixture at `packages/runtime-core/src/fixtures/oauth-extension-server.ts`, and the
-manifest `manifestFor()` builds around it in
-`packages/runtime-core/src/extension-flow.integration.test.ts`, is a full OAuth-shaped
+manifest the `manifest()` builder wraps around it in
+`packages/runtime-core/src/extension-flow.integration.test.ts` (`manifestFor()` is the
+provider integration test's builder, in a different file), is a full OAuth-shaped
 flow you can run yourself. It is deliberately strict: it answers `401` to any flow
 request missing the correct `x-spectrum-host-token`, and `400` to a malformed
 `start`/`next` body or a `next` carrying a session id it never minted — so it proves
