@@ -584,6 +584,30 @@ describe("createIpcHandlers.startProviderFlow", () => {
     })
   })
 
+  it("cancels the runner session when the guarded opener refuses", async () => {
+    // The handler SYNTHESIZES this `error` step; the runner never produced one, so nothing
+    // has ended the flow. `error` is terminal to the renderer — it drops the session id it
+    // was holding — so if the handler does not end the session here, nothing ever will and
+    // the extension's child survives to its deadline.
+    const h = harness({
+      steps: [{ kind: "open-external", title: "Go", url: "https://e.com/a" }],
+      openExternalOk: false,
+    })
+    await h.handlers.startProviderFlow(startParams)
+    expect(h.cancelled).toEqual(["fs_1"])
+  })
+
+  it("cancels the runner session when the step cannot be projected for the renderer", async () => {
+    // A step this Spectrum cannot project fails LOUDLY (the ipc server turns the throw into
+    // handler-failed). The renderer therefore never learns the session id at all on `start`,
+    // so the handler is the only party that can stop the child.
+    const h = harness({ steps: [{ kind: "teleport" } as unknown as FlowStep] })
+    await expect(h.handlers.startProviderFlow(startParams)).rejects.toThrow(
+      "could not project flow step",
+    )
+    expect(h.cancelled).toEqual(["fs_1"])
+  })
+
   it("opens nothing when the step is not an open-external step", async () => {
     const h = harness({ steps: [formStep] })
     await h.handlers.startProviderFlow(startParams)

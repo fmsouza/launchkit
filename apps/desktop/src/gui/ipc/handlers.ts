@@ -310,10 +310,13 @@ export const createIpcHandlers = (ctx: GuiContext): IpcHandlers => {
    *
    * The `done` variant is REBUILT from its message alone — never spread — so `config`,
    * `secrets`, or any field a future plugin adds cannot ride along; every other kind is
-   * already credential-free. The projection is then parsed by `FlowStepViewSchema`, so a
-   * mistake here fails loudly in the main process rather than leaking to the renderer.
+   * already credential-free. The projection is then parsed by `FlowStepViewSchema`.
+   *
+   * Returns `undefined` rather than throwing on a step this Spectrum cannot project: the
+   * caller still has to END the session before failing loudly (see `endFlowSession`), and a
+   * throw from in here would skip that.
    */
-  const sanitizeFlowStep = (step: FlowStep): FlowStepViewData => {
+  const sanitizeFlowStep = (step: FlowStep): FlowStepViewData | undefined => {
     const view =
       step.kind === "done"
         ? {
@@ -322,9 +325,22 @@ export const createIpcHandlers = (ctx: GuiContext): IpcHandlers => {
           }
         : step
     const parsed = FlowStepViewSchema.safeParse(view)
-    if (!parsed.success)
-      return fail(`could not project flow step of kind: ${step.kind}`)
+    if (!parsed.success) return undefined
     return parsed.data
+  }
+
+  /**
+   * End a session the HANDLER — not the runner — just declared terminal.
+   *
+   * Every terminal step the runner produces has already ended its own session and stopped the
+   * child. A step this handler synthesizes (a refused browser open, a step it cannot project)
+   * has not: the renderer treats `error` as terminal and forgets the session id, and a
+   * `handler-failed` throw never hands it one at all, so nothing downstream can cancel. Left
+   * undone, the extension's child survives until the runner's ten-minute deadline reaps it.
+   */
+  const endFlowSession = async (sessionId: string): Promise<void> => {
+    flowOrigins.delete(sessionId)
+    await ctx.flowRunner.cancel(sessionId)
   }
 
   /**
@@ -463,6 +479,7 @@ export const createIpcHandlers = (ctx: GuiContext): IpcHandlers => {
         flowLog.warn("flow could not open the browser", {
           kind: opened.error.kind,
         })
+        await endFlowSession(stepped.sessionId)
         return {
           step: flowErrorStep(
             "Spectrum could not open your browser for this step.",
@@ -492,7 +509,12 @@ export const createIpcHandlers = (ctx: GuiContext): IpcHandlers => {
     }
     if (step.kind === "error") flowOrigins.delete(stepped.sessionId)
 
-    return { step: sanitizeFlowStep(step), ...toast }
+    const view = sanitizeFlowStep(step)
+    if (view === undefined) {
+      await endFlowSession(stepped.sessionId)
+      return fail(`could not project flow step of kind: ${step.kind}`)
+    }
+    return { step: view, ...toast }
   }
 
   /**
