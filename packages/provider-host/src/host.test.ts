@@ -320,6 +320,23 @@ describe("createProviderHost", () => {
     expect(result.error.detail).toBe(NO_LAUNCH_BLOCK_DETAIL)
   })
 
+  it("names the contribution in the log when it declares no launch block", async () => {
+    // The detail carries no id on purpose — `apps/desktop` matches it exactly to give this
+    // cause its own copy. That leaves the LOG as the only surface that can say WHICH
+    // contribution was misdeclared, and a user with several extensions installed cannot act
+    // on "some provider has no launch block".
+    const logger = createFakeLogger()
+    const { host: h } = host({
+      logger,
+      contributions: [contribution({ noLaunch: true })],
+    })
+    await h.ensureRunning(run())
+    const record = logger.records.find(
+      (r) => r.fields?.providerId === "acme" && r.level === "warn",
+    )
+    expect(record?.msg).toContain("launch block")
+  })
+
   it("reports starting while the first start is still in flight", async () => {
     const ready = gate()
     const { host: h } = host({ probeGate: ready.promise })

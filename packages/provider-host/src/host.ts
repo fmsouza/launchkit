@@ -195,8 +195,13 @@ export const createProviderHost = (deps: ProviderHostDeps): ProviderHost => {
       return err({ kind: "not-found", id: providerId })
 
     const launch = contribution.transport.launch
-    if (launch === undefined)
+    if (launch === undefined) {
+      // The detail is id-free so callers can match it exactly; the id lives here instead,
+      // because "some provider has no launch block" is not something a user with several
+      // extensions installed can act on.
+      logger.warn("plugin provider declares no launch block", { providerId })
       return err({ kind: "invalid-manifest", detail: NO_LAUNCH_BLOCK_DETAIL })
+    }
 
     // Guard BEFORE resolution: a relative path or a `..` segment is rejected outright,
     // never handed to the resolver. A manifest is untrusted input.
