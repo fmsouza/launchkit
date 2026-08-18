@@ -29,7 +29,10 @@ import {
 import { createProjectStore } from "@spectrum/projects"
 import {
   createCryptoTokenGen,
+  createFetchFlowHttp,
   createFetchHealthProbe,
+  createFlowClient,
+  createFlowRunner,
   createLoopbackPortAllocator,
   createProviderHost,
 } from "@spectrum/provider-host"
@@ -264,6 +267,27 @@ export const buildFakeAppContextDeps = (
     createCryptoTokenGen:
       overrides.createCryptoTokenGen ??
       (record("createCryptoTokenGen") as never),
+    createFetchFlowHttp:
+      overrides.createFetchFlowHttp ?? (record("createFetchFlowHttp") as never),
+    createFlowClient:
+      overrides.createFlowClient ?? (record("createFlowClient") as never),
+    // Shaped, not `record(...)`: the composition root's retention sweep calls
+    // `activeInstanceKeys` and `abandon` on whatever this returns, on every config save and
+    // every extension refresh, and `{ __stub }` has neither.
+    createFlowRunner:
+      overrides.createFlowRunner ??
+      (((...a: unknown[]) => {
+        calls.createFlowRunner = a
+        return {
+          start: async () => err({ kind: "not-found", id: "none" }),
+          advance: async () => err({ kind: "not-found", id: "none" }),
+          takeCompletion: () => undefined,
+          cancel: async () => undefined,
+          activeInstanceKeys: () => new Set<string>(),
+          abandon: () => undefined,
+          dispose: () => undefined,
+        }
+      }) as never),
     createProviderFactory:
       overrides.createProviderFactory ??
       (record("createProviderFactory") as never),
@@ -328,6 +352,9 @@ export const realAdapterDefaults: Readonly<Record<string, unknown>> = {
   createLoopbackPortAllocator,
   createFetchHealthProbe,
   createCryptoTokenGen,
+  createFetchFlowHttp,
+  createFlowClient,
+  createFlowRunner,
   createProviderFactory,
   loadSdk,
   createRealGateway,

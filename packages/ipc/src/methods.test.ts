@@ -450,6 +450,9 @@ describe("IpcMethodSchemas", () => {
       "setExtensionEnabled",
       "updateExtension",
       "removeExtension",
+      "startProviderFlow",
+      "advanceProviderFlow",
+      "cancelProviderFlow",
     ] as const
     for (const name of expected) {
       expect(IpcMethodSchemas[name]).toBeDefined()

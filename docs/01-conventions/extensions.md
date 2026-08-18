@@ -217,8 +217,7 @@ is no ambient credential inheritance from Spectrum's own environment beyond what
 
 - `edit-config` — opens the config form over `configFields`
 - `set-secrets` — opens the secret form over `secretFields`
-- `flow` — a plugin-driven step flow (see Plan 4's flow-protocol document; not covered
-  here)
+- `flow` — a plugin-driven multi-step setup exchange; see "Setup flows" below
 
 Each action has a `context` of `"create" | "provider" | "both"` (default
 `"provider"`) that decides where it is offered — `ProviderActionBar` filters actions
@@ -236,6 +235,263 @@ default."
 `spectrum-cli plugin list`/`plugin install` prints a line for every contribution that
 declares a `flow` action, because the CLI cannot run one — only the GUI can
 (`packages/cli/src/plugin-command.ts:66-80`).
+
+## Setup flows
+
+A `flow` action is a multi-step setup exchange — forms, messages, an OAuth handshake
+through the OS browser — that your supervised process serves **as data**. Spectrum
+renders every step with its own components; your code never reaches the renderer, and
+no field value you send ever crosses back to it either except through the sanitized
+paths described below.
+
+**A flow needs a supervised contribution.** It runs on your `transport.launch` process
+— there is nothing to talk to otherwise. A contribution with no `launch` block cannot
+offer a `flow` action; asking Spectrum to start one on such a contribution fails with
+`invalid-manifest` (`NO_LAUNCH_BLOCK_DETAIL`, `packages/provider-host/src/host.ts:157-158,199`),
+surfaced to the user verbatim as:
+
+> Setup cannot continue: this extension offers a setup flow but declares no server
+> for Spectrum to start, so there is nothing to run it. Its manifest needs a launch
+> block.
+
+(`apps/desktop/src/gui/ipc/flow-errors.ts`, matched on the exported
+`NO_LAUNCH_BLOCK_DETAIL` constant rather than on `kind` alone — `invalid-manifest`
+also covers an unparseable step from a live flow, and the two need different copy.)
+
+### The endpoints
+
+Spectrum calls your server at two paths, always at the base url's **root** —
+independent of your `wire`'s own paths (`/responses`, `/models`, …) so a plugin whose
+wire prefix happened to be `/v1` cannot collide with them:
+
+```
+POST /spectrum/v1/flow/{flowId}/start
+POST /spectrum/v1/flow/{flowId}/next
+```
+
+(`FLOW_PATH_PREFIX`, `packages/extensions/src/flow.ts:5`; the client builds the url as
+`${baseUrl.replace(/\/$/, "")}${FLOW_PATH_PREFIX}/${flowId}/${op}` — a trailing slash on
+your base url is stripped first, `packages/provider-host/src/flow-client.ts:131`.)
+Every request carries
+`x-spectrum-host-token`, the same header your process echoes back on `healthPath` — a
+launched plugin must check it on every flow request and refuse with `401` on a
+missing or mismatched value. It is the only thing standing between your credential
+exchange and any other local process that might have raced you for the port. The
+worked example below rejects exactly this. The happy-path cases above that block do
+drive the fixture through the real `FlowClient`; the refusals themselves are probed with raw
+`fetch`, which is the point — they prove the FIXTURE rejects a bad token or a forged session
+id, not merely that the client never sends one
+(`packages/runtime-core/src/extension-flow.integration.test.ts`, describe block "the oauth
+fixture's own refusals").
+
+`start` receives `{ context: "create" | "provider", config: Record<string, string> }`.
+`next` receives `{ sessionId: string, result: FlowResult }` — `sessionId` is the id
+**you** minted in your `start` response, echoed back; it is never Spectrum's own
+session handle (see "Two session-id spaces" below). Both must be answered with a
+`FlowResponse`: `{ sessionId: string, step: FlowStep, toast?: FlowToast }`
+(`packages/extensions/src/flow.ts:177-184`).
+
+### Step and result kinds
+
+Every object in the protocol is `.strict()` — a property your response includes that
+the schema doesn't declare is a hard parse failure, not a warning. `FlowStepSchema`
+(`packages/extensions/src/flow.ts:98-153`) is a discriminated union on `kind`:
+
+| `kind` | Fields | Notes |
+|---|---|---|
+| `form` | `title`, `description?`, `fields: FlowField[]`, `submitLabel?` | Each field has `name`, `label`, `kind: "text" \| "url" \| "password" \| "select"`, `required`, `placeholder?`, `options?` (required and non-empty when `kind: "select"`, rejected at parse time otherwise) |
+| `message` | `title`, `body`, `tone: "info" \| "success" \| "warning"`, `continueLabel?` | Never `"error"` — that's the `error` step kind below |
+| `open-external` | `title`, `description?`, `url`, `buttonLabel?` | `url` must be `http:`/`https:` (see "The browser opens on delivery" below) |
+| `await` | `title`, `description?`, `pollMs` | **`pollMs` defaults to `1000` even though the spec text declares it required** — omitting it is accepted, not an error (`packages/extensions/src/flow.ts:133-136`) |
+| `done` | `message?`, `config?: Record<string,string>`, `secrets?: Record<string,string>` | Terminal — see "`done` handling" below |
+| `error` | `message` | Terminal; ends the flow |
+
+`FlowResultSchema` (what your `next` handler receives as `result`) is one of
+`{ kind: "form", values: Record<string,string> }`, `{ kind: "ack" }`,
+`{ kind: "poll" }`, or `{ kind: "cancel" }` — also each `.strict()`.
+
+**Spectrum does not currently send `{ kind: "cancel" }`.** The schema carries it because
+the protocol declares it, but a cancelled flow is ended by KILLING your process, not by
+calling `next` first — the same is true of the 10-minute deadline, a disabled extension, and
+every error path. Write your cleanup so it does not depend on a cancel callback ever firing:
+anything your process must release, it has to release on exit.
+
+**An unknown `kind` anywhere in your response is a contract violation Spectrum treats
+as "you're ahead of me," not "you sent garbage."** The client's `FlowResponseSchema`
+parse fails with `invalid-manifest`, and the runner turns that into an `error` step
+reading "this step needs a newer Spectrum" — ending the flow cleanly rather than
+leaving the UI stuck rendering nothing
+(`packages/provider-host/src/flow-client.ts:135-138`,
+`apps/desktop/src/gui/ipc/flow-errors.ts`).
+
+### The caps — Spectrum's, never yours
+
+Every cap below is enforced by Spectrum's runner. It never trusts a number your
+process sends (`FLOW_LIMITS`, `packages/extensions/src/flow.ts:11-17`):
+
+- **50 steps** per flow. Step 51 ends the flow with `read-failed: "flow exceeded 50
+  steps"` regardless of what your process still wants to say.
+- **10 minutes total**, wall clock, armed the instant the flow starts. A flow that
+  hangs — or whose UI is simply never closed — is killed on this deadline even if no
+  call is outstanding; the next call (or the one already suspended) gets a
+  user-facing "this setup was stopped because it ran longer than 10 minutes" message
+  instead of a bare `not-found`.
+- **`await.pollMs` is clamped to `[500, 10000]`** (`clampPollMs`) before the step ever
+  reaches the UI. Ask for `10` and the UI polls at `500` regardless — you cannot pin
+  the renderer to a faster rate than Spectrum allows.
+- **256 KB per response body.** The HTTP adapter aborts a response mid-stream once it
+  crosses this, rather than buffering whatever a hung or hostile process sends first.
+- **200 characters per title or button label, 2000 per body, message or toast**
+  (`FLOW_TEXT_LIMITS`, `packages/extensions/src/flow.ts:33-36`). Spectrum renders these strings
+  verbatim, so without a bound the only limit on a "title" would be the 256 KB body cap — and
+  a step that shipped one would push the setup modal's own cancel button off the screen. Over
+  the bound is a parse failure like any other, not a truncation.
+
+### `done` handling
+
+A `done` step's `config` is merged onto the provider record (stored config <
+whatever `config` your `start` call was given < your `done.config` — your values
+win) and each entry in `secrets` is written to the OS keychain, with only the
+resulting **ref** stored in Spectrum's config file. `done.secrets` never crosses IPC
+to the renderer — the GUI's flow handler drains it main-side with
+`flowRunner.takeCompletion` (exactly once; a replayed call gets `undefined`) and
+rebuilds the step it sends the renderer from `message` alone
+(`apps/desktop/src/gui/ipc/handlers.ts`, `persistFlowCompletion`/`deliverFlowStep`).
+Only secret fields your contribution actually **declares** in `secretFields` are
+written; an undeclared field in `done.secrets` is silently dropped.
+
+- In `context: "create"`, completing the flow **creates and saves** a new provider
+  record — there is no draft state. A flow's child cannot be probed, tested, or have
+  its models listed before the record exists, because model discovery and the
+  provider factory both require an instance key derived from a saved record's config
+  and secret refs. If you need to validate a credential before committing to it, do
+  that validation inside your own flow (a `message` step reporting failure, or an
+  `error` step) before returning `done` — Spectrum gives you no "try it and roll
+  back" path.
+- In `context: "provider"`, completing the flow **updates the existing record** —
+  the same one whose secrets your child was started with (see "Two session-id
+  spaces" below).
+
+### The browser opens on step delivery, not on click
+
+When your `start` or `next` response includes an `open-external` step, Spectrum opens
+the OS browser to that url as soon as it delivers the step to the renderer — not when
+the user clicks the step's button
+(`apps/desktop/src/gui/ipc/handlers.ts`, `deliverFlowStep`). **By the time the user
+sees the step at all, the browser is already open.** Design your copy accordingly:
+the button means "I'm done" or "continue," never "authorize" — the authorization
+already happened (or is already in progress) by the time it's visible.
+
+The url is validated `http:`/`https:` only before the OS is ever asked to open
+anything: `FlowStepSchema`'s own `.refine(isSafeExternalUrl, …)` on the `url` field
+means a step carrying a `file:` or custom-scheme url normally fails to parse as
+`open-external` at all (`packages/extensions/src/flow.ts:59-66,122-124`); and even if a
+step somehow reached the opener with an unsafe scheme,
+`createGuardedOpenExternal` checks `isSafeExternalUrl` again immediately before
+calling the injected opener — that is the actual gate on the call, not anything
+downstream of it (`packages/provider-host/src/open-external.ts`). Separately,
+`FlowStepViewSchema` re-validates the same scheme on the sanitized step that crosses
+IPC to the renderer — real, but it runs *after* delivery and only bounds what the
+webview is shown, not whether the OS was asked to open the url.
+
+### The config-field token limitation
+
+A `done.config` write reaches the provider's config fields, but **there is currently
+no supported way for a launch template to read a config field back.**
+`allowedTokensFor` accepts a contribution's declared config field names as legal
+`{{token}}`s in `args`/`envTemplate` — the validator does not reject
+`{{accountId}}` — but only secret field values are actually substituted at spawn
+time; a config-field token always renders to the empty string (see "The token set"
+above, and its "Verified runtime caveat" note). Concretely: if your flow's `done`
+writes `config: { region: "eu" }`, a launch template referencing
+`{{region}}` will not see `"eu"` — it renders empty. **Until this is fixed, a flow can
+only deliver a value your launch command actually needs through `done.secrets`** —
+declared as a `secretFields` entry even if the value itself isn't sensitive. The
+worked example below demonstrates the gap deliberately: its `done` step returns
+`accountId` through `config`, and nothing in its launch template can read it back;
+the credential its serving process actually needs (`apiKey`) travels through
+`secretFields` instead, which *is* substituted at spawn time.
+
+### Two session-id spaces
+
+Your `start` response mints a session id in `sessionId` — that's **your** id, and
+every subsequent `next` call for this exchange echoes it back to you unchanged.
+Spectrum separately mints its own session id, returned to its own caller (the GUI) as
+the outer `sessionId` on the `RunnerStep` the runner hands back — this is a different
+value in a different namespace, and the two are never interchanged. Your process
+should refuse a `next` call whose `sessionId` it did not itself mint (the worked
+example below does exactly this, with a `400`).
+
+### A complete worked example: the OAuth fixture
+
+The fixture at `packages/runtime-core/src/fixtures/oauth-extension-server.ts`, and the
+manifest the `manifest()` builder wraps around it in
+`packages/runtime-core/src/extension-flow.integration.test.ts` (`manifestFor()` is the
+provider integration test's builder, in a different file), is a full OAuth-shaped
+flow you can run yourself. It is deliberately strict: it answers `401` to any flow
+request missing the correct `x-spectrum-host-token`, and `400` to a malformed
+`start`/`next` body or a `next` carrying a session id it never minted — so it proves
+what it validates, not merely that a url was reachable.
+
+**What it does**, end to end:
+
+1. Your GUI click on the `flow` action calls `start` with
+   `{ context, config: {} }`. The fixture mints its own session id, remembers a
+   random `state` value, and answers with an `open-external` step pointing at its own
+   `/fake-idp?state=<state>` endpoint (standing in for a real identity provider) plus
+   an info toast.
+2. Spectrum opens that url in the OS browser **the instant it delivers the step**
+   (see "The browser opens on step delivery" above) — the user sees a browser tab
+   already open, and a step whose button says "continue," not "authorize."
+3. The renderer's `ack` (clicking the step's button) is answered with an `await`
+   step, because the fixture has not yet seen the redirect land — the browser tab is
+   still open. The fixture's own `pollMs: 10` is clamped by Spectrum to the `500`ms
+   floor before the UI ever sees it.
+4. Once the fake IdP endpoint receives the redirect (marking that `state` consented),
+   the next `poll` is answered with a `done` step:
+   `{ message: "Signed in", config: { accountId }, secrets: { apiKey } }`, plus a
+   success toast.
+5. Spectrum drains the completion, writes `secrets.apiKey` to the OS keychain,
+   merges `config.accountId` onto the provider record, and (in `context: "create"`)
+   saves a brand-new provider. The renderer receives only the sanitized `done` step
+   (`message` alone).
+6. A serving instance of the same contribution, launched later with the saved
+   secret ref resolved into `SPECTRUM_API_KEY`, lists the real model — proving the
+   credential the flow granted actually reached the process that needs it.
+
+**I ran this walkthrough**, end to end, from a clean data dir (`SPECTRUM_DATA_DIR`
+pointed at an empty directory), against exactly this fixture:
+
+```sh
+# 1. install the extension (a directory named "oauth-demo", containing a manifest
+#    whose launch block spawns the fixture above)
+SPECTRUM_DATA_DIR=<clean dir> spectrum-cli plugin install <path>/oauth-demo --copy
+#   -> installed oauth-demo (1.0.0) from path <path>/oauth-demo
+#      will spawn: bun .../oauth-extension-server.ts --port {{port}}
+#      declared secrets: apiKey
+#      oauth-demo: at least one setup action is only available in the GUI
+
+# 2. confirm the CLI's flow-only notice, per "Actions" above
+SPECTRUM_DATA_DIR=<clean dir> spectrum-cli plugin list
+#   -> oauth-demo  OAuth demo  enabled
+#      oauth-demo: at least one setup action is only available in the GUI
+```
+
+Starting and stepping the flow itself is a GUI action the CLI cannot perform (per
+"Actions" above), so this repo has no headless way to click through it — the click
+path is exactly what `apps/desktop/src/gui/ipc/handlers.ts`'s
+`startProviderFlow`/`advanceProviderFlow` do, and I could not drive Electrobun's
+webview from this environment to prove that surface specifically. What I *did* run,
+against the exact data dir the install above produced, is the same
+`flowRunner.start`/`advance` calls those handlers make — spawning the real fixture as
+a real child process on a real loopback port: `start` returned the `open-external`
+step with the fake IdP url; an `ack` before touching that url returned `await` with
+`pollMs` clamped to `500` (confirming the clamp against the fixture's own `pollMs:
+10`); fetching the url and then sending `poll` returned `done` with
+`config: { accountId: "acct-42" }` and `secrets: { apiKey: "sk-from-oauth" }`, matching
+what the manifest declared the fixture would grant. This is the same call sequence
+`extension-flow.integration.test.ts` pins with `bun test`, which is the repo's
+standing regression coverage for the exact click-through this walkthrough describes.
 
 ## The trust posture
 

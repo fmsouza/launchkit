@@ -6,24 +6,41 @@ import {
   ThinkingEffortSchema,
 } from "@spectrum/agent-events"
 import type { Config, PluginInstall } from "@spectrum/config"
-import type { LoadedExtension, PluginError } from "@spectrum/extensions"
+import type {
+  FlowStep,
+  FlowToast,
+  LoadedExtension,
+  PluginError,
+} from "@spectrum/extensions"
 import type {
   ContributedProviderView,
   ExtensionView,
+  FlowStepViewData,
+  FlowToastViewData,
   IpcHandlers,
   ProviderView,
 } from "@spectrum/ipc"
+import { FlowStepViewSchema, FlowToastViewSchema } from "@spectrum/ipc"
+import type { FlowCompletion, RunnerStep } from "@spectrum/provider-host"
+import { FLOW_IN_FLIGHT_DETAIL } from "@spectrum/provider-host"
 import {
   heuristicAttachments,
   validateProviderConfig,
 } from "@spectrum/providers"
 import { providerInstanceKey } from "@spectrum/proxy"
-import { SdkProviderSchema, pluginKeyOf, wireModelFor } from "@spectrum/types"
+import {
+  SdkProviderSchema,
+  pluginIdOf,
+  pluginKeyOf,
+  wireModelFor,
+} from "@spectrum/types"
 import type { ModelId, ModelRoute, Provider, SecretRef } from "@spectrum/types"
 import { isOk } from "@spectrum/utils"
 import type { GuiContext } from "../../composition"
 import { buildUpdateState as buildUpdateStateShared } from "../updater/build-update-state"
 import type { Channel } from "../updater/updater-adapter"
+import type { FlowCallKind } from "./flow-errors"
+import { flowErrorMessage } from "./flow-errors"
 import { ingestUploads } from "./ingest-uploads"
 import { resolveTerminalCwd } from "./terminal-cwd"
 
@@ -182,6 +199,28 @@ const toUnavailableExtensionView = (install: PluginInstall): ExtensionView => ({
 })
 
 /**
+ * What a live setup-flow session is FOR.
+ *
+ * `advanceProviderFlow` carries only a session id, but a `done` step almost always arrives on
+ * an ADVANCE, and persisting it needs the provider key and the context the flow was STARTED
+ * with. Kept main-side rather than accepted back from the renderer on every call: which
+ * provider record a completed flow writes to must not be a value the webview supplies.
+ */
+type FlowOrigin = {
+  readonly providerKey: string
+  readonly context: "create" | "provider"
+  readonly providerId: string | undefined
+  /** The config the flow was started with — merged under whatever `done.config` returns. */
+  readonly config: Readonly<Record<string, string>>
+}
+
+/** A terminal step the renderer can render as-is. */
+const flowErrorStep = (message: string): FlowStepViewData => ({
+  kind: "error",
+  message,
+})
+
+/**
  * Bind the `@spectrum/ipc` contract to the wired subsystems. Each handler is `async` and either
  * returns the validated result shape or throws (the ipc server turns a throw into a `handler-failed`
  * IpcError; nothing leaks a stack trace because the server stringifies `error.message` only).
@@ -262,6 +301,259 @@ export const createIpcHandlers = (ctx: GuiContext): IpcHandlers => {
   const buildUpdateState = async (): Promise<
     import("@spectrum/ipc").IpcMethods["getUpdateState"]["result"]
   > => buildUpdateStateShared({ updater: ctx.updater, config: ctx.config })
+
+  // ── Provider setup flows ───────────────────────────────────────────────────
+  const flowLog = ctx.log.child("ipc.flow")
+  const flowOrigins = new Map<string, FlowOrigin>()
+
+  /**
+   * Project a runner step onto the sanitized view that may cross IPC.
+   *
+   * The `done` variant is REBUILT from its message alone — never spread — so `config`,
+   * `secrets`, or any field a future plugin adds cannot ride along; every other kind is
+   * already credential-free. The projection is then parsed by `FlowStepViewSchema`.
+   *
+   * Returns `undefined` rather than throwing on a step this Spectrum cannot project: the
+   * caller still has to END the session before failing loudly (see `endFlowSession`), and a
+   * throw from in here would skip that.
+   */
+  const sanitizeFlowStep = (step: FlowStep): FlowStepViewData | undefined => {
+    const view =
+      step.kind === "done"
+        ? {
+            kind: "done" as const,
+            ...(step.message === undefined ? {} : { message: step.message }),
+          }
+        : step
+    const parsed = FlowStepViewSchema.safeParse(view)
+    if (!parsed.success) return undefined
+    return parsed.data
+  }
+
+  /**
+   * Project the banner riding alongside a step, or drop it.
+   *
+   * The toast is NOT part of the step, so `sanitizeFlowStep` never sees it — and the ipc
+   * result schema validates the WHOLE result, toast included. An unprojectable toast would
+   * therefore fail `startProviderFlow` outright, and that failure reaches the renderer as a
+   * transport error carrying no `sessionId`: nothing would be left holding a handle to cancel
+   * the flow's child with. `FlowToastViewSchema` is a hand-written duplicate of
+   * `FlowToastSchema`, so the two CAN drift — widening the extension side alone is invisible
+   * to the mirror test until a real extension sends the new field. Dropping the banner is the
+   * strictly better failure: a missing toast instead of a leaked credential-bearing process.
+   */
+  const projectFlowToast = (
+    toast: FlowToast | undefined,
+  ): { readonly toast?: FlowToastViewData } => {
+    if (toast === undefined) return {}
+    const parsed = FlowToastViewSchema.safeParse({ ...toast })
+    if (!parsed.success) {
+      // Tone only — a toast message is extension-controlled text and never reaches the log.
+      flowLog.warn("flow toast dropped", { tone: typeof toast.tone })
+      return {}
+    }
+    return { toast: parsed.data }
+  }
+
+  /**
+   * End a session the HANDLER — not the runner — just declared terminal.
+   *
+   * Every terminal step the runner produces has already ended its own session and stopped the
+   * child. A step this handler synthesizes (a refused browser open, a step it cannot project)
+   * has not: the renderer treats `error` as terminal and forgets the session id, and a
+   * `handler-failed` throw never hands it one at all, so nothing downstream can cancel. Left
+   * undone, the extension's child survives until the runner's ten-minute deadline reaps it.
+   */
+  const endFlowSession = async (sessionId: string): Promise<void> => {
+    flowOrigins.delete(sessionId)
+    await ctx.flowRunner.cancel(sessionId)
+  }
+
+  /**
+   * Persist a completed flow's output. Returns a user-facing message when it REFUSES, or
+   * `undefined` on success.
+   *
+   * Order is fixed and load-bearing: validate the record the same way `addProvider` validates
+   * its own (so a flow cannot write a provider the GUI would have rejected), THEN the keychain
+   * writes (skipped entirely on a refusal, so no orphan keychain entries), THEN `config.save`
+   * — which is what triggers the composition root's retention sweep for the new configuration.
+   *
+   * The record is SAVED, not handed back as a draft: `resolveBaseUrl` refuses a supervised
+   * contribution with no instance key, so a draft produced by a flow could be neither tested
+   * nor have its models discovered.
+   */
+  const persistFlowCompletion = async (
+    origin: FlowOrigin,
+    completion: FlowCompletion,
+  ): Promise<string | undefined> => {
+    const loaded = await ctx.config.load()
+    if (!isOk(loaded))
+      return "Setup finished, but Spectrum could not read its configuration to save the provider."
+    const config = loaded.value
+
+    const existing =
+      origin.context === "provider"
+        ? config.providers.find((p) => String(p.id) === origin.providerId)
+        : undefined
+    // Re-checked at DONE, not only at start: a flow lives for up to ten minutes, and
+    // `updateProvider` can point that same record at a different provider in the meantime.
+    // Merging this flow's config and credentials into it then would be a cross-provider write.
+    if (
+      origin.context === "provider" &&
+      (existing === undefined || existing.sdkProvider !== origin.providerKey)
+    )
+      return "Setup finished, but the provider it was set up for is no longer available."
+
+    // Precedence, deliberately: stored config < the config the flow was STARTED with < what
+    // `done.config` returned. The flow's own values win, and what the user typed before
+    // starting it is not discarded. On the `provider` path that makes `startProviderFlow` an
+    // alternative config-write path for an existing record — intended, because the modal
+    // passes what the user is currently looking at, and the merged result goes through the
+    // same `validateProviderConfig` gate `updateProvider` applies.
+    const merged = {
+      ...(existing?.config ?? {}),
+      ...origin.config,
+      ...completion.config,
+    }
+
+    const valid = validateProviderConfig(
+      ctx.providerRegistry,
+      origin.providerKey,
+      merged,
+    )
+    if (!valid.ok)
+      return `Setup finished, but Spectrum could not save the provider: the settings it produced were rejected (${valid.error.kind}).`
+
+    // The descriptor is guaranteed to resolve: `validateProviderConfig` above looked the same
+    // key up in the same registry and returned `unsupported-provider` if it did not. The
+    // fallbacks below are therefore type-level only — and both fail CLOSED.
+    const descriptor = ctx.providerRegistry.get(origin.providerKey)
+
+    // Filter against the DECLARED secret fields before touching the keychain. This is the
+    // authoritative list (the manifest's own), so it is stronger than `addProvider`'s filter
+    // over renderer-supplied names — and it BOUNDS THE LOOP: without it the number of keychain
+    // round trips a `done` step can drive is capped only by `FLOW_LIMITS.maxBodyBytes`, so a
+    // buggy or hostile extension could force thousands of them.
+    const declared = new Set(
+      (descriptor?.secretFields ?? []).map((f) => f.name),
+    )
+    const incoming = Object.entries(completion.secrets).filter(([field]) =>
+      declared.has(field),
+    )
+
+    // Each secret VALUE goes to the keychain; only the returned ref is ever persisted.
+    const secrets: Record<string, SecretRef> = { ...(existing?.secrets ?? {}) }
+    for (const [field, value] of incoming) {
+      if (value === "") continue
+      const set = await ctx.secrets.set(value)
+      if (!isOk(set))
+        return "Setup finished, but Spectrum could not store the credential in your keychain."
+      secrets[field] = set.value
+    }
+
+    // Same id minting as `addProvider`. The NAME differs deliberately: `addProvider` falls
+    // back to the raw key because its caller can supply one, while these params carry no
+    // `name` at all — so the descriptor's label is the only chance this record has at being
+    // called "Acme" instead of "plugin:acme".
+    const provider: Provider =
+      existing === undefined
+        ? {
+            id: `p_${crypto.randomUUID()}` as Provider["id"],
+            name: descriptor?.label ?? origin.providerKey,
+            sdkProvider: origin.providerKey,
+            config: merged,
+            secrets,
+            models: [],
+          }
+        : { ...existing, config: merged, secrets }
+    const providers =
+      existing === undefined
+        ? [...config.providers, provider]
+        : config.providers.map((p) => (p.id === existing.id ? provider : p))
+
+    const saved = await ctx.config.save({ ...config, providers })
+    if (!isOk(saved))
+      return "Setup finished, but Spectrum could not save the provider."
+    flowLog.info("flow provider saved", { context: origin.context })
+    return undefined
+  }
+
+  /**
+   * Post-process a runner step server-side, BEFORE it crosses to the renderer.
+   *
+   * - `open-external` is opened here, through the guarded capability. The renderer is never
+   *   told to open anything itself: the scheme guard lives main-side, and opening on delivery
+   *   is the ordinary shape of an OAuth handoff.
+   * - `done` drains the completion (one read, ever) and persists it. Only the sanitized
+   *   message-only step goes back.
+   */
+  const deliverFlowStep = async (
+    stepped: RunnerStep,
+    origin: FlowOrigin,
+  ): Promise<{
+    readonly step: FlowStepViewData
+    readonly toast?: FlowToastViewData
+  }> => {
+    const toast = projectFlowToast(stepped.toast)
+    const step = stepped.step
+    flowLog.debug("flow step delivered", { kind: step.kind })
+
+    if (step.kind === "open-external") {
+      const opened = await ctx.openExternalGuarded(step.url)
+      if (!isOk(opened)) {
+        flowLog.warn("flow could not open the browser", {
+          kind: opened.error.kind,
+        })
+        await endFlowSession(stepped.sessionId)
+        return {
+          step: flowErrorStep(
+            "Spectrum could not open your browser for this step.",
+          ),
+          ...toast,
+        }
+      }
+    }
+
+    if (step.kind === "done") {
+      flowOrigins.delete(stepped.sessionId)
+      const completion = ctx.flowRunner.takeCompletion(stepped.sessionId)
+      // The runner stashes a completion on EVERY `done`, so `undefined` means this `done` was
+      // delivered twice (or replayed) and the payload was already drained. Reporting the
+      // plugin's "Signed in" here would tell the user setup succeeded while nothing was
+      // saved — a silent wrong-success is worse than a loud unreachable error.
+      if (completion === undefined)
+        return {
+          step: flowErrorStep(
+            "Setup finished, but Spectrum did not receive its result, so nothing was saved. Please run the setup again.",
+          ),
+          ...toast,
+        }
+      const refusal = await persistFlowCompletion(origin, completion)
+      if (refusal !== undefined)
+        return { step: flowErrorStep(refusal), ...toast }
+    }
+    if (step.kind === "error") flowOrigins.delete(stepped.sessionId)
+
+    const view = sanitizeFlowStep(step)
+    if (view === undefined) {
+      await endFlowSession(stepped.sessionId)
+      return fail(`could not project flow step of kind: ${step.kind}`)
+    }
+    return { step: view, ...toast }
+  }
+
+  /**
+   * Log the failure (kind only — a detail can echo extension-controlled text) and map it.
+   * `during` is passed because `not-found` means two different things on the two paths (see
+   * `flow-errors.ts`), and only the call site knows which one it is on.
+   */
+  const flowFailure = (
+    error: PluginError,
+    during: FlowCallKind,
+  ): FlowStepViewData => {
+    flowLog.warn("flow step failed", { kind: error.kind })
+    return flowErrorStep(flowErrorMessage(error, during))
+  }
 
   return {
     // ── Providers ──────────────────────────────────────────────────────────────────────
@@ -1071,6 +1363,120 @@ export const createIpcHandlers = (ctx: GuiContext): IpcHandlers => {
         )
       }
       return listExtensionViews()
+    },
+
+    // ── Provider setup flows ──────────────────────────────────────────────────
+    // The renderer never sees `done.secrets`, an env map, a host token, or an instance key:
+    // the completion is drained and written to the keychain HERE, and the step that goes back
+    // is rebuilt from its message alone.
+    startProviderFlow: async ({
+      providerKey,
+      flowId,
+      context,
+      config,
+      providerId,
+    }) => {
+      // A builtin key names no process that could serve steps. Refused as an error STEP, not
+      // a transport failure, so the setup modal can say so instead of blanking.
+      const contributionId = pluginIdOf(providerKey)
+      if (contributionId === undefined)
+        return {
+          step: flowFailure({ kind: "not-found", id: providerKey }, "start"),
+        }
+
+      // `context: "provider"` re-authenticates an existing record, so the plugin's child is
+      // started with THAT record's secrets. A provider being created has none.
+      let secrets: Record<string, string> | undefined
+      if (context === "provider") {
+        const loaded = await ctx.config.load()
+        if (!isOk(loaded))
+          return {
+            step: flowErrorStep("Spectrum could not read its configuration."),
+          }
+        const existing = loaded.value.providers.find(
+          (p) => String(p.id) === String(providerId ?? ""),
+        )
+        // SECURITY: the named record must actually BE this provider's. A mismatched
+        // key/id pair — a renderer bug, or a record edited to another provider since the
+        // page loaded — would otherwise hand ONE provider's resolved secrets to a
+        // DIFFERENT extension's child process.
+        if (existing === undefined || existing.sdkProvider !== providerKey)
+          return {
+            step: flowErrorStep(
+              "Setup cannot start: that provider is not available for this setup.",
+            ),
+          }
+        secrets = {}
+        for (const [field, ref] of Object.entries(existing.secrets)) {
+          const value = await ctx.secrets.get(ref)
+          // A credential that has gone missing from the keychain is precisely what a re-auth
+          // flow is for — start it without that field rather than refusing outright.
+          if (isOk(value)) secrets[field] = value.value
+          else flowLog.debug("flow secret unavailable", { field })
+        }
+      }
+
+      const started = await ctx.flowRunner.start({
+        providerId: contributionId,
+        flowId,
+        context,
+        config,
+        ...(secrets === undefined ? {} : { secrets }),
+      })
+      if (!isOk(started)) return { step: flowFailure(started.error, "start") }
+
+      const origin: FlowOrigin = {
+        providerKey,
+        context,
+        providerId: providerId === undefined ? undefined : String(providerId),
+        config,
+      }
+      flowOrigins.set(started.value.sessionId, origin)
+      return {
+        sessionId: started.value.sessionId,
+        ...(await deliverFlowStep(started.value, origin)),
+      }
+    },
+
+    advanceProviderFlow: async ({ sessionId, result }) => {
+      const origin = flowOrigins.get(sessionId)
+      if (origin === undefined)
+        return {
+          sessionId,
+          step: flowFailure({ kind: "not-found", id: sessionId }, "step"),
+        }
+
+      const stepped = await ctx.flowRunner.advance({ sessionId, result })
+      if (!isOk(stepped)) {
+        // A SECOND call while the first is still in flight — a double-submit, or a poll
+        // racing a submit. The runner refuses it without ending the flow, and only the detail
+        // separates it from a genuinely dead extension, so it is answered with no step at
+        // all: the renderer keeps showing what it has. Surfacing it as an error step would
+        // read as "the extension stopped responding" and kill a live setup over a double click.
+        if (
+          stepped.error.kind === "read-failed" &&
+          stepped.error.detail === FLOW_IN_FLIGHT_DETAIL
+        ) {
+          flowLog.debug("flow advance ignored", { reason: "already-in-flight" })
+          return { sessionId }
+        }
+        flowOrigins.delete(sessionId)
+        return { sessionId, step: flowFailure(stepped.error, "step") }
+      }
+
+      return { sessionId, ...(await deliverFlowStep(stepped.value, origin)) }
+    },
+
+    cancelProviderFlow: async ({ sessionId }) => {
+      // Symmetric with `advanceProviderFlow`: `flowRunner` is shared on the AppContext while
+      // these origins are per handler set, so a session this handler set did not start is not
+      // its to end either. Cancelling one would be as wrong as finishing one. A session that
+      // already reached a terminal step has had its origin dropped, and the runner's own
+      // `cancel` is a no-op for an unknown session, so nothing is lost by returning early.
+      if (!flowOrigins.has(sessionId)) return null
+      flowOrigins.delete(sessionId)
+      await ctx.flowRunner.cancel(sessionId)
+      return null
     },
 
     // ── Client logging ──────────────────────────────────────────────────────

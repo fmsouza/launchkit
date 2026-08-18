@@ -22,6 +22,11 @@ import {
 } from "@spectrum/types"
 import { z } from "zod"
 import { ExtensionViewSchema } from "./extension-view"
+import {
+  FlowResultViewSchema,
+  FlowStepViewSchema,
+  FlowToastViewSchema,
+} from "./flow-view"
 import { ProviderViewSchema } from "./provider-view"
 
 /** `void` over the wire is encoded as `null` (JSON has no `undefined`). */
@@ -668,6 +673,67 @@ export const RemoveExtensionResultSchema = z.union([
   RemoveExtensionRefusalSchema,
 ])
 
+// ── Provider setup flows ────────────────────────────────────────────────────
+// A multi-step setup exchange an extension serves as DATA and Spectrum renders with its own
+// components. Everything credential-bearing stays main-side: `done.secrets` goes to the
+// keychain and `done.config` into the provider record, and only `FlowStepViewSchema`'s
+// sanitized step crosses back (see flow-view.ts).
+
+/** Whether the flow is creating a provider record or re-authenticating an existing one. */
+export const FlowContextSchema = z.enum(["create", "provider"])
+
+export const StartProviderFlowParamsSchema = z
+  .object({
+    /** Must be a `plugin:<id>` key — a builtin has no process to serve steps. Refused by the
+     * handler as an `error` STEP rather than a transport failure, so the modal can say so. */
+    providerKey: ProviderKeySchema,
+    flowId: z.string().min(1),
+    context: FlowContextSchema,
+    config: z.record(z.string(), z.string()),
+    /** Present only for `context: "provider"` — names the record to re-authenticate. */
+    providerId: ProviderIdSchema.optional(),
+  })
+  .strict()
+/**
+ * `sessionId` is ABSENT when no session was created — the start was refused before the runner
+ * was ever asked (a builtin provider key, a `context: "provider"` start naming no live record)
+ * and `step` is a terminal `error`. Modelling it as optional is what stops the renderer from
+ * advancing or cancelling a session that does not exist.
+ */
+export const StartProviderFlowResultSchema = z
+  .object({
+    sessionId: z.string().min(1).optional(),
+    step: FlowStepViewSchema,
+    toast: FlowToastViewSchema.optional(),
+  })
+  .strict()
+
+export const AdvanceProviderFlowParamsSchema = z
+  .object({
+    sessionId: z.string().min(1),
+    result: FlowResultViewSchema,
+  })
+  .strict()
+/**
+ * `step` is OPTIONAL here and required on `start`. An absent step means "nothing changed" —
+ * the one case being a second `advance` arriving while the first is still in flight (a
+ * double-submit, or a poll racing a submit). The runner refuses that concurrently-issued call
+ * WITHOUT ending the flow, so surfacing it as an `error` step would kill a perfectly live
+ * setup over a double-click. The renderer keeps whatever step it is already showing.
+ */
+export const AdvanceProviderFlowResultSchema = z
+  .object({
+    sessionId: z.string().min(1),
+    step: FlowStepViewSchema.optional(),
+    toast: FlowToastViewSchema.optional(),
+  })
+  .strict()
+
+export const CancelProviderFlowParamsSchema = z
+  .object({ sessionId: z.string().min(1) })
+  .strict()
+export const CancelProviderFlowResultSchema = VoidSchema
+
 // ── Client logging (webview → main) ─────────────────────────────────────────
 // The webview forwards error/fatal records here so they persist to the main log file.
 // Inbound-only; redacted main-side. `level` is restricted to the two forwarded severities.
@@ -897,6 +963,18 @@ export const IpcMethodSchemas = {
   removeExtension: {
     params: RemoveExtensionParamsSchema,
     result: RemoveExtensionResultSchema,
+  },
+  startProviderFlow: {
+    params: StartProviderFlowParamsSchema,
+    result: StartProviderFlowResultSchema,
+  },
+  advanceProviderFlow: {
+    params: AdvanceProviderFlowParamsSchema,
+    result: AdvanceProviderFlowResultSchema,
+  },
+  cancelProviderFlow: {
+    params: CancelProviderFlowParamsSchema,
+    result: CancelProviderFlowResultSchema,
   },
 } as const
 

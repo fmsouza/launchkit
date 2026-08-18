@@ -14,7 +14,7 @@ import {
 } from "@spectrum/proc"
 import type { PluginId } from "@spectrum/types"
 import { type Result, ok } from "@spectrum/utils"
-import { createProviderHost } from "./host"
+import { NO_LAUNCH_BLOCK_DETAIL, createProviderHost } from "./host"
 import type { HealthProbe } from "./readiness"
 
 type LogRecordish = {
@@ -306,6 +306,35 @@ describe("createProviderHost", () => {
     expect(result.ok).toBe(false)
     if (!result.ok) expect(result.error.kind).toBe("invalid-manifest")
     expect(spawner.calls).toHaveLength(0)
+  })
+
+  it("reports the exported no-launch-block detail so a caller can tell that cause apart", async () => {
+    // `kind` is shared with a genuinely unparseable step. The EXPORTED constant — not a
+    // hand-copied sentence — is what lets `apps/desktop` give this cause its own copy.
+    const { host: h } = host({
+      contributions: [contribution({ noLaunch: true })],
+    })
+    const result = await h.ensureRunning(run())
+    expect(result.ok).toBe(false)
+    if (result.ok || result.error.kind !== "invalid-manifest") return
+    expect(result.error.detail).toBe(NO_LAUNCH_BLOCK_DETAIL)
+  })
+
+  it("names the contribution in the log when it declares no launch block", async () => {
+    // The detail carries no id on purpose — `apps/desktop` matches it exactly to give this
+    // cause its own copy. That leaves the LOG as the only surface that can say WHICH
+    // contribution was misdeclared, and a user with several extensions installed cannot act
+    // on "some provider has no launch block".
+    const logger = createFakeLogger()
+    const { host: h } = host({
+      logger,
+      contributions: [contribution({ noLaunch: true })],
+    })
+    await h.ensureRunning(run())
+    const record = logger.records.find(
+      (r) => r.fields?.providerId === "acme" && r.level === "warn",
+    )
+    expect(record?.msg).toContain("launch block")
   })
 
   it("reports starting while the first start is still in flight", async () => {

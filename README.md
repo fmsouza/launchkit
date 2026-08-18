@@ -241,6 +241,14 @@ the **Responses** API, not chat completions), the launch/host-token contract for
 Spectrum-supervised provider server, and how to develop one locally with `--copy` or a
 linked path.
 
+A supervised extension can also contribute a **setup flow** — a `flow` action that
+drives a multi-step exchange (forms, messages, an OAuth handshake through the OS
+browser) with the GUI, entirely as data your process serves over two HTTP endpoints;
+Spectrum renders every step with its own components, so your code never reaches the
+renderer and a completed flow's secrets go straight to the OS keychain. See "Setup
+flows" in the same document for the protocol, the caps Spectrum enforces on your
+process's behalf, and a worked OAuth walkthrough.
+
 ## Agents (ACP)
 
 Spectrum drives every coding agent over the **Agent Client Protocol** (ACP) — one shared

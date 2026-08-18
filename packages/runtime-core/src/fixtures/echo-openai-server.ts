@@ -16,6 +16,12 @@
  * factory a bare `http://127.0.0.1:<port>`, and both `@ai-sdk/openai` and the model lister append
  * their paths to it. A `/v1` prefix is accepted too, so a manifest may point `healthPath` at either.
  */
+// Marks this file a MODULE. A fixture with no import or export is a global SCRIPT to
+// TypeScript, and its top-level `const`s then collide with the identically-named ones in every
+// sibling fixture — `tsc` fails the whole package with "cannot redeclare". Any fixture added
+// next to these needs the same line.
+export {}
+
 const portIndex = Bun.argv.indexOf("--port")
 const port = Number(Bun.argv[portIndex + 1])
 const token = process.env.SPECTRUM_TOKEN ?? ""

@@ -47,6 +47,21 @@ const acmeManifest = {
   },
 }
 
+/**
+ * A flow runner with nothing live, for the call sites whose scenario has no setup flow running.
+ * Deliberately NOT a default inside `createExtensionAdmin`: the dep is required there so a
+ * wiring omission is a type error rather than a class of flows that hang with no error.
+ */
+const inertFlowRunner = {
+  start: async () => err({ kind: "not-found" as const, id: "unused" }),
+  advance: async () => err({ kind: "not-found" as const, id: "unused" }),
+  takeCompletion: () => undefined,
+  cancel: async () => {},
+  activeInstanceKeys: () => new Set<string>(),
+  abandon: () => {},
+  dispose: () => {},
+}
+
 type LogEntry = {
   readonly level: "debug" | "info" | "warn" | "error" | "fatal"
   readonly msg: string
@@ -79,12 +94,17 @@ const harness = (opts?: {
   saveFails?: boolean
   listFails?: boolean
   logger?: Logger
+  /** Instance keys the flow runner reports as live while this scenario runs. */
+  liveFlowKeys?: readonly string[]
 }) => {
   let stored: Config = opts?.config ?? defaultConfig()
   const refreshes: number[] = []
   const stopped: string[] = []
   const stopAllCalls: number[] = []
   const installerRemoveCalls: string[] = []
+  const abandoned: Array<{ keys: readonly string[]; reason: string }> = []
+  /** Interleaving of `abandon` with the host's kill calls — the runner must be told FIRST. */
+  const order: string[] = []
   const admin = createExtensionAdmin({
     config: {
       load: async () => ok(stored),
@@ -142,12 +162,26 @@ const harness = (opts?: {
       status: () => "stopped",
       stop: async () => {},
       stopAllFor: async (id: string) => {
+        order.push("stopAllFor")
         stopped.push(id)
       },
       stopAll: async () => {
+        order.push("stopAll")
         stopAllCalls.push(1)
       },
       retainOnly: async () => {},
+    },
+    flowRunner: {
+      start: async () => err({ kind: "not-found", id: "unused" }),
+      advance: async () => err({ kind: "not-found", id: "unused" }),
+      takeCompletion: () => undefined,
+      cancel: async () => {},
+      activeInstanceKeys: () => new Set(opts?.liveFlowKeys ?? []),
+      abandon: (keys: readonly string[], reason: string) => {
+        order.push("abandon")
+        abandoned.push({ keys: [...keys], reason })
+      },
+      dispose: () => {},
     },
     refresh: async () => {
       refreshes.push(Date.now())
@@ -160,6 +194,8 @@ const harness = (opts?: {
     stopped,
     stopAllCalls,
     installerRemoveCalls,
+    abandoned,
+    order,
     read: (): Config => stored,
   }
 }
@@ -278,6 +314,28 @@ describe("createExtensionAdmin", () => {
     expect(stopped).toEqual(["acme-chat"])
   })
 
+  it("abandons the removed contribution's live flows — and only those — before stopping its children", async () => {
+    // `stopAllFor` stops and forgets with no callback and no reason code, and `host.status`
+    // reports "stopped" identically for a killed child, a crashed one, and a key that never
+    // existed, so the runner cannot discover why its child died and must be told FIRST.
+    // A flow of a DIFFERENT contribution is untouched here: this stop is targeted, so
+    // abandoning more than it kills would end a flow whose child is still alive.
+    const cfg = { ...defaultConfig(), providerPlugins: [acmeInstall] }
+    const { admin, abandoned, order } = harness({
+      config: cfg,
+      liveFlowKeys: ["flow:acme-chat:n0", "flow:other-chat:n1"],
+    })
+
+    const r = await admin.remove(pid("acme"))
+    expect(r.ok).toBe(true)
+
+    expect(abandoned.at(-1)).toEqual({
+      keys: ["flow:acme-chat:n0"],
+      reason: "extension-disabled",
+    })
+    expect(order.slice(0, 2)).toEqual(["abandon", "stopAllFor"])
+  })
+
   it("drops the install record and refreshes when a removal succeeds", async () => {
     const cfg = { ...defaultConfig(), providerPlugins: [acmeInstall] }
     const { admin, refreshes, read } = harness({ config: cfg })
@@ -345,6 +403,7 @@ describe("createExtensionAdmin", () => {
         stopAll: async () => {},
         retainOnly: async () => {},
       },
+      flowRunner: inertFlowRunner,
       refresh: async () => {
         calls.push("refresh")
       },
@@ -433,6 +492,7 @@ describe("createExtensionAdmin", () => {
         stopAll: async () => {},
         retainOnly: async () => {},
       },
+      flowRunner: inertFlowRunner,
       refresh: async () => {},
     })
 
@@ -526,6 +586,7 @@ describe("createExtensionAdmin", () => {
         stopAll: async () => {},
         retainOnly: async () => {},
       },
+      flowRunner: inertFlowRunner,
       refresh: async () => {},
     })
 
@@ -553,6 +614,32 @@ describe("createExtensionAdmin", () => {
       expect(stopped).toEqual([])
       expect(read().providerPlugins).toEqual([])
       expect(refreshes.length).toBe(1)
+    })
+
+    it("abandons EVERY live flow — including unrelated extensions' — before the degraded stopAll", async () => {
+      // The degraded branch kills every supervised child, not just this extension's, so the
+      // flow children of extensions that have nothing to do with this removal die too.
+      //
+      // The trailing `config.save` sweep does NOT cover them: those extensions are still
+      // installed and still enabled, so `flowIsRetained` RETAINS their keys and never abandons
+      // them — and `retainOnly` does not resurrect an already-stopped child. Without this the
+      // sessions stay live forever and the user gets the raw transport error permanently,
+      // which is the exact failure `abandon` exists to prevent.
+      const cfg = { ...defaultConfig(), providerPlugins: [acmeInstall] }
+      const { admin, abandoned, order } = harness({
+        config: cfg,
+        listFails: true,
+        liveFlowKeys: ["flow:acme-chat:n0", "flow:other-chat:n1"],
+      })
+
+      const r = await admin.remove(pid("acme"))
+      expect(r.ok).toBe(true)
+
+      expect(abandoned.at(-1)).toEqual({
+        keys: ["flow:acme-chat:n0", "flow:other-chat:n1"],
+        reason: "extension-disabled",
+      })
+      expect(order.slice(0, 2)).toEqual(["abandon", "stopAll"])
     })
 
     it("does not compute or enforce the in-use guard, even if a provider still references the extension", async () => {
@@ -626,6 +713,7 @@ describe("createExtensionAdmin", () => {
         stopAll: async () => {},
         retainOnly: async () => {},
       },
+      flowRunner: inertFlowRunner,
       refresh: async () => {},
     })
     const r = await admin.install({ source: "https://e.com/a.git" })
@@ -718,6 +806,7 @@ describe("createExtensionAdmin", () => {
         },
         retainOnly: async () => {},
       },
+      flowRunner: inertFlowRunner,
       refresh: async () => {},
     })
 
@@ -768,6 +857,7 @@ describe("createExtensionAdmin", () => {
         stopAll: async () => {},
         retainOnly: async () => {},
       },
+      flowRunner: inertFlowRunner,
       refresh: async () => {},
     })
 
@@ -842,6 +932,7 @@ describe("createExtensionAdmin", () => {
         stopAll: async () => {},
         retainOnly: async () => {},
       },
+      flowRunner: inertFlowRunner,
       refresh: async () => {},
     })
 

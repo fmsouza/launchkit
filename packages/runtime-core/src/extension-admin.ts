@@ -12,7 +12,8 @@ import type {
   PluginError,
 } from "@spectrum/extensions"
 import { type Logger, createNoopLogger } from "@spectrum/logger"
-import type { ProviderHost } from "@spectrum/provider-host"
+import type { FlowRunner, ProviderHost } from "@spectrum/provider-host"
+import { flowContributionIdOf } from "@spectrum/provider-host"
 import { type PluginId, pluginKeyOf } from "@spectrum/types"
 import { type Result, err, isErr, ok } from "@spectrum/utils"
 
@@ -62,10 +63,44 @@ export const createExtensionAdmin = (deps: {
    */
   readonly registry: () => Promise<ExtensionRegistry>
   readonly providerHost: ProviderHost
+  /**
+   * The live setup-flow runner. REQUIRED, not defaulted to a no-op: `remove` kills supervised
+   * children directly (see `abandonFlowsFor` below), and a silently-defaulting runner would
+   * turn a wiring omission into a class of flows that hang with no error instead of a
+   * type error at the composition root.
+   */
+  readonly flowRunner: FlowRunner
   readonly refresh: () => Promise<void>
   readonly logger?: Logger
 }): ExtensionAdmin => {
   const logger = deps.logger ?? createNoopLogger()
+
+  /**
+   * Tell the runner which flow children are about to be killed, immediately BEFORE killing
+   * them — the same pairing, and for the same reason, as the composition root's retention
+   * sweep: `stopAll`/`stopAllFor` stop and FORGET with no callback and no reason code, and
+   * `host.status` reports "stopped" identically for a killed instance, a crashed one, and a
+   * key that never existed, so the runner cannot discover why its child died.
+   *
+   * The trailing `config.save` in `remove` is NOT a substitute. Its sweep only abandons keys it
+   * DROPS, and the flows the degraded branch kills belong to extensions that are still
+   * installed and still enabled — so the sweep RETAINS their keys and abandons nothing, while
+   * `retainOnly` cannot resurrect an already-stopped child. Those sessions would stay live in
+   * the runner forever, delivering the raw transport error the named step exists to replace.
+   *
+   * `undefined` means "every live flow", matching `providerHost.stopAll()`; a contribution id
+   * narrows to that contribution's flows, matching `stopAllFor`. Abandoning WIDER than the kill
+   * would end flows whose children are still running.
+   */
+  const abandonFlowsFor = (contributionId?: string): void => {
+    const live = [...deps.flowRunner.activeInstanceKeys()]
+    const doomed =
+      contributionId === undefined
+        ? live
+        : live.filter((key) => flowContributionIdOf(key) === contributionId)
+    // `FlowAbandonReason` is a closed union of one member whose copy covers disable AND remove.
+    deps.flowRunner.abandon(doomed, "extension-disabled")
+  }
 
   const loadConfig = async (): Promise<Result<Config, PluginError>> => {
     const loaded = await deps.config.load()
@@ -279,9 +314,13 @@ export const createExtensionAdmin = (deps: {
     }
 
     if (degraded) {
+      // Kills EVERY supervised child, including live flow children of extensions unrelated to
+      // this removal — so every live flow is abandoned, not just this extension's.
+      abandonFlowsFor()
       await deps.providerHost.stopAll()
     } else {
       for (const contributionId of contributedIds) {
+        abandonFlowsFor(contributionId)
         await deps.providerHost.stopAllFor(contributionId)
       }
     }
